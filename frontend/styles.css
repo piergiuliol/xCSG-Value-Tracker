@@ -1716,3 +1716,225 @@ th.text-right { text-align: right; }
 
 /* Activity hidden rows */
 .activity-hidden { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SETTINGS TABS
+   ═══════════════════════════════════════════════════════════════════════════ */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  border-bottom: 2px solid var(--gray-200);
+  padding-bottom: 0;
+}
+
+.settings-tab {
+  padding: 10px 24px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gray-500);
+  cursor: pointer;
+  font-family: 'Roboto', sans-serif;
+  transition: all 0.15s;
+}
+
+.settings-tab:hover {
+  color: var(--navy);
+}
+
+.settings-tab.active {
+  color: var(--navy);
+  border-bottom-color: var(--navy);
+  font-weight: 600;
+}
+
+/* Expert link box in modal */
+.expert-link-box {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+.expert-link-box input {
+  padding: 10px 14px;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: monospace;
+  background: var(--gray-50);
+  color: var(--gray-700);
+  outline: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V2 — Legacy Baseline Banner & Field States
+   ═══════════════════════════════════════════════════════════════════════════ */
+.legacy-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--blue-pale);
+  border: 1px solid var(--blue-light);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--navy);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+.legacy-banner strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.legacy-banner-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--blue);
+}
+
+.legacy-overridden {
+  background: #fff !important;
+  border-style: solid !important;
+  border-color: var(--success) !important;
+}
+
+.legacy-source {
+  font-weight: 400;
+  color: var(--gray-400);
+  font-size: 11px;
+}
+.legacy-source.overridden {
+  color: var(--success);
+}
+
+.legacy-no-norms {
+  font-size: 13px;
+  color: var(--gray-500);
+  font-style: italic;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: var(--gray-50);
+  border: 1px dashed var(--gray-300);
+  border-radius: var(--radius-sm);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V2 — Portfolio Filters
+   ═══════════════════════════════════════════════════════════════════════════ */
+.portfolio-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.filters-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-400);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 4px;
+}
+
+.filter-reset {
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--gray-500);
+  cursor: pointer;
+  font-family: 'Roboto', sans-serif;
+  margin-left: auto;
+}
+.filter-reset:hover {
+  background: var(--error-bg);
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V2 — Low Confidence Flag
+   ═══════════════════════════════════════════════════════════════════════════ */
+.confidence-flag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--warning);
+  vertical-align: middle;
+  cursor: help;
+}
+
+.vm-cell.low-confidence {
+  color: var(--gray-400);
+  font-weight: 500;
+}
+.vm-cell.low-confidence::after {
+  content: '~';
+  font-size: 11px;
+  margin-left: 2px;
+  color: var(--warning);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V2 — Expert Context Override
+   ═══════════════════════════════════════════════════════════════════════════ */
+.expert-container .context-grid {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.context-description {
+  font-size: 14px;
+  color: var(--gray-500);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V2 — Project Name Column Emphasis
+   ═══════════════════════════════════════════════════════════════════════════ */
+#projectTable td:first-child {
+  font-weight: 500;
+  color: var(--navy);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V2 — Expert Response Section Headers
+   ═══════════════════════════════════════════════════════════════════════════ */
+.expert-response-section {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-500);
+  margin-bottom: 12px;
+  margin-top: 4px;
+}
+.expert-response-section:first-child { margin-top: 0; }
+
+.expert-response-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 20px;
+  margin-bottom: 20px;
+}
+.expert-response-grid:last-child { margin-bottom: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V2 — Norms Not Configured Badge
+   ═══════════════════════════════════════════════════════════════════════════ */
+.norm-not-configured select {
+  opacity: 0.5;
+}

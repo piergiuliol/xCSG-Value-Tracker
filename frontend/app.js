@@ -1,5 +1,5 @@
 /**
- * app.js — xCSG Value Measurement Tracker SPA
+ * app.js — xCSG Value Measurement Tracker SPA v2
  * Alira Health · Confidential
  *
  * Vanilla JS, no frameworks. Chart.js 4.4.0 loaded via CDN (defer).
@@ -14,6 +14,7 @@ const API = '/api';
 const state = {
   user: null,
   token: sessionStorage.getItem('xcsg_token') || null,
+  categories: [],  // cached categories list
 };
 
 const charts = {};          // track Chart.js instances for cleanup
@@ -74,12 +75,12 @@ function copyToClipboard(text) {
 }
 
 function formatDate(d) {
-  if (!d) return '—';
+  if (!d) return '\u2014';
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function formatDateTime(d) {
-  if (!d) return '—';
+  if (!d) return '\u2014';
   const dt = new Date(d);
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
     ' ' + dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -87,17 +88,12 @@ function formatDateTime(d) {
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
+const CONFIDENCE_FLAG_SVG = '<span class="confidence-flag" title="Legacy baseline uses category defaults \u2014 not project-specific"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>';
+
 /* ═══════════════════════════════════════════════════════════════════════
    DROPDOWN VALUES (must match backend/metrics.py EXACTLY)
    ═══════════════════════════════════════════════════════════════════════ */
 
-const DELIVERABLE_TYPES = [
-  'CDD', 'Competitive landscape', 'Financial model', 'Market access',
-  'Proposal', 'Call prep brief', 'Presentation', 'KOL mapping'
-];
-const ENGAGEMENT_STAGES = [
-  'New business (pre-mandate)', 'Active engagement', 'Post-engagement (follow-on)'
-];
 const CALENDAR_DAYS = ['1', '2-3', '4-5', '6-10', '11-20', '20+'];
 const TEAM_SIZES = ['1', '2', '3', '4+'];
 const REVISION_ROUNDS = ['0', '1', '2', '3+'];
@@ -130,8 +126,19 @@ const F1_OPTIONS = [
 const F2_OPTIONS = ['Yes, largely as-is', 'Yes, with moderate customization', 'No, fully bespoke'];
 
 function optionsHTML(arr, selected) {
-  return '<option value="">— Select —</option>' +
+  return '<option value="">\u2014 Select \u2014</option>' +
     arr.map(v => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(v)}</option>`).join('');
+}
+
+function categoryOptionsHTML(selected) {
+  return '<option value="">\u2014 Select Category \u2014</option>' +
+    state.categories.map(c => `<option value="${c.id}"${c.id == selected ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+}
+
+async function loadCategories() {
+  if (state.categories.length === 0 && state.token) {
+    try { state.categories = await apiCall('GET', '/categories'); } catch { /* ignore */ }
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -141,6 +148,7 @@ function optionsHTML(arr, selected) {
 function handleLogout() {
   state.token = null;
   state.user = null;
+  state.categories = [];
   sessionStorage.removeItem('xcsg_token');
   showScreen('login');
 }
@@ -159,7 +167,7 @@ async function handleLogin(e) {
   const btn = document.getElementById('loginBtn');
   errEl.style.display = 'none';
   btn.disabled = true;
-  btn.textContent = 'Signing in…';
+  btn.textContent = 'Signing in\u2026';
   try {
     const data = await apiCall('POST', '/auth/login', { username, password });
     state.token = data.access_token;
@@ -168,7 +176,7 @@ async function handleLogin(e) {
     document.getElementById('topbarUsername').textContent = data.user.name || data.user.username;
     document.getElementById('topbarAvatar').textContent = (data.user.name || data.user.username)[0].toUpperCase();
     showScreen('app');
-    window.location.hash = '#dashboard';
+    window.location.hash = '#portfolio';
   } catch (err) {
     errEl.style.display = 'block';
   } finally {
@@ -181,8 +189,8 @@ async function handleLogin(e) {
    ROUTING
    ═══════════════════════════════════════════════════════════════════════ */
 
-function route() {
-  const hash = window.location.hash || '#dashboard';
+async function route() {
+  const hash = window.location.hash || '#portfolio';
 
   // Expert route — no auth
   if (hash.startsWith('#expert/')) {
@@ -196,6 +204,9 @@ function route() {
   if (!state.token) { showScreen('login'); return; }
   showScreen('app');
 
+  // Load categories cache
+  await loadCategories();
+
   // Highlight nav
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const routeName = hash.slice(1).split('/')[0];
@@ -203,40 +214,44 @@ function route() {
   if (navEl) navEl.classList.add('active');
 
   // Title
-  const titles = { dashboard: 'Dashboard', new: 'New Deliverable', edit: 'Edit Deliverable', deliverables: 'Deliverables', norms: 'Legacy Norms', activity: 'Activity Log' };
-  document.getElementById('topbarTitle').textContent = titles[routeName] || 'Dashboard';
+  const titles = {
+    portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
+    projects: 'Projects', settings: 'Settings', activity: 'Activity Log'
+  };
+  document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
 
   // Fade-in transition
   const mc = document.getElementById('mainContent');
   if (mc) { mc.classList.remove('view-fade-in'); void mc.offsetWidth; mc.classList.add('view-fade-in'); }
 
   // Render
-  if (hash === '#dashboard') renderDashboard();
-  else if (hash === '#new') renderNewDeliverable();
-  else if (hash.startsWith('#edit/')) renderEditDeliverable(hash.split('/')[1]);
-  else if (hash === '#deliverables') renderDeliverables();
-  else if (hash === '#norms') renderNorms();
+  if (hash === '#portfolio') renderPortfolio();
+  else if (hash === '#new') renderNewProject();
+  else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
+  else if (hash === '#projects') renderProjects();
+  else if (hash === '#settings') renderSettings();
   else if (hash === '#activity') renderActivity();
-  else renderDashboard();
+  else renderPortfolio();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   DASHBOARD
+   PORTFOLIO (was Dashboard)
    ═══════════════════════════════════════════════════════════════════════ */
 
-async function renderDashboard() {
+async function renderPortfolio() {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = '<div class="loading">Loading dashboard…</div>';
+  mc.innerHTML = '<div class="loading">Loading portfolio\u2026</div>';
 
   try {
-    const [summary, deliverables, gates] = await Promise.all([
+    const [summary, metricsProjects, gates, allProjects] = await Promise.all([
       apiCall('GET', '/metrics/summary'),
-      apiCall('GET', '/metrics/deliverables'),
+      apiCall('GET', '/metrics/projects'),
       apiCall('GET', '/metrics/scaling-gates'),
+      apiCall('GET', '/projects'),
     ]);
 
-    const complete = summary.complete_deliverables || summary.complete_count || 0;
-    const total = summary.total_deliverables || summary.total_count || 0;
+    const complete = summary.complete_projects || 0;
+    const total = summary.total_projects || 0;
     const checkpoint = summary.checkpoint || 1;
     const nextThreshold = checkpoint === 1 ? 3 : checkpoint === 2 ? 8 : checkpoint === 3 ? 20 : null;
 
@@ -244,64 +259,98 @@ async function renderDashboard() {
       mc.innerHTML = `
         <div class="empty-state">
           <h2>Welcome to the xCSG Value Tracker</h2>
-          <p>Start by creating your first deliverable to begin measuring xCSG performance.</p>
-          <a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Deliverable</a>
+          <p>Start by creating your first project to begin measuring xCSG performance.</p>
+          <a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a>
         </div>`;
       return;
     }
 
+    // Build lookup for legacy_overridden from allProjects
+    const overriddenMap = {};
+    for (const p of allProjects) {
+      overriddenMap[p.id] = !!p.legacy_overridden;
+    }
+
+    // Count low-confidence projects in metrics
+    const lowConfCount = metricsProjects.filter(m => !overriddenMap[m.id]).length;
+
     let html = '';
 
-    // Dashboard header with export
-    html += `<div class="dashboard-header"><div></div><button class="btn-export" onclick="exportExcel()">📥 Export to Excel</button></div>`;
+    // Portfolio header with export
+    html += `<div class="dashboard-header"><div></div><button class="btn-export" onclick="exportExcel()">Export to Excel</button></div>`;
 
     // Checkpoint progress — step dots
     const cpNames = ['Baseline', 'Patterns', 'Trends', 'Scale'];
     html += `<div class="checkpoint-bar">`;
     for (let i = 1; i <= 4; i++) {
       const cls = i < checkpoint ? 'completed' : i === checkpoint ? 'active' : '';
-      html += `<div class="checkpoint-step ${cls}"><div class="checkpoint-dot">${i < checkpoint ? '✓' : i}</div><span>${cpNames[i-1]}</span></div>`;
+      html += `<div class="checkpoint-step ${cls}"><div class="checkpoint-dot">${i < checkpoint ? '\u2713' : i}</div><span>${cpNames[i-1]}</span></div>`;
       if (i < 4) html += `<div class="checkpoint-line${i < checkpoint ? ' done' : ''}"></div>`;
     }
-    html += `<div class="checkpoint-meta"><strong>${complete}</strong> / ${nextThreshold || complete} deliverables</div></div>`;
+    html += `<div class="checkpoint-meta"><strong>${complete}</strong> / ${nextThreshold || complete} projects</div></div>`;
 
     // KPI cards
     const vm = summary.average_value_multiplier || 0;
     const er = summary.average_effort_ratio || 0;
     const fh = summary.flywheel_health || 0;
+    const vmSubtitle = lowConfCount > 0
+      ? `<div class="kpi-sub">${lowConfCount} of ${metricsProjects.length} using category defaults</div>`
+      : '';
     html += `<div class="kpi-grid">
-      <div class="kpi-card accent-navy"><div class="kpi-value">${total}</div><div class="kpi-label">Total Deliverables</div><div class="kpi-sub">${complete} complete · ${total - complete} pending</div></div>
-      <div class="kpi-card accent-blue"><div class="kpi-value">${round2(vm)}x</div><div class="kpi-label">Avg Value Multiplier</div></div>
+      <div class="kpi-card accent-navy"><div class="kpi-value">${total}</div><div class="kpi-label">Total Projects</div><div class="kpi-sub">${complete} complete \u00b7 ${total - complete} pending</div></div>
+      <div class="kpi-card accent-blue"><div class="kpi-value">${round2(vm)}x</div><div class="kpi-label">Avg Value Multiplier</div>${vmSubtitle}</div>
       <div class="kpi-card accent-orange"><div class="kpi-value">${round2(er)}x</div><div class="kpi-label">Avg Effort Ratio</div></div>
       <div class="kpi-card accent-green"><div class="kpi-value">${Math.round(fh * 100)}%</div><div class="kpi-label">Flywheel Health</div></div>
     </div>`;
 
-    // Checkpoint 1: Scorecard
-    if (deliverables.length > 0) {
-      html += `<div class="card" style="margin-top:24px"><h3>Deliverable Scorecard</h3>
-        <table class="data-table"><thead><tr>
-          <th>Type</th><th>Pioneer</th><th class="text-right">xCSG Days</th><th class="text-right">Legacy Days</th><th class="text-right">Effort Ratio</th><th>Revisions</th><th class="text-right">Value Multiplier</th>
+    // Filters bar
+    const cats = [...new Set(allProjects.map(p => p.category_name).filter(Boolean))].sort();
+    const clients = [...new Set(allProjects.map(p => p.client_name).filter(Boolean))].sort();
+    const pioneers = [...new Set(allProjects.map(p => p.pioneer_name).filter(Boolean))].sort();
+
+    html += `<div class="portfolio-filters">
+      <span class="filters-label">Filter by</span>
+      <select id="portfolioCatFilter" class="filter-select"><option value="">All Categories</option>${cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+      <select id="portfolioClientFilter" class="filter-select"><option value="">All Clients</option>${clients.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+      <select id="portfolioPioneerFilter" class="filter-select"><option value="">All Pioneers</option>${pioneers.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+      <select id="portfolioStatusFilter" class="filter-select"><option value="">All Status</option><option value="complete">Complete</option><option value="expert_pending">Expert Pending</option></select>
+      <button class="filter-reset" id="portfolioFilterReset" style="display:none">Clear filters</button>
+    </div>`;
+
+    // Scorecard
+    if (metricsProjects.length > 0) {
+      html += `<div class="card" style="margin-top:8px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Project Scorecard</h3>
+        <table class="data-table" id="scorecardTable"><thead><tr>
+          <th>Project</th><th>Category</th><th>Client</th><th>Pioneer</th><th>Status</th><th class="text-right">Effort Ratio</th><th class="text-right">Value Multiplier</th>
         </tr></thead><tbody>`;
-      for (const d of deliverables) {
-        html += `<tr>
-          <td>${esc(d.deliverable_type)}</td><td>${esc(d.pioneer_name)}</td>
-          <td class="text-right">${round2(d.xcsg_person_days)}</td><td class="text-right">${round2(d.legacy_person_days)}</td>
+      for (const d of metricsProjects) {
+        const isLowConf = !overriddenMap[d.id];
+        const confFlag = isLowConf ? CONFIDENCE_FLAG_SVG : '';
+        // Find project status from allProjects
+        const proj = allProjects.find(p => p.id === d.id);
+        const statusVal = proj ? proj.status : 'complete';
+        const statusBadge = statusVal === 'complete'
+          ? '<span class="badge badge-green">Complete</span>'
+          : '<span class="badge badge-orange">Expert Pending</span>';
+        html += `<tr data-cat="${esc(d.category_name)}" data-client="${esc(d.client_name || '')}" data-pioneer="${esc(d.pioneer_name)}" data-status="${statusVal}">
+          <td>${esc(d.project_name)}${confFlag}</td><td>${esc(d.category_name)}</td>
+          <td>${esc(d.client_name || '\u2014')}</td><td>${esc(d.pioneer_name)}</td>
+          <td>${statusBadge}</td>
           <td class="text-right"><strong>${round2(d.effort_ratio)}x</strong></td>
-          <td>${d.xcsg_revisions} → ${d.legacy_revisions}</td>
-          <td class="text-right vm-cell">${round2(d.value_multiplier)}x</td>
+          <td class="text-right vm-cell${isLowConf ? ' low-confidence' : ''}">${round2(d.value_multiplier)}x</td>
         </tr>`;
       }
       html += '</tbody></table></div>';
     }
 
     // Checkpoint 2+: Charts
-    if (checkpoint >= 2 && deliverables.length >= 3) {
+    if (checkpoint >= 2 && metricsProjects.length >= 3) {
       html += `<div class="chart-grid" style="margin-top:24px">
-        <div class="card"><h3>Effort Comparison</h3><canvas id="effortChart"></canvas></div>
-        <div class="card"><h3>Quality Comparison</h3><canvas id="qualityChart"></canvas></div>
+        <div class="card"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Effort Comparison</h3><canvas id="effortChart"></canvas></div>
+        <div class="card"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Quality Comparison</h3><canvas id="qualityChart"></canvas></div>
       </div>`;
 
-      html += `<div class="card" style="margin-top:24px"><h3>Flywheel Leg Scores</h3>
+      html += `<div class="card" style="margin-top:24px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Flywheel Leg Scores</h3>
         <div class="flywheel-gauges">
           <div class="gauge"><div class="gauge-label">Machine-First</div><div class="gauge-track"><div class="gauge-fill" style="width:${Math.round((summary.machine_first_avg || 0) * 100)}%;background:var(--blue)"></div></div><div class="gauge-value">${Math.round((summary.machine_first_avg || 0) * 100)}%</div></div>
           <div class="gauge"><div class="gauge-label">Senior-Led</div><div class="gauge-track"><div class="gauge-fill" style="width:${Math.round((summary.senior_led_avg || 0) * 100)}%;background:var(--navy)"></div></div><div class="gauge-value">${Math.round((summary.senior_led_avg || 0) * 100)}%</div></div>
@@ -311,35 +360,87 @@ async function renderDashboard() {
     }
 
     // Checkpoint 3+: Trend line
-    if (checkpoint >= 3 && deliverables.length >= 8) {
-      html += `<div class="card" style="margin-top:24px"><h3>Value Multiplier Trend</h3><canvas id="trendChart"></canvas></div>`;
+    if (checkpoint >= 3 && metricsProjects.length >= 8) {
+      html += `<div class="card" style="margin-top:24px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Value Multiplier Trend</h3><canvas id="trendChart"></canvas></div>`;
     }
 
     // Checkpoint 4: Scaling gates
     if (checkpoint >= 4 && gates) {
-      html += `<div class="card" style="margin-top:24px"><h3>Scaling Gates</h3><div class="gates-grid">`;
+      html += `<div class="card" style="margin-top:24px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Scaling Gates</h3><div class="gates-grid" style="padding:0 24px 24px">`;
       for (const g of (gates.gates || [])) {
         const badge = g.status === 'pass' ? 'badge-green' : 'badge-orange';
-        html += `<div class="gate-item"><span class="badge ${badge}">${g.status === 'pass' ? '✓ Pass' : '⏳ Pending'}</span> ${esc(g.name)}</div>`;
+        html += `<div class="gate-item"><span class="badge ${badge}">${g.status === 'pass' ? '\u2713 Pass' : '\u23f3 Pending'}</span> ${esc(g.name)}</div>`;
       }
       html += `<div class="gate-summary">${gates.passed_count}/${gates.total_count} gates passed</div></div></div>`;
     }
 
     mc.innerHTML = html;
 
+    // Portfolio filters
+    function applyPortfolioFilters() {
+      const catF = document.getElementById('portfolioCatFilter')?.value || '';
+      const clientF = document.getElementById('portfolioClientFilter')?.value || '';
+      const pioneerF = document.getElementById('portfolioPioneerFilter')?.value || '';
+      const statusF = document.getElementById('portfolioStatusFilter')?.value || '';
+      const resetBtn = document.getElementById('portfolioFilterReset');
+
+      // Show/hide clear button
+      if (resetBtn) {
+        resetBtn.style.display = (catF || clientF || pioneerF || statusF) ? '' : 'none';
+      }
+
+      let visibleCount = 0;
+      document.querySelectorAll('#scorecardTable tbody tr:not(.filter-empty-row)').forEach(tr => {
+        const show =
+          (!catF || tr.dataset.cat === catF) &&
+          (!clientF || tr.dataset.client === clientF) &&
+          (!pioneerF || tr.dataset.pioneer === pioneerF) &&
+          (!statusF || tr.dataset.status === statusF);
+        tr.style.display = show ? '' : 'none';
+        if (show) visibleCount++;
+      });
+
+      // Empty state row
+      let emptyRow = document.querySelector('#scorecardTable .filter-empty-row');
+      if (visibleCount === 0) {
+        if (!emptyRow) {
+          emptyRow = document.createElement('tr');
+          emptyRow.className = 'filter-empty-row';
+          emptyRow.innerHTML = '<td colspan="7" style="text-align:center;padding:32px;color:var(--gray-400)">No projects match the selected filters.</td>';
+          document.querySelector('#scorecardTable tbody')?.appendChild(emptyRow);
+        }
+        emptyRow.style.display = '';
+      } else if (emptyRow) {
+        emptyRow.style.display = 'none';
+      }
+    }
+
+    ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', applyPortfolioFilters);
+    });
+
+    // Clear filters
+    document.getElementById('portfolioFilterReset')?.addEventListener('click', () => {
+      ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      applyPortfolioFilters();
+    });
+
     // Render charts after DOM update
     setTimeout(() => {
-      if (checkpoint >= 2 && deliverables.length >= 3) {
-        renderEffortChart(deliverables);
-        renderQualityChart(deliverables);
+      if (checkpoint >= 2 && metricsProjects.length >= 3) {
+        renderEffortChart(metricsProjects);
+        renderQualityChart(metricsProjects);
       }
-      if (checkpoint >= 3 && deliverables.length >= 8) {
-        renderTrendChart(deliverables);
+      if (checkpoint >= 3 && metricsProjects.length >= 8) {
+        renderTrendChart(metricsProjects);
       }
     }, 100);
 
   } catch (err) {
-    mc.innerHTML = `<div class="error-state">Failed to load dashboard: ${esc(err.message)}</div>`;
+    mc.innerHTML = `<div class="error-state">Failed to load portfolio: ${esc(err.message)}</div>`;
   }
 }
 
@@ -351,7 +452,7 @@ function renderEffortChart(data) {
   const canvas = document.getElementById('effortChart');
   if (!canvas) return;
   destroyChart('effort');
-  const labels = data.map(d => d.deliverable_type.slice(0, 15));
+  const labels = data.map(d => (d.project_name || d.category_name).slice(0, 15));
   charts.effort = new Chart(canvas, {
     type: 'bar',
     data: {
@@ -369,7 +470,7 @@ function renderQualityChart(data) {
   const canvas = document.getElementById('qualityChart');
   if (!canvas) return;
   destroyChart('quality');
-  const labels = data.map(d => d.deliverable_type.slice(0, 15));
+  const labels = data.map(d => (d.project_name || d.category_name).slice(0, 15));
   charts.quality = new Chart(canvas, {
     type: 'bar',
     data: {
@@ -404,37 +505,68 @@ function renderTrendChart(data) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   NEW DELIVERABLE
+   NEW PROJECT
    ═══════════════════════════════════════════════════════════════════════ */
 
-function renderNewDeliverable(prefill = null) {
+function renderNewProject(prefill = null) {
   const mc = document.getElementById('mainContent');
   const isEdit = !!prefill;
-  const title = isEdit ? 'Edit Deliverable' : 'New Deliverable';
 
   const todayStr = new Date().toISOString().slice(0, 10);
+
+  // Determine legacy field styling for edit mode
+  const legacyClass = isEdit ? '' : 'legacy-auto';
+  const legacyOverridden = isEdit && prefill?.legacy_overridden;
+
+  // Get category name for source labels
+  const catName = prefill ? (state.categories.find(c => c.id == prefill.category_id)?.name || '') : '';
+
+  // Legacy source label text
+  function legacySourceText(field) {
+    if (isEdit) {
+      return legacyOverridden ? '<span class="legacy-source overridden">(overridden)</span>' : '<span class="legacy-source">(from category defaults)</span>';
+    }
+    return catName ? `<span class="legacy-source" data-legacy-source>(from ${esc(catName)} defaults)</span>` : '<span class="legacy-source" data-legacy-source>(from defaults)</span>';
+  }
+
+  // Legacy banner
+  const legacyBannerHTML = isEdit ? '' : `
+    <div class="legacy-banner" id="legacyBanner">
+      <svg class="legacy-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="16" x2="12" y2="12"/>
+        <line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+      <div>
+        <strong>Category defaults loaded.</strong>
+        Adjust these values to match this specific project's legacy context. Overriding improves metric accuracy.
+      </div>
+    </div>`;
+
   mc.innerHTML = `
     <div class="card">
-      <form id="deliverableForm">
-        <fieldset><legend>Deliverable Information</legend>
+      <form id="projectForm">
+        <fieldset><legend>Project Information</legend>
+          <div class="form-row full">
+            <div class="form-group"><label>Project Name <span class="required">*</span></label><input type="text" id="fName" required value="${esc(prefill?.project_name || '')}" placeholder="e.g., Pfizer EU Market Access Q2"></div>
+          </div>
           <div class="form-row">
-            <div class="form-group"><label>Deliverable Type <span class="required">*</span></label><select id="fType" required>${optionsHTML(DELIVERABLE_TYPES, prefill?.deliverable_type)}</select></div>
-            <div class="form-group"><label>Engagement Stage <span class="required">*</span></label><select id="fStage" required>${optionsHTML(ENGAGEMENT_STAGES, prefill?.engagement_stage)}</select></div>
+            <div class="form-group"><label>Category <span class="required">*</span></label><select id="fCategory" required>${categoryOptionsHTML(prefill?.category_id)}</select></div>
+            <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(prefill?.client_name || '')}"></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label>Pioneer Name <span class="required">*</span></label><input type="text" id="fPioneer" required value="${esc(prefill?.pioneer_name || '')}"></div>
             <div class="form-group"><label>Pioneer Email</label><input type="email" id="fEmail" value="${esc(prefill?.pioneer_email || '')}"></div>
           </div>
-          <div class="form-row">
-            <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(prefill?.client_name || '')}"></div>
-            <div class="form-group"><label>Description</label><input type="text" id="fDesc" value="${esc(prefill?.description || '')}"></div>
+          <div class="form-row full">
+            <div class="form-group"><label>Description</label><textarea id="fDesc" rows="3" placeholder="Brief project description">${esc(prefill?.description || '')}</textarea></div>
           </div>
         </fieldset>
 
         <fieldset><legend>Timeline</legend>
           <div class="form-row">
             <div class="form-group"><label>Date Started</label><input type="date" id="fDateStart" value="${prefill?.date_started || todayStr}"></div>
-            <div class="form-group"><label>Date Delivered</label><input type="date" id="fDateEnd" value="${prefill?.date_delivered || ''}"></div>
+            <div class="form-group"><label>Target Delivery Date</label><input type="date" id="fDateEnd" value="${prefill?.date_delivered || ''}"></div>
           </div>
         </fieldset>
 
@@ -445,46 +577,113 @@ function renderNewDeliverable(prefill = null) {
           </div>
           <div class="form-row">
             <div class="form-group"><label>Revision Rounds <span class="required">*</span></label><select id="fXRevisions" required>${optionsHTML(REVISION_ROUNDS, prefill?.xcsg_revision_rounds)}</select></div>
-            <div class="form-group"><label>Scope Expansion</label><select id="fScope">${optionsHTML(SCOPE_OPTIONS, prefill?.scope_expansion)}</select></div>
+            <div class="form-group"><label>Scope Expansion</label><select id="fScope">${optionsHTML(SCOPE_OPTIONS, prefill?.xcsg_scope_expansion)}</select></div>
           </div>
         </fieldset>
 
-        <fieldset><legend>Legacy Performance</legend>
-          <p class="legacy-note">These fields auto-populate from saved norms when you select a deliverable type. Override if needed.</p>
+        <fieldset><legend>Legacy Baseline</legend>
+          ${legacyBannerHTML}
+          <div id="legacyNoNorms" class="legacy-no-norms" style="display:none">No defaults available for this category. Enter values manually.</div>
           <div class="form-row">
-            <div class="form-group"><label>Calendar Days</label><select id="fLDays" class="legacy-field">${optionsHTML(CALENDAR_DAYS, prefill?.legacy_calendar_days)}</select></div>
-            <div class="form-group"><label>Team Size</label><select id="fLTeam" class="legacy-field">${optionsHTML(TEAM_SIZES, prefill?.legacy_team_size)}</select></div>
+            <div class="form-group"><label>Calendar Days ${legacySourceText('days')}</label><select id="fLDays" class="${legacyClass}">${optionsHTML(CALENDAR_DAYS, prefill?.legacy_calendar_days)}</select></div>
+            <div class="form-group"><label>Team Size ${legacySourceText('team')}</label><select id="fLTeam" class="${legacyClass}">${optionsHTML(TEAM_SIZES, prefill?.legacy_team_size)}</select></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label>Revision Rounds</label><select id="fLRevisions" class="legacy-field">${optionsHTML(REVISION_ROUNDS, prefill?.legacy_revision_rounds)}</select></div>
+            <div class="form-group"><label>Revision Rounds ${legacySourceText('revisions')}</label><select id="fLRevisions" class="${legacyClass}">${optionsHTML(REVISION_ROUNDS, prefill?.legacy_revision_rounds)}</select></div>
             <div class="form-group"></div>
           </div>
         </fieldset>
 
         <div class="form-actions">
-          <button type="button" class="btn btn-secondary" onclick="window.location.hash='#deliverables'">Cancel</button>
-          <button type="submit" class="btn btn-primary" style="padding:14px 32px;font-size:15px" id="deliverableSubmit">${isEdit ? 'Save Changes' : 'Create Deliverable'}</button>
+          <button type="button" class="btn btn-secondary" onclick="window.location.hash='#projects'">Cancel</button>
+          <button type="submit" class="btn btn-primary" style="padding:14px 32px;font-size:15px" id="projectSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>
         </div>
       </form>
     </div>`;
 
-  // Auto-populate legacy norms on type change
-  document.getElementById('fType').addEventListener('change', async function () {
-    if (isEdit) return; // don't override on edit
-    const type = this.value;
-    if (!type) return;
+  // Track whether legacy values have been manually changed
+  let legacyManuallyChanged = false;
+
+  // Legacy field override tracking (new project only)
+  if (!isEdit) {
+    ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('change', function () {
+          this.classList.remove('legacy-auto');
+          this.classList.add('legacy-overridden');
+          legacyManuallyChanged = true;
+          // Update the source label
+          const sourceSpan = this.closest('.form-group')?.querySelector('.legacy-source');
+          if (sourceSpan) {
+            sourceSpan.textContent = '(overridden)';
+            sourceSpan.classList.add('overridden');
+          }
+        });
+      }
+    });
+  }
+
+  // Auto-populate legacy norms on category change
+  document.getElementById('fCategory').addEventListener('change', async function () {
+    if (isEdit) return;
+    const catId = this.value;
+    if (!catId) return;
+
+    const selectedCat = state.categories.find(c => c.id == catId);
+    const catDisplayName = selectedCat ? selectedCat.name : 'category';
+
     try {
-      const norm = await apiCall('GET', `/norms/${encodeURIComponent(type)}`);
+      const norm = await apiCall('GET', `/norms/${catId}`);
       if (norm) {
+        // Show banner, hide no-norms message
+        const banner = document.getElementById('legacyBanner');
+        const noNorms = document.getElementById('legacyNoNorms');
+        if (banner) banner.style.display = '';
+        if (noNorms) noNorms.style.display = 'none';
+
+        // Set values and reset styling
+        ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) {
+            el.classList.remove('legacy-overridden');
+            el.classList.add('legacy-auto');
+          }
+        });
         document.getElementById('fLDays').value = norm.typical_calendar_days || '';
         document.getElementById('fLTeam').value = norm.typical_team_size || '';
         document.getElementById('fLRevisions').value = norm.typical_revision_rounds || '';
+        legacyManuallyChanged = false;
+
+        // Update source labels
+        document.querySelectorAll('[data-legacy-source]').forEach(span => {
+          span.textContent = `(from ${catDisplayName} defaults)`;
+          span.classList.remove('overridden');
+        });
       }
-    } catch { /* norms not found — that's fine */ }
+    } catch {
+      // No norms for this category
+      const banner = document.getElementById('legacyBanner');
+      const noNorms = document.getElementById('legacyNoNorms');
+      if (banner) banner.style.display = 'none';
+      if (noNorms) noNorms.style.display = '';
+
+      // Clear legacy fields
+      ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.value = '';
+          el.classList.remove('legacy-auto', 'legacy-overridden');
+        }
+      });
+      document.querySelectorAll('[data-legacy-source]').forEach(span => {
+        span.textContent = '';
+      });
+    }
   });
 
   // Submit
-  document.getElementById('deliverableForm').addEventListener('submit', async function (e) {
+  document.getElementById('projectForm').addEventListener('submit', async function (e) {
     e.preventDefault();
     const dateStart = document.getElementById('fDateStart').value;
     const dateEnd = document.getElementById('fDateEnd').value;
@@ -492,12 +691,12 @@ function renderNewDeliverable(prefill = null) {
       showToast('Start date must be before delivery date', 'error');
       return;
     }
-    const btn = document.getElementById('deliverableSubmit');
+    const btn = document.getElementById('projectSubmit');
     btn.disabled = true;
-    btn.textContent = 'Saving…';
+    btn.textContent = 'Saving\u2026';
     const payload = {
-      deliverable_type: document.getElementById('fType').value,
-      engagement_stage: document.getElementById('fStage').value,
+      project_name: document.getElementById('fName').value.trim(),
+      category_id: parseInt(document.getElementById('fCategory').value),
       pioneer_name: document.getElementById('fPioneer').value.trim(),
       pioneer_email: document.getElementById('fEmail').value.trim() || null,
       client_name: document.getElementById('fClient').value.trim() || null,
@@ -507,28 +706,34 @@ function renderNewDeliverable(prefill = null) {
       xcsg_calendar_days: document.getElementById('fXDays').value,
       xcsg_team_size: document.getElementById('fXTeam').value,
       xcsg_revision_rounds: document.getElementById('fXRevisions').value,
-      scope_expansion: document.getElementById('fScope').value || null,
+      xcsg_scope_expansion: document.getElementById('fScope').value || null,
       legacy_calendar_days: document.getElementById('fLDays').value || null,
       legacy_team_size: document.getElementById('fLTeam').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
     };
     try {
       if (isEdit) {
-        await apiCall('PUT', `/deliverables/${prefill.id}`, payload);
-        showToast('Deliverable updated');
-        window.location.hash = '#deliverables';
+        await apiCall('PUT', `/projects/${prefill.id}`, payload);
+        showToast('Project updated');
+        window.location.hash = '#projects';
       } else {
-        const result = await apiCall('POST', '/deliverables', payload);
+        const result = await apiCall('POST', '/projects', payload);
+
+        // Info toast if legacy values weren't overridden
+        if (!legacyManuallyChanged) {
+          showToast('Tip: Legacy baseline uses category defaults. Edit the project to set project-specific values for more accurate metrics.', 'info');
+        }
+
         const expertUrl = `${window.location.origin}${window.location.pathname}#expert/${result.expert_token}`;
         showModal(`
-          <h3>Deliverable Created</h3>
+          <h3>Project Created</h3>
           <p>Share this link with the expert to complete their assessment:</p>
           <div class="expert-link-box">
             <input type="text" value="${expertUrl}" readonly id="expertLinkInput" style="flex:1">
             <button class="btn btn-primary" onclick="copyToClipboard(document.getElementById('expertLinkInput').value)">Copy</button>
           </div>
           <div class="form-actions" style="margin-top:20px">
-            <button class="btn btn-secondary" onclick="hideModal();window.location.hash='#deliverables'">Done</button>
+            <button class="btn btn-secondary" onclick="hideModal();window.location.hash='#projects'">Done</button>
           </div>
         `);
       }
@@ -536,95 +741,150 @@ function renderNewDeliverable(prefill = null) {
       showToast(err.message, 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = isEdit ? 'Save Changes' : 'Create Deliverable';
+      btn.textContent = isEdit ? 'Save Changes' : 'Create Project';
     }
   });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   EDIT DELIVERABLE
+   EDIT PROJECT
    ═══════════════════════════════════════════════════════════════════════ */
 
-async function renderEditDeliverable(id) {
+async function renderEditProject(id) {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = '<div class="loading">Loading…</div>';
+  mc.innerHTML = '<div class="loading">Loading\u2026</div>';
   try {
-    const d = await apiCall('GET', `/deliverables/${id}`);
-    renderNewDeliverable(d);
+    const p = await apiCall('GET', `/projects/${id}`);
+    renderNewProject(p);
+
+    // If expert response exists, show grouped read-only summary below form
+    if (p.expert_response) {
+      const er = p.expert_response;
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.marginTop = '24px';
+      card.innerHTML = `
+        <div class="card-header">Expert Assessment (Read-Only)</div>
+        <div class="card-body">
+          <h4 class="expert-response-section">Section B: Machine-First Operations</h4>
+          <div class="expert-response-grid">
+            <div><span class="q-id">B1</span> ${esc(er.b1_starting_point)}</div>
+            <div><span class="q-id">B2</span> ${esc(er.b2_research_sources)}</div>
+            <div><span class="q-id">B3</span> ${esc(er.b3_assembly_ratio)}</div>
+            <div><span class="q-id">B4</span> ${esc(er.b4_hypothesis_first)}</div>
+          </div>
+          <h4 class="expert-response-section">Section C: Senior-Led Engagement</h4>
+          <div class="expert-response-grid">
+            <div><span class="q-id">C1</span> ${esc(er.c1_specialization)}</div>
+            <div><span class="q-id">C2</span> ${esc(er.c2_directness)}</div>
+            <div><span class="q-id">C3</span> ${esc(er.c3_judgment_pct)}</div>
+          </div>
+          <h4 class="expert-response-section">Section D: Proprietary Knowledge</h4>
+          <div class="expert-response-grid">
+            <div><span class="q-id">D1</span> ${esc(er.d1_proprietary_data)}</div>
+            <div><span class="q-id">D2</span> ${esc(er.d2_knowledge_reuse)}</div>
+            <div><span class="q-id">D3</span> ${esc(er.d3_moat_test)}</div>
+          </div>
+          <h4 class="expert-response-section">Section F: Value Creation</h4>
+          <div class="expert-response-grid">
+            <div><span class="q-id">F1</span> ${esc(er.f1_feasibility)}</div>
+            <div><span class="q-id">F2</span> ${esc(er.f2_productization)}</div>
+          </div>
+        </div>`;
+      mc.appendChild(card);
+    }
   } catch (err) {
-    mc.innerHTML = `<div class="error-state">Failed to load deliverable: ${esc(err.message)}</div>`;
+    mc.innerHTML = `<div class="error-state">Failed to load project: ${esc(err.message)}</div>`;
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   DELIVERABLES LIST
+   PROJECTS LIST
    ═══════════════════════════════════════════════════════════════════════ */
 
-async function renderDeliverables() {
+async function renderProjects() {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = '<div class="loading">Loading deliverables…</div>';
+  mc.innerHTML = '<div class="loading">Loading projects\u2026</div>';
   try {
-    const rows = await apiCall('GET', '/deliverables');
+    const rows = await apiCall('GET', '/projects');
     if (!rows || rows.length === 0) {
-      mc.innerHTML = `<div class="empty-state"><h3>No deliverables yet</h3><p>Create your first one to get started.</p><a href="#new" class="btn btn-primary">New Deliverable</a></div>`;
+      mc.innerHTML = `<div class="empty-state"><h3>No projects yet</h3><p>Create your first one to get started.</p><a href="#new" class="btn btn-primary">New Project</a></div>`;
       return;
     }
 
+    const cats = [...new Set(rows.map(p => p.category_name).filter(Boolean))].sort();
+    const pioneers = [...new Set(rows.map(p => p.pioneer_name).filter(Boolean))].sort();
+
     let html = `
-      <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+      <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
         <select id="statusFilter" class="filter-select">
           <option value="">All Status</option>
           <option value="expert_pending">Expert Pending</option>
           <option value="complete">Complete</option>
         </select>
-        <a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Deliverable</a>
+        <select id="catFilter" class="filter-select">
+          <option value="">All Categories</option>
+          ${cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+        </select>
+        <select id="pioneerFilter" class="filter-select">
+          <option value="">All Pioneers</option>
+          ${pioneers.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}
+        </select>
+        <a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>
       </div>
-      <div class="card"><table class="data-table" id="deliverableTable"><thead><tr>
-        <th>Type</th><th>Pioneer</th><th>Client</th><th>Status</th><th>Created</th><th>Actions</th>
+      <div class="card"><table class="data-table" id="projectTable"><thead><tr>
+        <th>Project Name</th><th>Category</th><th>Client</th><th>Pioneer</th><th>Status</th><th>Created</th><th>Actions</th>
       </tr></thead><tbody>`;
 
-    for (const d of rows) {
-      const statusBadge = d.status === 'complete'
+    for (const p of rows) {
+      const statusBadge = p.status === 'complete'
         ? '<span class="badge badge-green">Complete</span>'
         : '<span class="badge badge-orange">Expert Pending</span>';
+      const confFlag = !p.legacy_overridden ? CONFIDENCE_FLAG_SVG : '';
       const linkSvg = '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
       const trashSvg = '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
-      const expertBtn = d.status !== 'complete' && d.expert_token
-        ? `<button class="btn-icon" title="Copy expert link" onclick="event.stopPropagation();copyToClipboard('${window.location.origin}${window.location.pathname}#expert/${d.expert_token}')">${linkSvg}</button>`
+      const expertBtn = p.status !== 'complete' && p.expert_token
+        ? `<button class="btn-icon" title="Copy expert link" onclick="event.stopPropagation();copyToClipboard('${window.location.origin}${window.location.pathname}#expert/${p.expert_token}')">${linkSvg}</button>`
         : '';
       const isAdmin = state.user && state.user.role === 'admin';
       const deleteBtn = isAdmin
-        ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${d.id},'${esc(d.deliverable_type)}')">${trashSvg}</button>`
+        ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${p.id},'${esc(p.project_name)}')">${trashSvg}</button>`
         : '';
-      html += `<tr class="clickable-row" onclick="window.location.hash='#edit/${d.id}'">
-        <td>${esc(d.deliverable_type)}</td><td>${esc(d.pioneer_name)}</td><td>${esc(d.client_name || '—')}</td>
-        <td>${statusBadge}</td><td>${formatDate(d.created_at)}</td>
+      html += `<tr class="clickable-row" data-status="${p.status}" data-cat="${esc(p.category_name)}" data-pioneer="${esc(p.pioneer_name)}" onclick="window.location.hash='#edit/${p.id}'">
+        <td>${esc(p.project_name)}${confFlag}</td><td><span class="badge badge-navy">${esc(p.category_name)}</span></td><td>${esc(p.client_name || '\u2014')}</td>
+        <td>${esc(p.pioneer_name)}</td><td>${statusBadge}</td><td>${formatDate(p.created_at)}</td>
         <td class="actions-cell">${expertBtn}${deleteBtn}</td>
       </tr>`;
     }
     html += '</tbody></table></div>';
     mc.innerHTML = html;
 
-    // Filter
-    document.getElementById('statusFilter').addEventListener('change', function () {
-      const f = this.value;
-      document.querySelectorAll('#deliverableTable tbody tr').forEach(tr => {
-        if (!f) { tr.style.display = ''; return; }
-        const badge = tr.querySelector('.badge');
-        const status = badge?.classList.contains('badge-green') ? 'complete' : 'expert_pending';
-        tr.style.display = status === f ? '' : 'none';
+    // Filters
+    function applyProjectFilters() {
+      const sf = document.getElementById('statusFilter')?.value || '';
+      const cf = document.getElementById('catFilter')?.value || '';
+      const pf = document.getElementById('pioneerFilter')?.value || '';
+      document.querySelectorAll('#projectTable tbody tr').forEach(tr => {
+        const show =
+          (!sf || tr.dataset.status === sf) &&
+          (!cf || tr.dataset.cat === cf) &&
+          (!pf || tr.dataset.pioneer === pf);
+        tr.style.display = show ? '' : 'none';
       });
-    });
+    }
+    document.getElementById('statusFilter')?.addEventListener('change', applyProjectFilters);
+    document.getElementById('catFilter')?.addEventListener('change', applyProjectFilters);
+    document.getElementById('pioneerFilter')?.addEventListener('change', applyProjectFilters);
 
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load: ${esc(err.message)}</div>`;
   }
 }
 
-function confirmDelete(id, type) {
+function confirmDelete(id, name) {
   showModal(`
-    <h3>Delete Deliverable</h3>
-    <p>Are you sure you want to delete this <strong>${esc(type)}</strong> deliverable? This will also delete any expert responses.</p>
+    <h3>Delete Project</h3>
+    <p>Are you sure you want to delete <strong>${esc(name)}</strong>? This will also delete any expert responses.</p>
     <div class="form-actions">
       <button class="btn btn-danger" onclick="doDelete(${id})">Delete</button>
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -635,9 +895,9 @@ function confirmDelete(id, type) {
 async function doDelete(id) {
   hideModal();
   try {
-    await apiCall('DELETE', `/deliverables/${id}`);
-    showToast('Deliverable deleted');
-    renderDeliverables();
+    await apiCall('DELETE', `/projects/${id}`);
+    showToast('Project deleted');
+    renderProjects();
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -649,7 +909,7 @@ async function doDelete(id) {
 
 async function renderExpert(token) {
   const ec = document.getElementById('expertContent');
-  ec.innerHTML = '<div class="loading">Loading assessment…</div>';
+  ec.innerHTML = '<div class="loading">Loading assessment\u2026</div>';
 
   try {
     const ctx = await apiCall('GET', `/expert/${token}`);
@@ -666,14 +926,26 @@ async function renderExpert(token) {
 
     ec.innerHTML = `
       <div class="expert-section-card">
-        <div class="expert-section-title">Deliverable Context</div>
+        <div class="context-title">${esc(ctx.project_name)}</div>
+        <div class="context-subtitle">${esc(ctx.category_name)}${ctx.client_name ? ' \u00b7 ' + esc(ctx.client_name) : ''}</div>
+        ${ctx.description ? `<p class="context-description">${esc(ctx.description)}</p>` : ''}
         <div class="context-grid">
-          <div><strong>Type:</strong> ${esc(ctx.deliverable_type)}</div>
-          <div><strong>Client:</strong> ${esc(ctx.client_name || 'N/A')}</div>
-          <div><strong>Pioneer:</strong> ${esc(ctx.pioneer_name)}</div>
-          <div><strong>Dates:</strong> ${esc(ctx.date_started || '?')} → ${esc(ctx.date_delivered || '?')}</div>
-          <div><strong>Team Size:</strong> ${esc(ctx.xcsg_team_size)}</div>
-          <div><strong>Calendar Days:</strong> ${esc(ctx.xcsg_calendar_days)}</div>
+          <div class="context-item">
+            <span class="label">Pioneer</span>
+            <span class="value">${esc(ctx.pioneer_name)}</span>
+          </div>
+          <div class="context-item">
+            <span class="label">Timeline</span>
+            <span class="value">${esc(ctx.date_started || '?')} \u2192 ${esc(ctx.date_delivered || '?')}</span>
+          </div>
+          <div class="context-item">
+            <span class="label">Team Size</span>
+            <span class="value">${esc(ctx.xcsg_team_size)}</span>
+          </div>
+          <div class="context-item">
+            <span class="label">Calendar Days</span>
+            <span class="value">${esc(ctx.xcsg_calendar_days)}</span>
+          </div>
         </div>
       </div>
 
@@ -730,7 +1002,7 @@ async function renderExpert(token) {
       e.preventDefault();
       const btn = document.getElementById('expertSubmit');
       btn.disabled = true;
-      btn.textContent = 'Submitting…';
+      btn.textContent = 'Submitting\u2026';
       const fd = new FormData(this);
       const payload = Object.fromEntries(fd.entries());
       try {
@@ -757,40 +1029,175 @@ async function renderExpert(token) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   LEGACY NORMS
+   SETTINGS (Categories + Legacy Norms tabs)
    ═══════════════════════════════════════════════════════════════════════ */
 
-async function renderNorms() {
+async function renderSettings() {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = '<div class="loading">Loading norms…</div>';
+  mc.innerHTML = `
+    <div class="settings-tabs">
+      <button class="settings-tab active" id="tabCategories" onclick="switchSettingsTab('categories')">Categories</button>
+      <button class="settings-tab" id="tabNorms" onclick="switchSettingsTab('norms')">Legacy Norms</button>
+    </div>
+    <div id="settingsContent"><div class="loading">Loading\u2026</div></div>`;
+  renderCategoriesTab();
+}
+
+function switchSettingsTab(tab) {
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(tab === 'categories' ? 'tabCategories' : 'tabNorms').classList.add('active');
+  if (tab === 'categories') renderCategoriesTab();
+  else renderNormsTab();
+}
+
+async function renderCategoriesTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = '<div class="loading">Loading categories\u2026</div>';
   try {
-    const norms = await apiCall('GET', '/norms');
+    const cats = await apiCall('GET', '/categories');
+    state.categories = cats;
+    const isAdmin = state.user && state.user.role === 'admin';
+
+    let html = '<div class="card">';
+    if (isAdmin) {
+      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;gap:12px;align-items:center">
+        <input type="text" id="newCatName" placeholder="Category name" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <input type="text" id="newCatDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
+      </div>`;
+    }
+    html += `<table class="data-table"><thead><tr><th>Name</th><th>Description</th><th>Projects</th>${isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
+    for (const c of cats) {
+      const count = c.project_count || 0;
+      const deleteDisabled = count > 0;
+      html += `<tr>
+        <td><strong>${esc(c.name)}</strong></td>
+        <td>${esc(c.description || '\u2014')}</td>
+        <td>${count}</td>
+        ${isAdmin ? `<td class="actions-cell">
+          <button class="btn-icon" title="Edit" onclick="editCategory(${c.id},'${esc(c.name)}','${esc(c.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete \u2014 ' + count + ' projects use this category' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deleteCategory(" + c.id + ",'" + esc(c.name) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+        </td>` : ''}
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+    sc.innerHTML = html;
+  } catch (err) {
+    sc.innerHTML = `<div class="error-state">Failed to load categories: ${esc(err.message)}</div>`;
+  }
+}
+
+async function addCategory() {
+  const name = document.getElementById('newCatName')?.value.trim();
+  const desc = document.getElementById('newCatDesc')?.value.trim() || null;
+  if (!name) { showToast('Category name is required', 'error'); return; }
+  try {
+    await apiCall('POST', '/categories', { name, description: desc });
+    showToast('Category created');
+    state.categories = [];
+    renderCategoriesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function editCategory(id, name, desc) {
+  showModal(`
+    <h3>Edit Category</h3>
+    <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editCatName" value="${esc(name)}"></div>
+    <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editCatDesc" value="${esc(desc)}"></div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveCategory(${id})">Save</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function saveCategory(id) {
+  const name = document.getElementById('editCatName')?.value.trim();
+  const desc = document.getElementById('editCatDesc')?.value.trim() || null;
+  if (!name) { showToast('Name is required', 'error'); return; }
+  try {
+    await apiCall('PUT', `/categories/${id}`, { name, description: desc });
+    hideModal();
+    showToast('Category updated');
+    state.categories = [];
+    renderCategoriesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deleteCategory(id, name) {
+  showModal(`
+    <h3>Delete Category</h3>
+    <p>Are you sure you want to delete <strong>${esc(name)}</strong>? This will fail if projects exist for this category.</p>
+    <div class="form-actions">
+      <button class="btn btn-danger" onclick="doDeleteCategory(${id})">Delete</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function doDeleteCategory(id) {
+  hideModal();
+  try {
+    await apiCall('DELETE', `/categories/${id}`);
+    showToast('Category deleted');
+    state.categories = [];
+    renderCategoriesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function renderNormsTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = '<div class="loading">Loading norms\u2026</div>';
+  try {
+    const [norms, cats] = await Promise.all([
+      apiCall('GET', '/norms'),
+      apiCall('GET', '/categories'),
+    ]);
+
+    // Build set of category IDs that have norms
+    const normCatIds = new Set(norms.map(n => n.category_id));
+
     let html = `
       <div class="card">
-        <div class="info-banner">These norms auto-populate legacy performance fields when creating deliverables. Edit them to match your organization's baseline.</div>
+        <div class="info-banner">These norms pre-fill legacy baseline fields when creating new projects. Pioneers can override them per-project. Think of these as starting suggestions, not fixed values.</div>
         <table class="data-table"><thead><tr>
-          <th>Deliverable Type</th><th>Calendar Days</th><th>Team Size</th><th>Revision Rounds</th><th>Notes</th><th>Actions</th>
+          <th>Category</th><th>Calendar Days</th><th>Team Size</th><th>Revision Rounds</th><th>Notes</th><th>Actions</th>
         </tr></thead><tbody>`;
 
     for (const n of norms) {
-      html += `<tr id="norm-${esc(n.deliverable_type)}">
-        <td><strong>${esc(n.deliverable_type)}</strong></td>
+      html += `<tr id="norm-${n.category_id}">
+        <td><strong>${esc(n.category_name)}</strong></td>
         <td><select class="norm-edit" data-field="typical_calendar_days">${optionsHTML(CALENDAR_DAYS, n.typical_calendar_days)}</select></td>
         <td><select class="norm-edit" data-field="typical_team_size">${optionsHTML(TEAM_SIZES, n.typical_team_size)}</select></td>
         <td><select class="norm-edit" data-field="typical_revision_rounds">${optionsHTML(REVISION_ROUNDS, n.typical_revision_rounds)}</select></td>
         <td><input type="text" class="norm-edit" data-field="notes" value="${esc(n.notes || '')}" placeholder="Optional notes"></td>
-        <td><button class="btn btn-primary btn-sm norm-save-btn" onclick="saveNorm('${esc(n.deliverable_type)}')">Save</button></td>
+        <td><button class="btn btn-primary btn-sm norm-save-btn" onclick="saveNorm(${n.category_id})">Save</button></td>
       </tr>`;
     }
+
+    // Show categories without norms
+    for (const c of cats) {
+      if (!normCatIds.has(c.id)) {
+        html += `<tr id="norm-${c.id}" class="norm-not-configured">
+          <td><strong>${esc(c.name)}</strong> <span class="badge badge-gray">Not configured</span></td>
+          <td><select class="norm-edit" data-field="typical_calendar_days">${optionsHTML(CALENDAR_DAYS)}</select></td>
+          <td><select class="norm-edit" data-field="typical_team_size">${optionsHTML(TEAM_SIZES)}</select></td>
+          <td><select class="norm-edit" data-field="typical_revision_rounds">${optionsHTML(REVISION_ROUNDS)}</select></td>
+          <td><input type="text" class="norm-edit" data-field="notes" value="" placeholder="Optional notes"></td>
+          <td><button class="btn btn-primary btn-sm norm-save-btn" onclick="saveNorm(${c.id})">Save</button></td>
+        </tr>`;
+      }
+    }
+
     html += '</tbody></table></div>';
-    mc.innerHTML = html;
+    sc.innerHTML = html;
   } catch (err) {
-    mc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
+    sc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
   }
 }
 
-async function saveNorm(type) {
-  const row = document.getElementById(`norm-${type}`);
+async function saveNorm(categoryId) {
+  const row = document.getElementById(`norm-${categoryId}`);
   if (!row) return;
   const fields = {};
   row.querySelectorAll('.norm-edit').forEach(el => {
@@ -798,8 +1205,12 @@ async function saveNorm(type) {
     fields[f] = el.value;
   });
   try {
-    await apiCall('PUT', `/norms/${encodeURIComponent(type)}`, fields);
-    showToast(`Norms updated for ${type}`);
+    await apiCall('PUT', `/norms/${categoryId}`, fields);
+    showToast('Norms updated');
+    // Remove "not configured" styling if it was
+    row.classList.remove('norm-not-configured');
+    const notConfBadge = row.querySelector('.badge-gray');
+    if (notConfBadge) notConfBadge.remove();
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -811,7 +1222,7 @@ async function saveNorm(type) {
 
 async function renderActivity() {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = '<div class="loading">Loading activity…</div>';
+  mc.innerHTML = '<div class="loading">Loading activity\u2026</div>';
   try {
     const data = await apiCall('GET', '/activity?limit=100');
     const items = data.items || [];
@@ -838,7 +1249,7 @@ async function renderActivity() {
       html += `<tr class="activity-row${rowIdx >= ACTIVITY_PAGE ? ' activity-hidden' : ''}">
         <td>${formatDateTime(a.created_at)}</td>
         <td><span class="badge ${actionBadge}">${esc(a.action)}</span></td>
-        <td>${esc(a.details || '—')}</td>
+        <td>${esc(a.details || '\u2014')}</td>
       </tr>`;
       rowIdx++;
     }
