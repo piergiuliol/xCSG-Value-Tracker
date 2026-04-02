@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xCSG Value Tracker — Expert Assessment</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Roboto', sans-serif;
+    background: #f8f9fb;
+    color: #333;
+    min-height: 100vh;
+  }
+
+  /* ─── Header (branded, no sidebar) ─── */
+  .expert-header {
+    background: #121F6B;
+    padding: 20px 0;
+  }
+
+  .expert-header-inner {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-bars { display: flex; flex-direction: column; gap: 3px; }
+  .logo-bar { width: 20px; height: 3px; border-radius: 2px; }
+  .logo-bar:nth-child(1) { background: #6EC1E4; }
+  .logo-bar:nth-child(2) { background: #fff; }
+  .logo-bar:nth-child(3) { background: #FF8300; }
+
+  .expert-header span {
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .expert-header small {
+    color: rgba(255,255,255,0.6);
+    font-size: 13px;
+    margin-left: auto;
+  }
+
+  /* ─── Content ─── */
+  .expert-container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 24px 64px;
+  }
+
+  /* ─── Context Card ─── */
+  .context-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+
+  .context-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #121F6B;
+    margin-bottom: 4px;
+  }
+
+  .context-subtitle {
+    font-size: 14px;
+    color: #6b7280;
+    margin-bottom: 20px;
+  }
+
+  .context-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  .context-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .context-item .label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #9ca3af;
+    margin-bottom: 4px;
+  }
+
+  .context-item .value {
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+  }
+
+  /* ─── Form Card ─── */
+  .form-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    overflow: hidden;
+  }
+
+  fieldset {
+    border: none;
+    padding: 28px 32px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  fieldset:last-of-type { border-bottom: none; }
+
+  legend {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #121F6B;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #121F6B;
+    margin-bottom: 24px;
+    width: 100%;
+  }
+
+  .question-group {
+    margin-bottom: 24px;
+  }
+
+  .question-group:last-child { margin-bottom: 0; }
+
+  .question-group label {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 8px;
+    line-height: 1.4;
+  }
+
+  .question-group label .q-id {
+    display: inline-block;
+    background: #E8F5FC;
+    color: #121F6B;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  .question-group select {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: 'Roboto', sans-serif;
+    background: #fff;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    appearance: auto;
+  }
+
+  .question-group select:focus {
+    border-color: #6EC1E4;
+    box-shadow: 0 0 0 3px rgba(110, 193, 228, 0.15);
+  }
+
+  .question-group small {
+    display: block;
+    font-size: 12px;
+    color: #9ca3af;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* ─── Form Actions ─── */
+  .form-actions {
+    padding: 24px 32px;
+    border-top: 1px solid #e5e7eb;
+    background: #fafafa;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .form-time {
+    font-size: 13px;
+    color: #9ca3af;
+  }
+
+  .btn-primary {
+    padding: 14px 32px;
+    background: #121F6B;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    font-family: 'Roboto', sans-serif;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+
+  .btn-primary:hover {
+    background: #1A2D8A;
+    box-shadow: 0 4px 12px rgba(18,31,107,0.3);
+  }
+
+  /* ─── Progress Bar ─── */
+  .progress-bar {
+    height: 4px;
+    background: #e5e7eb;
+    border-radius: 2px;
+    margin-bottom: 28px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6EC1E4, #121F6B);
+    border-radius: 2px;
+    width: 75%;
+    transition: width 0.3s ease;
+  }
+
+  .progress-label {
+    font-size: 12px;
+    color: #9ca3af;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ─── Footer ─── */
+  .expert-footer {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px;
+    text-align: center;
+    font-size: 12px;
+    color: #9ca3af;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="expert-header">
+  <div class="expert-header-inner">
+    <div class="logo-bars"><div class="logo-bar"></div><div class="logo-bar"></div><div class="logo-bar"></div></div>
+    <span>Alira Health</span>
+    <small>Expert Assessment</small>
+  </div>
+</div>
+
+<div class="expert-container">
+
+  <!-- Context Card -->
+  <div class="context-card">
+    <div class="context-title">CDD — Oncology Asset Review</div>
+    <div class="context-subtitle">Please assess the deliverable below based on your direct experience producing it.</div>
+    <div class="context-grid">
+      <div class="context-item">
+        <span class="label">Client</span>
+        <span class="value">Apposite Capital</span>
+      </div>
+      <div class="context-item">
+        <span class="label">Pioneer</span>
+        <span class="value">Bob Delise</span>
+      </div>
+      <div class="context-item">
+        <span class="label">Dates</span>
+        <span class="value">Jan 15 – Feb 1</span>
+      </div>
+      <div class="context-item">
+        <span class="label">Team Size</span>
+        <span class="value">1 person</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-label">
+    <span>Progress</span>
+    <span>9 of 12 answered</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill" style="width:75%"></div>
+  </div>
+
+  <!-- Form -->
+  <div class="form-card">
+
+    <!-- Section B: Machine-First Operations -->
+    <fieldset>
+      <legend>Section B — Machine-First Operations</legend>
+
+      <div class="question-group">
+        <label><span class="q-id">B1</span> Starting point: Did you build from an AI-generated draft or blank page?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>From AI draft</option>
+          <option>Mixed (AI structure, manual content)</option>
+          <option>From blank page</option>
+        </select>
+        <small>Tests whether AI handles the assembly layer</small>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">B2</span> Research throughput: How many distinct data sources were synthesized?</label>
+        <select>
+          <option value="">Select…</option>
+          <option>1-3</option>
+          <option>4-7</option>
+          <option selected>8-12</option>
+          <option>13+</option>
+        </select>
+        <small>More sources = more informed deliverable. Measures scope expansion.</small>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">B3</span> Assembly ratio: What % of data collection and initial structuring was AI-performed?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>>75% AI</option>
+          <option>50-75%</option>
+          <option>25-50%</option>
+          <option>&lt;25%</option>
+        </select>
+        <small>Paired with timeline data, this proves machine-first value</small>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">B4</span> Hypothesis approach: Was this structured around a pre-formed hypothesis?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>Hypothesis-first (tested a specific thesis)</option>
+          <option>Hybrid (hypothesis emerged during work)</option>
+          <option>Discovery-first (open-ended research)</option>
+        </select>
+        <small>Hypothesis-first is the behavioral signature of xCSG</small>
+      </div>
+    </fieldset>
+
+    <!-- Section C: Senior-Led -->
+    <fieldset>
+      <legend>Section C — Senior-Led Specialized Operations</legend>
+
+      <div class="question-group">
+        <label><span class="q-id">C1</span> Specialization match: Are you a recognized domain specialist in this subject?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>Deep specialist in this TA/methodology</option>
+          <option>Adjacent expertise</option>
+          <option>Generalist</option>
+        </select>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">C2</span> Directness: Did you AUTHOR or only REVIEW this deliverable?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>Expert authored (with AI assist)</option>
+          <option>Expert co-authored (shared with team)</option>
+          <option>Expert reviewed only</option>
+        </select>
+        <small>Authored = judgment directly embedded. Reviewed = judgment filtered.</small>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">C3</span> Judgment concentration: What % of your time was high-value work?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>>75% judgment</option>
+          <option>50-75%</option>
+          <option>25-50%</option>
+          <option>&lt;25%</option>
+        </select>
+        <small>Analysis, interpretation, strategic framing vs. data gathering and formatting</small>
+      </div>
+    </fieldset>
+
+    <!-- Section D: Proprietary Knowledge -->
+    <fieldset>
+      <legend>Section D — Proprietary Knowledge</legend>
+
+      <div class="question-group">
+        <label><span class="q-id">D1</span> Does this deliverable contain data from Alira proprietary sources not publicly available?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>Yes</option>
+          <option>No</option>
+        </select>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">D2</span> Did this build on reusable knowledge assets from previous Alira engagements?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>Yes, directly reused and extended</option>
+          <option>Yes, provided useful starting context</option>
+          <option>No, built from scratch</option>
+        </select>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">D3</span> Could a competitor with the same AI tools but WITHOUT Alira's proprietary data have produced equivalent work?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>No — proprietary inputs were decisive</option>
+          <option>Partially — they'd miss key insights</option>
+          <option>Yes — all inputs were publicly available</option>
+        </select>
+        <small>The moat test — measures defensibility of xCSG advantage</small>
+      </div>
+    </fieldset>
+
+    <!-- Section F: Value Creation -->
+    <fieldset>
+      <legend>Section F — Value Creation</legend>
+
+      <div class="question-group">
+        <label><span class="q-id">F1</span> Would this deliverable have been feasible in the legacy model — same scope, quality, timeline?</label>
+        <select>
+          <option value="">Select…</option>
+          <option>Not feasible — scope or timeline only possible with AI</option>
+          <option selected>Feasible but at 2x+ the cost and time</option>
+          <option>Feasible at similar cost — xCSG provided marginal benefit</option>
+          <option>Legacy would have been more effective</option>
+        </select>
+        <small>"Not feasible" identifies deliverables that xCSG creates — work that wouldn't exist otherwise</small>
+      </div>
+
+      <div class="question-group">
+        <label><span class="q-id">F2</span> Could a component of this deliverable be reused as a standardized offering?</label>
+        <select>
+          <option value="">Select…</option>
+          <option selected>Yes, largely as-is</option>
+          <option>Yes, with moderate customization</option>
+          <option>No, fully bespoke</option>
+        </select>
+        <small>Signals Agent-as-a-Service (AaaS) potential</small>
+      </div>
+    </fieldset>
+
+    <!-- Submit -->
+    <div class="form-actions">
+      <span class="form-time">⏱ Estimated: &lt;3 minutes</span>
+      <button class="btn-primary">Submit Assessment</button>
+    </div>
+
+  </div>
+
+</div>
+
+<div class="expert-footer">
+  © 2026 Alira Health — Confidential · xCSG Value Measurement
+</div>
+
+</body>
+</html>

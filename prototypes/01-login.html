@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xCSG Value Tracker — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    font-family: 'Roboto', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #121F6B 0%, #1A2D8A 100%);
+    color: #333;
+  }
+
+  .login-card {
+    background: #fff;
+    border-radius: 16px;
+    width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    overflow: hidden;
+  }
+
+  .login-accent {
+    height: 4px;
+    background: linear-gradient(90deg, #6EC1E4 0%, #121F6B 50%, #FF8300 100%);
+  }
+
+  .login-body {
+    padding: 48px 40px 40px;
+  }
+
+  .login-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .logo-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .logo-bar {
+    width: 24px;
+    height: 4px;
+    border-radius: 2px;
+  }
+
+  .logo-bar:nth-child(1) { background: #6EC1E4; }
+  .logo-bar:nth-child(2) { background: #121F6B; }
+  .logo-bar:nth-child(3) { background: #FF8300; }
+
+  .logo-text {
+    font-size: 22px;
+    font-weight: 700;
+    color: #121F6B;
+    letter-spacing: 0.5px;
+  }
+
+  .login-subtitle {
+    font-size: 14px;
+    color: #6b7280;
+    margin-bottom: 36px;
+    margin-top: 4px;
+  }
+
+  .form-group {
+    margin-bottom: 20px;
+  }
+
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 6px;
+  }
+
+  .form-group input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: 'Roboto', sans-serif;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    outline: none;
+  }
+
+  .form-group input:focus {
+    border-color: #6EC1E4;
+    box-shadow: 0 0 0 3px rgba(110, 193, 228, 0.15);
+  }
+
+  .form-group input::placeholder {
+    color: #9ca3af;
+  }
+
+  .btn-primary {
+    width: 100%;
+    padding: 14px 24px;
+    background: #121F6B;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    font-family: 'Roboto', sans-serif;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+    margin-top: 8px;
+  }
+
+  .btn-primary:hover {
+    background: #1A2D8A;
+    box-shadow: 0 4px 12px rgba(18, 31, 107, 0.3);
+  }
+
+  .btn-primary:active {
+    background: #0C1550;
+  }
+
+  .login-footer {
+    text-align: center;
+    margin-top: 24px;
+    font-size: 12px;
+    color: #9ca3af;
+  }
+
+  .error-msg {
+    background: #FEF2F2;
+    border: 1px solid #FECACA;
+    color: #EF4444;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 20px;
+    display: none;
+  }
+
+  .error-msg.visible {
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="login-accent"></div>
+  <div class="login-body">
+    <div class="login-logo">
+      <div class="logo-bars">
+        <div class="logo-bar"></div>
+        <div class="logo-bar"></div>
+        <div class="logo-bar"></div>
+      </div>
+      <span class="logo-text">Alira Health</span>
+    </div>
+    <p class="login-subtitle">xCSG Value Measurement Tracker</p>
+
+    <div class="error-msg" id="errorMsg">
+      Invalid username or password. Please try again.
+    </div>
+
+    <form>
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="Enter your username" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn-primary">Sign In</button>
+    </form>
+
+    <div class="login-footer">
+      © 2026 Alira Health — Confidential
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
