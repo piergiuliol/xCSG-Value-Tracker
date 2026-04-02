@@ -493,6 +493,7 @@ fieldset {
 }
 
 fieldset:last-of-type { border-bottom: none; }
+fieldset:nth-of-type(even) { background: var(--gray-50); }
 
 legend {
   font-size: 14px;
