@@ -78,6 +78,13 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function formatDateTime(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+    ' ' + dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
 function round2(n) { return Math.round(n * 100) / 100; }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -241,14 +248,14 @@ async function renderDashboard() {
 
     let html = '';
 
+    // Dashboard header with export
+    html += `<div class="dashboard-header"><div></div><button class="btn-export" onclick="exportExcel()">📥 Export to Excel</button></div>`;
+
     // Checkpoint progress
     html += `<div class="checkpoint-bar">
       <div class="checkpoint-label">Checkpoint ${checkpoint} — ${complete} deliverable${complete !== 1 ? 's' : ''} complete${nextThreshold ? `, ${nextThreshold - complete} more to reach Checkpoint ${checkpoint + 1}` : ' — Full evidence package'}</div>
       <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, (complete / (nextThreshold || complete)) * 100)}%"></div></div>
     </div>`;
-
-    // Export button
-    html += `<div style="text-align:right;margin-bottom:16px"><button class="btn btn-secondary" onclick="exportExcel()">📥 Export to Excel</button></div>`;
 
     // KPI cards
     const vm = summary.average_value_multiplier || 0;
@@ -304,7 +311,7 @@ async function renderDashboard() {
     if (checkpoint >= 4 && gates) {
       html += `<div class="card" style="margin-top:24px"><h3>Scaling Gates</h3><div class="gates-grid">`;
       for (const g of (gates.gates || [])) {
-        const badge = g.status === 'pass' ? 'badge-success' : 'badge-warning';
+        const badge = g.status === 'pass' ? 'badge-green' : 'badge-orange';
         html += `<div class="gate-item"><span class="badge ${badge}">${g.status === 'pass' ? '✓ Pass' : '⏳ Pending'}</span> ${esc(g.name)}</div>`;
       }
       html += `<div class="gate-summary">${gates.passed_count}/${gates.total_count} gates passed</div></div></div>`;
@@ -397,9 +404,9 @@ function renderNewDeliverable(prefill = null) {
   const isEdit = !!prefill;
   const title = isEdit ? 'Edit Deliverable' : 'New Deliverable';
 
+  const todayStr = new Date().toISOString().slice(0, 10);
   mc.innerHTML = `
     <div class="card">
-      <h2>${title}</h2>
       <form id="deliverableForm">
         <fieldset><legend>Deliverable Information</legend>
           <div class="form-row">
@@ -418,7 +425,7 @@ function renderNewDeliverable(prefill = null) {
 
         <fieldset><legend>Timeline</legend>
           <div class="form-row">
-            <div class="form-group"><label>Date Started</label><input type="date" id="fDateStart" value="${prefill?.date_started || ''}"></div>
+            <div class="form-group"><label>Date Started</label><input type="date" id="fDateStart" value="${prefill?.date_started || todayStr}"></div>
             <div class="form-group"><label>Date Delivered</label><input type="date" id="fDateEnd" value="${prefill?.date_delivered || ''}"></div>
           </div>
         </fieldset>
@@ -434,7 +441,8 @@ function renderNewDeliverable(prefill = null) {
           </div>
         </fieldset>
 
-        <fieldset><legend>Legacy Performance <small>(auto-populated from norms)</small></legend>
+        <fieldset><legend>Legacy Performance</legend>
+          <p class="legacy-note">These fields auto-populate from saved norms when you select a deliverable type. Override if needed.</p>
           <div class="form-row">
             <div class="form-group"><label>Calendar Days</label><select id="fLDays" class="legacy-field">${optionsHTML(CALENDAR_DAYS, prefill?.legacy_calendar_days)}</select></div>
             <div class="form-group"><label>Team Size</label><select id="fLTeam" class="legacy-field">${optionsHTML(TEAM_SIZES, prefill?.legacy_team_size)}</select></div>
@@ -446,8 +454,8 @@ function renderNewDeliverable(prefill = null) {
         </fieldset>
 
         <div class="form-actions">
-          <button type="submit" class="btn btn-primary" id="deliverableSubmit">${isEdit ? 'Save Changes' : 'Create Deliverable'}</button>
           <button type="button" class="btn btn-secondary" onclick="window.location.hash='#deliverables'">Cancel</button>
+          <button type="submit" class="btn btn-primary" style="padding:14px 32px;font-size:15px" id="deliverableSubmit">${isEdit ? 'Save Changes' : 'Create Deliverable'}</button>
         </div>
       </form>
     </div>`;
@@ -569,8 +577,8 @@ async function renderDeliverables() {
 
     for (const d of rows) {
       const statusBadge = d.status === 'complete'
-        ? '<span class="badge badge-success">Complete</span>'
-        : '<span class="badge badge-warning">Expert Pending</span>';
+        ? '<span class="badge badge-green">Complete</span>'
+        : '<span class="badge badge-orange">Expert Pending</span>';
       const expertBtn = d.status !== 'complete' && d.expert_token
         ? `<button class="btn-icon" title="Copy expert link" onclick="event.stopPropagation();copyToClipboard('${window.location.origin}${window.location.pathname}#expert/${d.expert_token}')">🔗</button>`
         : '';
@@ -593,7 +601,7 @@ async function renderDeliverables() {
       document.querySelectorAll('#deliverableTable tbody tr').forEach(tr => {
         if (!f) { tr.style.display = ''; return; }
         const badge = tr.querySelector('.badge');
-        const status = badge?.classList.contains('badge-success') ? 'complete' : 'expert_pending';
+        const status = badge?.classList.contains('badge-green') ? 'complete' : 'expert_pending';
         tr.style.display = status === f ? '' : 'none';
       });
     });
@@ -639,7 +647,7 @@ async function renderExpert(token) {
     if (ctx.already_completed) {
       ec.innerHTML = `
         <div class="expert-thankyou">
-          <div class="thankyou-icon">✓</div>
+          <div class="thankyou-icon">&#10003;</div>
           <h2>Thank You</h2>
           <p>This assessment has already been submitted. Your responses have been recorded.</p>
         </div>`;
@@ -647,8 +655,8 @@ async function renderExpert(token) {
     }
 
     ec.innerHTML = `
-      <div class="expert-context card">
-        <h3>Deliverable Context</h3>
+      <div class="expert-section-card">
+        <div class="expert-section-title">Deliverable Context</div>
         <div class="context-grid">
           <div><strong>Type:</strong> ${esc(ctx.deliverable_type)}</div>
           <div><strong>Client:</strong> ${esc(ctx.client_name || 'N/A')}</div>
@@ -659,32 +667,53 @@ async function renderExpert(token) {
         </div>
       </div>
 
-      <form id="expertForm" class="expert-form-body">
-        <fieldset><legend>B — Machine-First Operations</legend>
-          <div class="expert-q"><label><span class="q-id">B1</span> Starting point: Did you build the final deliverable from an AI-generated draft or from a blank page?</label><select name="b1_starting_point" required>${optionsHTML(B1_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">B2</span> Research throughput: How many distinct data sources were synthesized?</label><select name="b2_research_sources" required>${optionsHTML(B2_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">B3</span> Assembly ratio: What percentage of data collection and structuring was AI-performed?</label><select name="b3_assembly_ratio" required>${optionsHTML(B3_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">B4</span> Hypothesis approach: Was this structured around a pre-formed hypothesis or open-ended discovery?</label><select name="b4_hypothesis_first" required>${optionsHTML(B4_OPTIONS)}</select></div>
-        </fieldset>
+      <div class="expert-progress">
+        <span class="expert-progress-dot active"></span>
+        <span class="expert-progress-dot"></span>
+        <span class="expert-progress-dot"></span>
+        <span class="expert-progress-dot"></span>
+        <span class="expert-progress-label">4 sections to complete</span>
+      </div>
 
-        <fieldset><legend>C — Senior-Led Engagement Operations</legend>
-          <div class="expert-q"><label><span class="q-id">C1</span> Specialization match: Is the analyst a recognized domain specialist in this subject?</label><select name="c1_specialization" required>${optionsHTML(C1_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">C2</span> Directness: Did the expert author or only review the deliverable?</label><select name="c2_directness" required>${optionsHTML(C2_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">C3</span> Judgment concentration: What % of expert time was high-value work vs assembly?</label><select name="c3_judgment_pct" required>${optionsHTML(C3_OPTIONS)}</select></div>
-        </fieldset>
+      <form id="expertForm">
+        <div class="expert-section-card">
+          <div class="expert-section-title">Section B: How AI-Driven Was This Work?</div>
+          <div class="expert-section-desc">Assess how much of this deliverable was built using machine-first processes.</div>
+          <div class="expert-question"><label><span class="q-id">B1</span> Starting point: Did you build the final deliverable from an AI-generated draft or from a blank page?</label><span class="helper-text">Select whether the initial draft originated from AI tools or was created manually.</span><select name="b1_starting_point" required>${optionsHTML(B1_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">B2</span> Research throughput: How many distinct data sources were synthesized?</label><span class="helper-text">Count unique databases, reports, or feeds that contributed to the analysis.</span><select name="b2_research_sources" required>${optionsHTML(B2_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">B3</span> Assembly ratio: What percentage of data collection and structuring was AI-performed?</label><span class="helper-text">Estimate the share of raw data gathering and organization done by AI vs. manually.</span><select name="b3_assembly_ratio" required>${optionsHTML(B3_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">B4</span> Hypothesis approach: Was this structured around a pre-formed hypothesis or open-ended discovery?</label><span class="helper-text">Hypothesis-first means the team tested a specific thesis; discovery-first means open-ended research.</span><select name="b4_hypothesis_first" required>${optionsHTML(B4_OPTIONS)}</select></div>
+        </div>
 
-        <fieldset><legend>D — Proprietary Knowledge</legend>
-          <div class="expert-q"><label><span class="q-id">D1</span> Does this contain data from Alira proprietary sources not available publicly?</label><select name="d1_proprietary_data" required>${optionsHTML(D1_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">D2</span> Did this build on reusable knowledge assets from previous engagements?</label><select name="d2_knowledge_reuse" required>${optionsHTML(D2_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">D3</span> Could a competitor without Alira's proprietary data have produced an equivalent deliverable?</label><select name="d3_moat_test" required>${optionsHTML(D3_OPTIONS)}</select></div>
-        </fieldset>
+        <div class="expert-section-card">
+          <div class="expert-section-title">Section C: How Senior-Led Was the Engagement?</div>
+          <div class="expert-section-desc">Evaluate the depth of expert involvement and judgment applied.</div>
+          <div class="expert-question"><label><span class="q-id">C1</span> Specialization match: Is the analyst a recognized domain specialist in this subject?</label><span class="helper-text">Deep specialist = published or recognized expert in this therapeutic area or methodology.</span><select name="c1_specialization" required>${optionsHTML(C1_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">C2</span> Directness: Did the expert author or only review the deliverable?</label><span class="helper-text">Distinguish between hands-on authorship vs. oversight/review role.</span><select name="c2_directness" required>${optionsHTML(C2_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">C3</span> Judgment concentration: What % of expert time was high-value work vs assembly?</label><span class="helper-text">High-value = strategic interpretation, client insight, novel analysis. Assembly = formatting, data entry.</span><select name="c3_judgment_pct" required>${optionsHTML(C3_OPTIONS)}</select></div>
+        </div>
 
-        <fieldset><legend>F — Value Creation</legend>
-          <div class="expert-q"><label><span class="q-id">F1</span> Would this deliverable have been feasible in the legacy model?</label><select name="f1_feasibility" required>${optionsHTML(F1_OPTIONS)}</select></div>
-          <div class="expert-q"><label><span class="q-id">F2</span> Could a component be reused as a standardized offering?</label><select name="f2_productization" required>${optionsHTML(F2_OPTIONS)}</select></div>
-        </fieldset>
+        <div class="expert-section-card">
+          <div class="expert-section-title">Section D: Proprietary Knowledge Moat</div>
+          <div class="expert-section-desc">Assess how much proprietary or accumulated knowledge made this deliverable unique.</div>
+          <div class="expert-question"><label><span class="q-id">D1</span> Does this contain data from Alira proprietary sources not available publicly?</label><span class="helper-text">Proprietary sources include internal databases, prior engagement data, or licensed datasets.</span><select name="d1_proprietary_data" required>${optionsHTML(D1_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">D2</span> Did this build on reusable knowledge assets from previous engagements?</label><span class="helper-text">E.g., frameworks, templates, or datasets created in prior work that accelerated this deliverable.</span><select name="d2_knowledge_reuse" required>${optionsHTML(D2_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">D3</span> Could a competitor without Alira's proprietary data have produced an equivalent deliverable?</label><span class="helper-text">This measures the competitive moat created by accumulated institutional knowledge.</span><select name="d3_moat_test" required>${optionsHTML(D3_OPTIONS)}</select></div>
+        </div>
 
-        <div class="form-actions"><button type="submit" class="btn btn-primary" id="expertSubmit">Submit Assessment</button></div>
+        <div class="expert-section-note">Section E is reserved for future framework expansion and is not part of this assessment.</div>
+
+        <div class="expert-section-card">
+          <div class="expert-section-title">Section F: Value Creation</div>
+          <div class="expert-section-desc">Evaluate whether xCSG created value that wouldn't exist in the legacy model.</div>
+          <div class="expert-question"><label><span class="q-id">F1</span> Would this deliverable have been feasible in the legacy model?</label><span class="helper-text">Consider scope, timeline, and resource constraints of the pre-xCSG approach.</span><select name="f1_feasibility" required>${optionsHTML(F1_OPTIONS)}</select></div>
+          <div class="expert-question"><label><span class="q-id">F2</span> Could a component be reused as a standardized offering?</label><span class="helper-text">Indicates whether the output or methodology has potential for productization.</span><select name="f2_productization" required>${optionsHTML(F2_OPTIONS)}</select></div>
+        </div>
+
+        <div class="expert-submit-area">
+          <span class="time-hint">Takes approximately 3 minutes</span>
+          <button type="submit" class="btn btn-primary" id="expertSubmit">Submit Assessment</button>
+        </div>
       </form>`;
 
     document.getElementById('expertForm').addEventListener('submit', async function (e) {
@@ -697,9 +726,9 @@ async function renderExpert(token) {
       try {
         const result = await apiCall('POST', `/expert/${token}`, payload);
         if (result.already_completed) {
-          ec.innerHTML = `<div class="expert-thankyou"><div class="thankyou-icon">✓</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>`;
+          ec.innerHTML = `<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>`;
         } else {
-          ec.innerHTML = `<div class="expert-thankyou"><div class="thankyou-icon">✓</div><h2>Thank You!</h2><p>Your assessment has been recorded successfully.</p></div>`;
+          ec.innerHTML = `<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Thank You!</h2><p>Your assessment has been recorded successfully.</p></div>`;
         }
       } catch (err) {
         showToast(err.message, 'error');
@@ -740,7 +769,7 @@ async function renderNorms() {
         <td><select class="norm-edit" data-field="typical_team_size">${optionsHTML(TEAM_SIZES, n.typical_team_size)}</select></td>
         <td><select class="norm-edit" data-field="typical_revision_rounds">${optionsHTML(REVISION_ROUNDS, n.typical_revision_rounds)}</select></td>
         <td><input type="text" class="norm-edit" data-field="notes" value="${esc(n.notes || '')}" placeholder="Optional notes"></td>
-        <td><button class="btn btn-primary btn-sm" onclick="saveNorm('${esc(n.deliverable_type)}')">Save</button></td>
+        <td><button class="btn btn-primary btn-sm norm-save-btn" onclick="saveNorm('${esc(n.deliverable_type)}')">Save</button></td>
       </tr>`;
     }
     html += '</tbody></table></div>';
@@ -781,14 +810,21 @@ async function renderActivity() {
       return;
     }
     let html = '<div class="card"><table class="data-table"><thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead><tbody>';
+    let lastDay = '';
     for (const a of items) {
+      const day = a.created_at ? new Date(a.created_at).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      if (day && day !== lastDay) {
+        html += `<tr><td colspan="3" class="activity-day-sep">${day}</td></tr>`;
+        lastDay = day;
+      }
       const actionBadge = a.action === 'login' ? 'badge-info'
-        : a.action.includes('created') ? 'badge-success'
-        : a.action.includes('deleted') ? 'badge-error'
-        : a.action.includes('expert') ? 'badge-warning'
-        : '';
+        : a.action.includes('created') ? 'badge-green'
+        : a.action.includes('deleted') ? 'badge-red'
+        : a.action.includes('expert') ? 'badge-orange'
+        : a.action.includes('updated') ? 'badge-navy'
+        : 'badge-gray';
       html += `<tr>
-        <td>${formatDate(a.created_at)}</td>
+        <td>${formatDateTime(a.created_at)}</td>
         <td><span class="badge ${actionBadge}">${esc(a.action)}</span></td>
         <td>${esc(a.details || '—')}</td>
       </tr>`;
