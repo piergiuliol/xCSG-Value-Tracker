@@ -138,8 +138,31 @@ body {
 .sidebar .logo-bar { width: 20px; height: 3px; }
 
 .logo-img {
-  max-width: 160px;
   object-fit: contain;
+}
+
+.sidebar-logo-img {
+  height: auto;
+  width: 140px;
+}
+
+.login-logo-img {
+  height: auto;
+  width: 160px;
+  max-width: 100%;
+}
+
+.expert-logo-img {
+  height: auto;
+  width: 140px;
+}
+
+/* Nav icons — minimal stroke SVGs */
+.nav-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  stroke: currentColor;
 }
 
 .login-logo .logo-text {
@@ -218,7 +241,7 @@ body {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 12px 24px;
   color: rgba(255,255,255,0.7);
   text-decoration: none;
