@@ -1,5 +1,6 @@
 """
-database.py — SQLite CRUD, schema, and seed data for xCSG Value Tracker
+database.py — SQLite CRUD, schema, and seed data for xCSG Value Tracker v2
+Project-centric redesign: deliverables → projects, category-keyed norms.
 """
 import os
 import secrets
@@ -33,35 +34,43 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS deliverables (
+            CREATE TABLE IF NOT EXISTS project_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_by INTEGER NOT NULL,
+                project_name TEXT NOT NULL,
+                category_id INTEGER NOT NULL,
+                client_name TEXT,
                 pioneer_name TEXT NOT NULL,
                 pioneer_email TEXT,
-                deliverable_type TEXT NOT NULL,
-                engagement_stage TEXT NOT NULL,
-                client_name TEXT,
                 description TEXT,
                 date_started TEXT,
                 date_delivered TEXT,
+                status TEXT DEFAULT 'expert_pending',
                 xcsg_calendar_days TEXT NOT NULL,
                 xcsg_team_size TEXT NOT NULL,
                 xcsg_revision_rounds TEXT NOT NULL,
-                scope_expansion TEXT,
-                legacy_calendar_days TEXT NOT NULL,
-                legacy_team_size TEXT NOT NULL,
-                legacy_revision_rounds TEXT NOT NULL,
+                xcsg_scope_expansion TEXT,
+                legacy_calendar_days TEXT,
+                legacy_team_size TEXT,
+                legacy_revision_rounds TEXT,
+                legacy_overridden INTEGER DEFAULT 0,
                 expert_token TEXT UNIQUE NOT NULL,
-                expert_completed BOOLEAN DEFAULT 0,
-                status TEXT DEFAULT 'expert_pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (created_by) REFERENCES users(id)
+                FOREIGN KEY (created_by) REFERENCES users(id),
+                FOREIGN KEY (category_id) REFERENCES project_categories(id)
             );
 
             CREATE TABLE IF NOT EXISTS expert_responses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                deliverable_id INTEGER UNIQUE NOT NULL,
+                project_id INTEGER UNIQUE NOT NULL,
                 b1_starting_point TEXT NOT NULL,
                 b2_research_sources TEXT NOT NULL,
                 b3_assembly_ratio TEXT NOT NULL,
@@ -74,19 +83,20 @@ def init_db() -> None:
                 d3_moat_test TEXT NOT NULL,
                 f1_feasibility TEXT NOT NULL,
                 f2_productization TEXT NOT NULL,
-                completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (deliverable_id) REFERENCES deliverables(id) ON DELETE CASCADE
+                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS legacy_norms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                deliverable_type TEXT UNIQUE NOT NULL,
+                category_id INTEGER UNIQUE NOT NULL,
                 typical_calendar_days TEXT NOT NULL,
                 typical_team_size TEXT NOT NULL,
                 typical_revision_rounds TEXT NOT NULL,
                 notes TEXT,
                 updated_by INTEGER,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES project_categories(id),
                 FOREIGN KEY (updated_by) REFERENCES users(id)
             );
 
@@ -94,11 +104,10 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 action TEXT NOT NULL,
-                deliverable_id INTEGER,
+                project_id INTEGER,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (deliverable_id) REFERENCES deliverables(id)
+                FOREIGN KEY (user_id) REFERENCES users(id)
             );
         """)
         conn.commit()
@@ -109,7 +118,7 @@ def init_db() -> None:
 
 
 def seed_data() -> None:
-    """Create seed users (with password re-hash verification) and legacy norms."""
+    """Create seed users (with password re-hash verification), categories, and legacy norms."""
     from backend import auth as _auth
 
     SEED_USERS = [
@@ -125,14 +134,12 @@ def seed_data() -> None:
             ).fetchone()
 
             if row is None:
-                # Create user for the first time
                 hashed = _auth.hash_password(password)
                 conn.execute(
                     "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
                     (username, email, hashed, role),
                 )
             else:
-                # Verify password still validates — re-hash if not
                 if not _auth.verify_password(password, row["password_hash"]):
                     new_hash = _auth.hash_password(password)
                     conn.execute(
@@ -140,23 +147,47 @@ def seed_data() -> None:
                         (new_hash, row["id"]),
                     )
 
+        # Seed categories
+        SEED_CATEGORIES = [
+            ("CDD", "Commercial due diligence"),
+            ("Competitive Landscape", "Competitive analysis and market mapping"),
+            ("Financial Model", "Financial modelling and projections"),
+            ("Market Access", "Market access and reimbursement strategy"),
+            ("Proposal", "Client proposal or pitch document"),
+            ("Call Prep Brief", "KOL or expert interview preparation"),
+            ("Presentation", "Slide deck or presentation"),
+            ("KOL Mapping", "Key opinion leader identification and mapping"),
+        ]
+        for name, desc in SEED_CATEGORIES:
+            conn.execute(
+                "INSERT OR IGNORE INTO project_categories (name, description) VALUES (?, ?)",
+                (name, desc),
+            )
+
+        conn.commit()
+
+        # Seed legacy norms keyed by category_id
         SEED_NORMS = [
             ("CDD", "11-20", "3", "2", "Full commercial due diligence"),
-            ("Competitive landscape", "11-20", "3", "2", "Competitive analysis and market mapping"),
-            ("Financial model", "6-10", "2", "1", "Financial modelling and projections"),
-            ("Market access", "11-20", "3", "2", "Market access and reimbursement strategy"),
+            ("Competitive Landscape", "11-20", "3", "2", "Competitive analysis and market mapping"),
+            ("Financial Model", "6-10", "2", "1", "Financial modelling and projections"),
+            ("Market Access", "11-20", "3", "2", "Market access and reimbursement strategy"),
             ("Proposal", "4-5", "2", "1", "Client proposal or pitch document"),
-            ("Call prep brief", "2-3", "1", "1", "KOL or expert interview preparation"),
+            ("Call Prep Brief", "2-3", "1", "1", "KOL or expert interview preparation"),
             ("Presentation", "4-5", "2", "2", "Slide deck or presentation"),
-            ("KOL mapping", "11-20", "3", "2", "Key opinion leader identification and mapping"),
+            ("KOL Mapping", "11-20", "3", "2", "Key opinion leader identification and mapping"),
         ]
-        for norm in SEED_NORMS:
-            conn.execute(
-                """INSERT OR IGNORE INTO legacy_norms
-                   (deliverable_type, typical_calendar_days, typical_team_size, typical_revision_rounds, notes)
-                   VALUES (?, ?, ?, ?, ?)""",
-                norm,
-            )
+        for cat_name, days, team, revisions, notes in SEED_NORMS:
+            cat = conn.execute(
+                "SELECT id FROM project_categories WHERE name = ?", (cat_name,)
+            ).fetchone()
+            if cat:
+                conn.execute(
+                    """INSERT OR IGNORE INTO legacy_norms
+                       (category_id, typical_calendar_days, typical_team_size, typical_revision_rounds, notes)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (cat["id"], days, team, revisions, notes),
+                )
 
         conn.commit()
     finally:
@@ -196,14 +227,89 @@ def create_user(username: str, email: str, password_hash: str, role: str) -> int
         conn.close()
 
 
-# ── Deliverables ──────────────────────────────────────────────────────────────
+# ── Project Categories ───────────────────────────────────────────────────────
 
-def create_deliverable(data: dict) -> int:
-    """Create a deliverable. Auto-populates legacy fields from norms if null."""
-    # Auto-populate legacy fields from norms if not provided
+def list_categories() -> list:
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM project_categories ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_category(category_id: int) -> Optional[sqlite3.Row]:
+    conn = get_connection()
+    try:
+        return conn.execute(
+            "SELECT * FROM project_categories WHERE id = ?", (category_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def create_category(name: str, description: Optional[str] = None) -> int:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO project_categories (name, description) VALUES (?, ?)",
+            (name, description),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def update_category(category_id: int, name: str, description: Optional[str] = None) -> bool:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE project_categories SET name = ?, description = ? WHERE id = ?",
+            (name, description, category_id),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_category(category_id: int) -> bool:
+    conn = get_connection()
+    try:
+        # Check if projects exist for this category
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE category_id = ?", (category_id,)
+        ).fetchone()[0]
+        if count > 0:
+            return False
+        conn.execute("DELETE FROM legacy_norms WHERE category_id = ?", (category_id,))
+        conn.execute("DELETE FROM project_categories WHERE id = ?", (category_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def category_has_projects(category_id: int) -> bool:
+    conn = get_connection()
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE category_id = ?", (category_id,)
+        ).fetchone()[0]
+        return count > 0
+    finally:
+        conn.close()
+
+
+# ── Projects ─────────────────────────────────────────────────────────────────
+
+def create_project(data: dict) -> int:
+    """Create a project. Auto-populates legacy fields from category norms if null."""
+    category_id = data["category_id"]
     for field in ("legacy_calendar_days", "legacy_team_size", "legacy_revision_rounds"):
         if not data.get(field):
-            norm = get_norm_by_type(data["deliverable_type"])
+            norm = get_norm_by_category(category_id)
             if norm:
                 if field == "legacy_calendar_days":
                     data[field] = norm["typical_calendar_days"]
@@ -212,36 +318,39 @@ def create_deliverable(data: dict) -> int:
                 elif field == "legacy_revision_rounds":
                     data[field] = norm["typical_revision_rounds"]
             else:
-                data[field] = "6-10"  # fallback
+                data[field] = "6-10" if "days" in field else ("2" if "team" in field else "1")
 
     token = secrets.token_urlsafe(32)
+    legacy_overridden = data.get("legacy_overridden", False)
     conn = get_connection()
     try:
         cur = conn.execute(
-            """INSERT INTO deliverables
-               (created_by, pioneer_name, pioneer_email, deliverable_type, engagement_stage,
-                client_name, description, date_started, date_delivered,
-                xcsg_calendar_days, xcsg_team_size, xcsg_revision_rounds, scope_expansion,
+            """INSERT INTO projects
+               (created_by, project_name, category_id, client_name,
+                pioneer_name, pioneer_email, description,
+                date_started, date_delivered,
+                xcsg_calendar_days, xcsg_team_size, xcsg_revision_rounds, xcsg_scope_expansion,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
-                expert_token)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                legacy_overridden, expert_token)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
+                data["project_name"],
+                data["category_id"],
+                data.get("client_name"),
                 data["pioneer_name"],
                 data.get("pioneer_email"),
-                data["deliverable_type"],
-                data["engagement_stage"],
-                data.get("client_name"),
                 data.get("description"),
                 data.get("date_started"),
                 data.get("date_delivered"),
                 data["xcsg_calendar_days"],
                 data["xcsg_team_size"],
                 data["xcsg_revision_rounds"],
-                data.get("scope_expansion"),
+                data.get("xcsg_scope_expansion"),
                 data["legacy_calendar_days"],
                 data["legacy_team_size"],
                 data["legacy_revision_rounds"],
+                1 if legacy_overridden else 0,
                 token,
             ),
         )
@@ -251,34 +360,53 @@ def create_deliverable(data: dict) -> int:
         conn.close()
 
 
-def get_deliverable(deliverable_id: int) -> Optional[sqlite3.Row]:
+def get_project(project_id: int) -> Optional[sqlite3.Row]:
     conn = get_connection()
     try:
         return conn.execute(
-            "SELECT * FROM deliverables WHERE id = ?", (deliverable_id,)
+            """SELECT p.*, pc.name as category_name
+               FROM projects p
+               JOIN project_categories pc ON p.category_id = pc.id
+               WHERE p.id = ?""",
+            (project_id,),
         ).fetchone()
     finally:
         conn.close()
 
 
-def list_deliverables(status_filter: Optional[str] = None) -> list:
+def list_projects(
+    status_filter: Optional[str] = None,
+    category_id: Optional[int] = None,
+    pioneer: Optional[str] = None,
+    client: Optional[str] = None,
+) -> list:
     conn = get_connection()
     try:
+        query = """SELECT p.*, pc.name as category_name
+                   FROM projects p
+                   JOIN project_categories pc ON p.category_id = pc.id
+                   WHERE 1=1"""
+        params = []
         if status_filter:
-            rows = conn.execute(
-                "SELECT * FROM deliverables WHERE status = ? ORDER BY created_at DESC",
-                (status_filter,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM deliverables ORDER BY created_at DESC"
-            ).fetchall()
+            query += " AND p.status = ?"
+            params.append(status_filter)
+        if category_id:
+            query += " AND p.category_id = ?"
+            params.append(category_id)
+        if pioneer:
+            query += " AND p.pioneer_name = ?"
+            params.append(pioneer)
+        if client:
+            query += " AND p.client_name = ?"
+            params.append(client)
+        query += " ORDER BY p.created_at DESC"
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def update_deliverable(deliverable_id: int, data: dict) -> bool:
+def update_project(project_id: int, data: dict) -> bool:
     conn = get_connection()
     try:
         fields = {k: v for k, v in data.items() if v is not None}
@@ -286,9 +414,9 @@ def update_deliverable(deliverable_id: int, data: dict) -> bool:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         set_clause += ", updated_at = CURRENT_TIMESTAMP"
-        values = list(fields.values()) + [deliverable_id]
+        values = list(fields.values()) + [project_id]
         conn.execute(
-            f"UPDATE deliverables SET {set_clause} WHERE id = ?", values
+            f"UPDATE projects SET {set_clause} WHERE id = ?", values
         )
         conn.commit()
         return True
@@ -296,31 +424,33 @@ def update_deliverable(deliverable_id: int, data: dict) -> bool:
         conn.close()
 
 
-def delete_deliverable(deliverable_id: int) -> bool:
+def delete_project(project_id: int) -> bool:
     conn = get_connection()
     try:
-        # Nullify activity_log references (no CASCADE on this FK)
         conn.execute(
-            "UPDATE activity_log SET deliverable_id = NULL WHERE deliverable_id = ?",
-            (deliverable_id,),
+            "UPDATE activity_log SET project_id = NULL WHERE project_id = ?",
+            (project_id,),
         )
-        # expert_responses has ON DELETE CASCADE, but be explicit
         conn.execute(
-            "DELETE FROM expert_responses WHERE deliverable_id = ?",
-            (deliverable_id,),
+            "DELETE FROM expert_responses WHERE project_id = ?",
+            (project_id,),
         )
-        conn.execute("DELETE FROM deliverables WHERE id = ?", (deliverable_id,))
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return True
     finally:
         conn.close()
 
 
-def get_deliverable_by_token(token: str) -> Optional[sqlite3.Row]:
+def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
     conn = get_connection()
     try:
         return conn.execute(
-            "SELECT * FROM deliverables WHERE expert_token = ?", (token,)
+            """SELECT p.*, pc.name as category_name
+               FROM projects p
+               JOIN project_categories pc ON p.category_id = pc.id
+               WHERE p.expert_token = ?""",
+            (token,),
         ).fetchone()
     finally:
         conn.close()
@@ -328,28 +458,28 @@ def get_deliverable_by_token(token: str) -> Optional[sqlite3.Row]:
 
 # ── Expert Responses ─────────────────────────────────────────────────────────
 
-def get_expert_response(deliverable_id: int) -> Optional[sqlite3.Row]:
+def get_expert_response(project_id: int) -> Optional[sqlite3.Row]:
     conn = get_connection()
     try:
         return conn.execute(
-            "SELECT * FROM expert_responses WHERE deliverable_id = ?", (deliverable_id,)
+            "SELECT * FROM expert_responses WHERE project_id = ?", (project_id,)
         ).fetchone()
     finally:
         conn.close()
 
 
-def create_expert_response(deliverable_id: int, data: dict) -> int:
+def create_expert_response(project_id: int, data: dict) -> int:
     conn = get_connection()
     try:
         cur = conn.execute(
             """INSERT INTO expert_responses
-               (deliverable_id, b1_starting_point, b2_research_sources, b3_assembly_ratio,
+               (project_id, b1_starting_point, b2_research_sources, b3_assembly_ratio,
                 b4_hypothesis_first, c1_specialization, c2_directness, c3_judgment_pct,
                 d1_proprietary_data, d2_knowledge_reuse, d3_moat_test,
                 f1_feasibility, f2_productization)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                deliverable_id,
+                project_id,
                 data["b1_starting_point"],
                 data["b2_research_sources"],
                 data["b3_assembly_ratio"],
@@ -364,10 +494,10 @@ def create_expert_response(deliverable_id: int, data: dict) -> int:
                 data["f2_productization"],
             ),
         )
-        # Mark deliverable as complete
+        # Mark project as complete
         conn.execute(
-            "UPDATE deliverables SET expert_completed = 1, status = 'complete', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (deliverable_id,),
+            "UPDATE projects SET status = 'complete', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (project_id,),
         )
         conn.commit()
         return cur.lastrowid
@@ -380,34 +510,57 @@ def create_expert_response(deliverable_id: int, data: dict) -> int:
 def list_norms() -> list:
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT * FROM legacy_norms ORDER BY deliverable_type").fetchall()
+        rows = conn.execute(
+            """SELECT ln.*, pc.name as category_name
+               FROM legacy_norms ln
+               JOIN project_categories pc ON ln.category_id = pc.id
+               ORDER BY pc.name"""
+        ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def get_norm_by_type(deliverable_type: str) -> Optional[sqlite3.Row]:
+def get_norm_by_category(category_id: int) -> Optional[sqlite3.Row]:
     conn = get_connection()
     try:
         return conn.execute(
-            "SELECT * FROM legacy_norms WHERE deliverable_type = ?", (deliverable_type,)
+            "SELECT * FROM legacy_norms WHERE category_id = ?", (category_id,)
         ).fetchone()
     finally:
         conn.close()
 
 
-def update_norm(deliverable_type: str, data: dict, updated_by: int) -> bool:
+def update_norm(category_id: int, data: dict, updated_by: int) -> bool:
     conn = get_connection()
     try:
-        fields = {k: v for k, v in data.items() if v is not None}
-        if not fields:
-            return False
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        set_clause += ", updated_by = ?, updated_at = CURRENT_TIMESTAMP"
-        values = list(fields.values()) + [updated_by, deliverable_type]
-        conn.execute(
-            f"UPDATE legacy_norms SET {set_clause} WHERE deliverable_type = ?", values
-        )
+        existing = conn.execute(
+            "SELECT id FROM legacy_norms WHERE category_id = ?", (category_id,)
+        ).fetchone()
+        if existing:
+            fields = {k: v for k, v in data.items() if v is not None}
+            if not fields:
+                return False
+            set_clause = ", ".join(f"{k} = ?" for k in fields)
+            set_clause += ", updated_by = ?, updated_at = CURRENT_TIMESTAMP"
+            values = list(fields.values()) + [updated_by, category_id]
+            conn.execute(
+                f"UPDATE legacy_norms SET {set_clause} WHERE category_id = ?", values
+            )
+        else:
+            conn.execute(
+                """INSERT INTO legacy_norms
+                   (category_id, typical_calendar_days, typical_team_size, typical_revision_rounds, notes, updated_by)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    category_id,
+                    data.get("typical_calendar_days", "6-10"),
+                    data.get("typical_team_size", "2"),
+                    data.get("typical_revision_rounds", "1"),
+                    data.get("notes"),
+                    updated_by,
+                ),
+            )
         conn.commit()
         return True
     finally:
@@ -416,12 +569,12 @@ def update_norm(deliverable_type: str, data: dict, updated_by: int) -> bool:
 
 # ── Activity Log ──────────────────────────────────────────────────────────────
 
-def log_activity(user_id: int, action: str, deliverable_id: Optional[int] = None, details: Optional[str] = None) -> None:
+def log_activity(user_id: int, action: str, project_id: Optional[int] = None, details: Optional[str] = None) -> None:
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO activity_log (user_id, action, deliverable_id, details) VALUES (?, ?, ?, ?)",
-            (user_id, action, deliverable_id, details),
+            "INSERT INTO activity_log (user_id, action, project_id, details) VALUES (?, ?, ?, ?)",
+            (user_id, action, project_id, details),
         )
         conn.commit()
     finally:
@@ -435,7 +588,6 @@ def list_activity(limit: int = 100, offset: int = 0) -> list:
             """SELECT a.*, u.username
                FROM activity_log a
                JOIN users u ON a.user_id = u.id
-               LEFT JOIN deliverables d ON a.deliverable_id = d.id
                ORDER BY a.created_at DESC
                LIMIT ? OFFSET ?""",
             (limit, offset),
@@ -455,15 +607,16 @@ def get_activity_count() -> int:
 
 # ── Metrics helpers ───────────────────────────────────────────────────────────
 
-def list_complete_deliverables() -> list:
-    """Return all complete deliverables joined with expert_responses."""
+def list_complete_projects() -> list:
+    """Return all complete projects joined with expert_responses and category name."""
     conn = get_connection()
     try:
         rows = conn.execute(
-            """SELECT d.*, er.*
-               FROM deliverables d
-               JOIN expert_responses er ON d.id = er.deliverable_id
-               ORDER BY d.created_at ASC"""
+            """SELECT p.*, pc.name as category_name, er.*
+               FROM projects p
+               JOIN project_categories pc ON p.category_id = pc.id
+               JOIN expert_responses er ON p.id = er.project_id
+               ORDER BY p.created_at ASC"""
         ).fetchall()
         return [dict(r) for r in rows]
     finally:

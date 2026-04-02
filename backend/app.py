@@ -1,5 +1,5 @@
 """
-app.py — FastAPI routes for xCSG Value Tracker
+app.py — FastAPI routes for xCSG Value Tracker v2
 
 IMPORTANT: app.mount("/", StaticFiles(...)) MUST be the LAST line.
 """
@@ -19,17 +19,16 @@ from backend import database as db
 from backend import metrics as mtx
 from backend.models import (
     ActivityLogEntry,
-    DeliverableCreate,
-    DeliverableMetrics,
-    DeliverableResponse,
-    DeliverableUpdate,
+    CategoryCreate,
+    CategoryUpdate,
     ExpertContextResponse,
     ExpertResponseCreate,
     LoginRequest,
     LoginResponse,
     MetricsSummary,
-    NormResponse,
     NormUpdate,
+    ProjectCreate,
+    ProjectUpdate,
     RegisterRequest,
     ScalingGates,
     TrendData,
@@ -38,7 +37,7 @@ from backend.models import (
 
 # ── App init ──────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="xCSG Value Tracker", version="1.0.0")
+app = FastAPI(title="xCSG Value Tracker", version="2.0.0")
 
 # CORS
 _raw_origins = os.environ.get(
@@ -68,7 +67,7 @@ async def startup_event():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "2.0.0"}
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -106,94 +105,199 @@ async def register(body: RegisterRequest, current_user: dict = Depends(auth.get_
     return {"id": user_id, "username": body.username, "role": body.role}
 
 
-# ── Deliverables ──────────────────────────────────────────────────────────────
+# ── Project Categories ───────────────────────────────────────────────────────
 
-@app.get("/api/deliverables")
-async def list_deliverables(
+@app.get("/api/categories")
+async def list_categories(current_user: dict = Depends(auth.get_current_user)):
+    cats = db.list_categories()
+    conn = db.get_connection()
+    try:
+        counts = {}
+        for row in conn.execute("SELECT category_id, COUNT(*) as cnt FROM projects GROUP BY category_id").fetchall():
+            counts[row["category_id"]] = row["cnt"]
+    finally:
+        conn.close()
+    for c in cats:
+        c["project_count"] = counts.get(c["id"], 0)
+    return cats
+
+
+@app.post("/api/categories", status_code=201)
+async def create_category(
+    body: CategoryCreate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    try:
+        cat_id = db.create_category(body.name, body.description)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Category name already exists")
+    cat = db.get_category(cat_id)
+    db.log_activity(
+        current_user["sub"],
+        "category_created",
+        details=f"Created category '{body.name}'",
+    )
+    return dict(cat)
+
+
+@app.put("/api/categories/{category_id}")
+async def update_category(
+    category_id: int,
+    body: CategoryUpdate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    cat = db.get_category(category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    try:
+        db.update_category(category_id, body.name, body.description)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Category name already exists")
+    db.log_activity(
+        current_user["sub"],
+        "category_updated",
+        details=f"Updated category '{body.name}'",
+    )
+    return dict(db.get_category(category_id))
+
+
+@app.delete("/api/categories/{category_id}", status_code=204)
+async def delete_category(
+    category_id: int,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    cat = db.get_category(category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    if db.category_has_projects(category_id):
+        raise HTTPException(status_code=400, detail="Cannot delete category with existing projects")
+    db.delete_category(category_id)
+    db.log_activity(
+        current_user["sub"],
+        "category_deleted",
+        details=f"Deleted category '{cat['name']}'",
+    )
+
+
+# ── Projects ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/projects")
+async def list_projects(
     status_filter: Optional[str] = Query(None, alias="status"),
+    category_id: Optional[int] = Query(None),
+    pioneer: Optional[str] = Query(None),
+    client: Optional[str] = Query(None),
     current_user: dict = Depends(auth.get_current_user),
 ):
-    rows = db.list_deliverables(status_filter=status_filter)
-    return rows
+    return db.list_projects(
+        status_filter=status_filter,
+        category_id=category_id,
+        pioneer=pioneer,
+        client=client,
+    )
 
 
-@app.post("/api/deliverables", status_code=201)
-async def create_deliverable(
-    body: DeliverableCreate,
+@app.post("/api/projects", status_code=201)
+async def create_project(
+    body: ProjectCreate,
     current_user: dict = Depends(auth.get_current_user),
 ):
+    # Validate category exists
+    cat = db.get_category(body.category_id)
+    if not cat:
+        raise HTTPException(status_code=400, detail="Invalid category_id")
+
     data = body.model_dump()
     data["created_by"] = current_user["sub"]
-    deliverable_id = db.create_deliverable(data)
-    row = db.get_deliverable(deliverable_id)
+
+    # Compute legacy_overridden: compare submitted legacy values against category norms
+    norm = db.get_norm_by_category(body.category_id)
+    if norm:
+        data["legacy_overridden"] = (
+            data.get("legacy_calendar_days") != norm["typical_calendar_days"]
+            or data.get("legacy_team_size") != norm["typical_team_size"]
+            or data.get("legacy_revision_rounds") != norm["typical_revision_rounds"]
+        )
+    else:
+        data["legacy_overridden"] = False
+
+    project_id = db.create_project(data)
+    row = db.get_project(project_id)
     db.log_activity(
         current_user["sub"],
-        "deliverable_created",
-        deliverable_id=deliverable_id,
-        details=f"Created {data['deliverable_type']} for {data.get('client_name', 'unknown client')}",
+        "project_created",
+        project_id=project_id,
+        details=f"Created project '{data['project_name']}' ({cat['name']})",
     )
     return dict(row)
 
 
-@app.get("/api/deliverables/{deliverable_id}")
-async def get_deliverable(
-    deliverable_id: int,
+@app.get("/api/projects/{project_id}")
+async def get_project(
+    project_id: int,
     current_user: dict = Depends(auth.get_current_user),
 ):
-    row = db.get_deliverable(deliverable_id)
+    row = db.get_project(project_id)
     if not row:
-        raise HTTPException(status_code=404, detail="Deliverable not found")
-    return dict(row)
+        raise HTTPException(status_code=404, detail="Project not found")
+    result = dict(row)
+    # Include expert response if exists
+    er = db.get_expert_response(project_id)
+    if er:
+        result["expert_response"] = dict(er)
+    return result
 
 
-@app.put("/api/deliverables/{deliverable_id}")
-async def update_deliverable(
-    deliverable_id: int,
-    body: DeliverableUpdate,
+@app.put("/api/projects/{project_id}")
+async def update_project(
+    project_id: int,
+    body: ProjectUpdate,
     current_user: dict = Depends(auth.get_current_user),
 ):
-    row = db.get_deliverable(deliverable_id)
+    row = db.get_project(project_id)
     if not row:
-        raise HTTPException(status_code=404, detail="Deliverable not found")
+        raise HTTPException(status_code=404, detail="Project not found")
     data = {k: v for k, v in body.model_dump().items() if v is not None}
-    db.update_deliverable(deliverable_id, data)
+    db.update_project(project_id, data)
     db.log_activity(
         current_user["sub"],
-        "deliverable_updated",
-        deliverable_id=deliverable_id,
-        details=f"Updated deliverable #{deliverable_id}",
+        "project_updated",
+        project_id=project_id,
+        details=f"Updated project #{project_id}",
     )
-    updated = db.get_deliverable(deliverable_id)
+    updated = db.get_project(project_id)
     return dict(updated)
 
 
-@app.delete("/api/deliverables/{deliverable_id}", status_code=204)
-async def delete_deliverable(
-    deliverable_id: int,
+@app.delete("/api/projects/{project_id}", status_code=204)
+async def delete_project(
+    project_id: int,
     current_user: dict = Depends(auth.get_current_user_admin),
 ):
-    row = db.get_deliverable(deliverable_id)
+    row = db.get_project(project_id)
     if not row:
-        raise HTTPException(status_code=404, detail="Deliverable not found")
+        raise HTTPException(status_code=404, detail="Project not found")
     db.log_activity(
         current_user["sub"],
-        "deliverable_deleted",
-        details=f"Deleted deliverable #{deliverable_id} ({row['deliverable_type']})",
+        "project_deleted",
+        details=f"Deleted project #{project_id} ({row['project_name']})",
     )
-    db.delete_deliverable(deliverable_id)
+    db.delete_project(project_id)
 
 
 # ── Expert (NO auth — token-based) ───────────────────────────────────────────
 
 @app.get("/api/expert/{token}", response_model=ExpertContextResponse)
 async def get_expert_context(token: str):
-    row = db.get_deliverable_by_token(token)
+    row = db.get_project_by_token(token)
     if not row:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-    already_done = bool(row["expert_completed"])
+    already_done = row["status"] == "complete"
     return ExpertContextResponse(
-        deliverable_id=row["id"],
-        deliverable_type=row["deliverable_type"],
+        project_id=row["id"],
+        project_name=row["project_name"],
+        category_name=row["category_name"],
+        description=row["description"],
         client_name=row["client_name"],
         pioneer_name=row["pioneer_name"],
         date_started=row["date_started"],
@@ -206,20 +310,18 @@ async def get_expert_context(token: str):
 
 @app.post("/api/expert/{token}", status_code=201)
 async def submit_expert_response(token: str, body: ExpertResponseCreate):
-    row = db.get_deliverable_by_token(token)
+    row = db.get_project_by_token(token)
     if not row:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-    if row["expert_completed"]:
-        # Return 200 with already_completed flag (not an error)
+    if row["status"] == "complete":
         return {"already_completed": True, "message": "This assessment has already been submitted"}
     data = body.model_dump()
     db.create_expert_response(row["id"], data)
-    # Log as system activity (user_id = 1 = admin, since no auth context here)
     db.log_activity(
         1,
         "expert_submitted",
-        deliverable_id=row["id"],
-        details=f"Expert assessment submitted for {row['deliverable_type']} (pioneer: {row['pioneer_name']})",
+        project_id=row["id"],
+        details=f"Expert assessment submitted for '{row['project_name']}' (pioneer: {row['pioneer_name']})",
     )
     return {"success": True, "message": "Assessment submitted successfully"}
 
@@ -231,55 +333,55 @@ async def list_norms(current_user: dict = Depends(auth.get_current_user)):
     return db.list_norms()
 
 
-@app.get("/api/norms/{deliverable_type}")
+@app.get("/api/norms/{category_id}")
 async def get_norm(
-    deliverable_type: str,
+    category_id: int,
     current_user: dict = Depends(auth.get_current_user),
 ):
-    row = db.get_norm_by_type(deliverable_type)
+    row = db.get_norm_by_category(category_id)
     if not row:
-        raise HTTPException(status_code=404, detail="Norm not found for this deliverable type")
+        raise HTTPException(status_code=404, detail="Norm not found for this category")
     return dict(row)
 
 
-@app.put("/api/norms/{deliverable_type}")
+@app.put("/api/norms/{category_id}")
 async def update_norm(
-    deliverable_type: str,
+    category_id: int,
     body: NormUpdate,
     current_user: dict = Depends(auth.get_current_user),
 ):
-    row = db.get_norm_by_type(deliverable_type)
-    if not row:
-        raise HTTPException(status_code=404, detail="Norm not found")
+    cat = db.get_category(category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
     data = {k: v for k, v in body.model_dump().items() if v is not None}
-    db.update_norm(deliverable_type, data, current_user["sub"])
+    db.update_norm(category_id, data, current_user["sub"])
     db.log_activity(
         current_user["sub"],
         "norm_updated",
-        details=f"Updated norm for {deliverable_type}",
+        details=f"Updated norm for category '{cat['name']}'",
     )
-    return db.get_norm_by_type(deliverable_type)
+    return db.get_norm_by_category(category_id)
 
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/metrics/summary", response_model=MetricsSummary)
 async def metrics_summary(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_deliverables()
-    all_d = db.list_deliverables()
-    summary = mtx.compute_summary(complete, all_d)
+    complete = db.list_complete_projects()
+    all_p = db.list_projects()
+    summary = mtx.compute_summary(complete, all_p)
     return MetricsSummary(**summary)
 
 
-@app.get("/api/metrics/deliverables")
-async def metrics_deliverables(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_deliverables()
-    return [mtx.compute_deliverable_metrics(d) for d in complete]
+@app.get("/api/metrics/projects")
+async def metrics_projects(current_user: dict = Depends(auth.get_current_user)):
+    complete = db.list_complete_projects()
+    return [mtx.compute_project_metrics(d) for d in complete]
 
 
 @app.get("/api/metrics/trends", response_model=TrendData)
 async def metrics_trends(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_deliverables()
+    complete = db.list_complete_projects()
     points = mtx.compute_trend_data(complete)
     from backend.models import TrendPoint
     return TrendData(points=[TrendPoint(**p) for p in points])
@@ -287,9 +389,9 @@ async def metrics_trends(current_user: dict = Depends(auth.get_current_user)):
 
 @app.get("/api/metrics/scaling-gates", response_model=ScalingGates)
 async def metrics_scaling_gates(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_deliverables()
-    all_d = db.list_deliverables()
-    gates = mtx.compute_scaling_gates(complete, all_d)
+    complete = db.list_complete_projects()
+    all_p = db.list_projects()
+    gates = mtx.compute_scaling_gates(complete, all_p)
     from backend.models import ScalingGate
     passed = sum(1 for g in gates if g["status"] == "pass")
     return ScalingGates(
@@ -327,14 +429,14 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
     # ── Sheet 1: Raw Data ──
     ws1 = wb.active
     ws1.title = "Raw Data"
-    all_d = db.list_deliverables()
-    complete = db.list_complete_deliverables()
+    all_p = db.list_projects()
+    complete = db.list_complete_projects()
 
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="121F6B")
 
     headers1 = [
-        "ID", "Type", "Pioneer", "Client", "Engagement Stage",
+        "ID", "Project Name", "Category", "Pioneer", "Client",
         "Date Started", "Date Delivered",
         "xCSG Calendar Days", "xCSG Team Size", "xCSG Revisions",
         "Legacy Calendar Days", "Legacy Team Size", "Legacy Revisions",
@@ -347,17 +449,18 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         cell.font = header_font
         cell.fill = header_fill
 
-    # Build expert_response lookup
     er_by_id = {d["id"]: d for d in complete}
 
-    for d in all_d:
-        er = er_by_id.get(d["id"], {})
+    for p in all_p:
+        er = er_by_id.get(p["id"], {})
         ws1.append([
-            d["id"], d["deliverable_type"], d["pioneer_name"], d.get("client_name", ""),
-            d["engagement_stage"], d.get("date_started", ""), d.get("date_delivered", ""),
-            d["xcsg_calendar_days"], d["xcsg_team_size"], d["xcsg_revision_rounds"],
-            d["legacy_calendar_days"], d["legacy_team_size"], d["legacy_revision_rounds"],
-            d["status"], d["created_at"],
+            p["id"], p["project_name"], p.get("category_name", ""),
+            p["pioneer_name"], p.get("client_name", ""),
+            p.get("date_started", ""), p.get("date_delivered", ""),
+            p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
+            p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+            p.get("legacy_revision_rounds", ""),
+            p["status"], p["created_at"],
             er.get("b1_starting_point", ""), er.get("b2_research_sources", ""),
             er.get("b3_assembly_ratio", ""), er.get("b4_hypothesis_first", ""),
             er.get("c1_specialization", ""), er.get("c2_directness", ""),
@@ -370,7 +473,7 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
     # ── Sheet 2: Computed Metrics ──
     ws2 = wb.create_sheet("Computed Metrics")
     headers2 = [
-        "ID", "Type", "Pioneer", "Client",
+        "ID", "Project Name", "Category", "Pioneer", "Client",
         "xCSG Person-Days", "Legacy Person-Days", "Effort Ratio",
         "xCSG Revisions", "Legacy Revisions", "Quality Ratio", "Value Multiplier",
         "Machine-First Score", "Senior-Led Score", "Proprietary Knowledge Score",
@@ -381,30 +484,28 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         cell.font = header_font
         cell.fill = header_fill
 
-    metrics_list = [mtx.compute_deliverable_metrics(d) for d in complete]
+    metrics_list = [mtx.compute_project_metrics(d) for d in complete]
     for m in metrics_list:
         ws2.append([
-            m["id"], m["deliverable_type"], m["pioneer_name"], m.get("client_name", ""),
+            m["id"], m["project_name"], m["category_name"],
+            m["pioneer_name"], m.get("client_name", ""),
             m["xcsg_person_days"], m["legacy_person_days"], m["effort_ratio"],
             m["xcsg_revisions"], m["legacy_revisions"], m["quality_ratio"], m["value_multiplier"],
             m.get("machine_first_score", ""), m.get("senior_led_score", ""),
             m.get("proprietary_knowledge_score", ""), m["created_at"],
         ])
 
-    # Auto-size columns
     for ws in [ws1, ws2]:
         for col in ws.columns:
             max_len = max((len(str(cell.value or "")) for cell in col), default=0)
             ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
 
-    # Save to temp file
     tmp = tempfile.NamedTemporaryFile(
         suffix=".xlsx", prefix="xCSG_Export_", delete=False, dir="/tmp"
     )
     wb.save(tmp.name)
     tmp.close()
 
-    filename = os.path.basename(tmp.name)
     return FileResponse(
         tmp.name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

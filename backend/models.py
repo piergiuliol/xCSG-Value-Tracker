@@ -1,5 +1,6 @@
 """
-models.py — Pydantic request/response models for xCSG Value Tracker
+models.py — Pydantic request/response models for xCSG Value Tracker v2
+Project-centric redesign.
 """
 from __future__ import annotations
 
@@ -37,27 +38,47 @@ class RegisterRequest(BaseModel):
     role: str = "viewer"
 
 
-# ── Deliverables ──────────────────────────────────────────────────────────────
+# ── Project Categories ───────────────────────────────────────────────────────
 
-class DeliverableCreate(BaseModel):
+class CategoryCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class CategoryUpdate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class CategoryResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    created_at: str
+
+
+# ── Projects ─────────────────────────────────────────────────────────────────
+
+class ProjectCreate(BaseModel):
+    project_name: str
+    category_id: int
+    client_name: Optional[str] = None
     pioneer_name: str
     pioneer_email: Optional[EmailStr] = None
-    deliverable_type: str
-    engagement_stage: str
-    client_name: Optional[str] = None
     description: Optional[str] = None
     date_started: Optional[str] = None
     date_delivered: Optional[str] = None
     xcsg_calendar_days: str
     xcsg_team_size: str
     xcsg_revision_rounds: str
-    scope_expansion: Optional[str] = None
+    xcsg_scope_expansion: Optional[str] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
+    legacy_overridden: bool = False
 
     @model_validator(mode="after")
-    def validate_dates(self) -> "DeliverableCreate":
+    def validate_dates(self) -> "ProjectCreate":
         if self.date_started and self.date_delivered:
             try:
                 start = date.fromisoformat(self.date_started)
@@ -70,25 +91,25 @@ class DeliverableCreate(BaseModel):
         return self
 
 
-class DeliverableUpdate(BaseModel):
+class ProjectUpdate(BaseModel):
+    project_name: Optional[str] = None
+    category_id: Optional[int] = None
+    client_name: Optional[str] = None
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
-    deliverable_type: Optional[str] = None
-    engagement_stage: Optional[str] = None
-    client_name: Optional[str] = None
     description: Optional[str] = None
     date_started: Optional[str] = None
     date_delivered: Optional[str] = None
     xcsg_calendar_days: Optional[str] = None
     xcsg_team_size: Optional[str] = None
     xcsg_revision_rounds: Optional[str] = None
-    scope_expansion: Optional[str] = None
+    xcsg_scope_expansion: Optional[str] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
 
     @model_validator(mode="after")
-    def validate_dates(self) -> "DeliverableUpdate":
+    def validate_dates(self) -> "ProjectUpdate":
         if self.date_started and self.date_delivered:
             try:
                 start = date.fromisoformat(self.date_started)
@@ -101,27 +122,28 @@ class DeliverableUpdate(BaseModel):
         return self
 
 
-class DeliverableResponse(BaseModel):
+class ProjectResponse(BaseModel):
     id: int
     created_by: int
+    project_name: str
+    category_id: int
+    category_name: str
+    client_name: Optional[str]
     pioneer_name: str
     pioneer_email: Optional[str]
-    deliverable_type: str
-    engagement_stage: str
-    client_name: Optional[str]
     description: Optional[str]
     date_started: Optional[str]
     date_delivered: Optional[str]
+    status: str
     xcsg_calendar_days: str
     xcsg_team_size: str
     xcsg_revision_rounds: str
-    scope_expansion: Optional[str]
-    legacy_calendar_days: str
-    legacy_team_size: str
-    legacy_revision_rounds: str
+    xcsg_scope_expansion: Optional[str]
+    legacy_calendar_days: Optional[str]
+    legacy_team_size: Optional[str]
+    legacy_revision_rounds: Optional[str]
+    legacy_overridden: bool
     expert_token: str
-    expert_completed: bool
-    status: str
     created_at: str
     updated_at: str
 
@@ -144,8 +166,10 @@ class ExpertResponseCreate(BaseModel):
 
 
 class ExpertContextResponse(BaseModel):
-    deliverable_id: int
-    deliverable_type: str
+    project_id: int
+    project_name: str
+    category_name: str
+    description: Optional[str] = None
     client_name: Optional[str]
     pioneer_name: str
     date_started: Optional[str]
@@ -159,7 +183,8 @@ class ExpertContextResponse(BaseModel):
 
 class NormResponse(BaseModel):
     id: int
-    deliverable_type: str
+    category_id: int
+    category_name: str
     typical_calendar_days: str
     typical_team_size: str
     typical_revision_rounds: str
@@ -176,9 +201,10 @@ class NormUpdate(BaseModel):
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
-class DeliverableMetrics(BaseModel):
+class ProjectMetrics(BaseModel):
     id: int
-    deliverable_type: str
+    project_name: str
+    category_name: str
     pioneer_name: str
     client_name: Optional[str]
     xcsg_person_days: float
@@ -191,13 +217,14 @@ class DeliverableMetrics(BaseModel):
     machine_first_score: Optional[float]
     senior_led_score: Optional[float]
     proprietary_knowledge_score: Optional[float]
+    legacy_overridden: bool = False
     created_at: str
 
 
 class MetricsSummary(BaseModel):
-    total_deliverables: int
-    complete_deliverables: int
-    pending_deliverables: int
+    total_projects: int
+    complete_projects: int
+    pending_projects: int
     average_value_multiplier: float
     average_effort_ratio: float
     average_quality_ratio: float
@@ -206,12 +233,13 @@ class MetricsSummary(BaseModel):
     senior_led_avg: float
     proprietary_knowledge_avg: float
     checkpoint: int
-    deliverables_to_next_checkpoint: int
+    projects_to_next_checkpoint: int
 
 
 class TrendPoint(BaseModel):
     id: int
-    deliverable_type: str
+    project_name: str
+    category_name: str
     pioneer_name: str
     value_multiplier: float
     effort_ratio: float
@@ -247,7 +275,6 @@ class ActivityLogEntry(BaseModel):
     user_id: int
     username: str
     action: str
-    deliverable_id: Optional[int]
-    deliverable_type: Optional[str]
+    project_id: Optional[int]
     details: Optional[str]
     created_at: str
