@@ -315,9 +315,7 @@ body {
 }
 
 .topbar-title {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--navy);
+  display: none;
 }
 
 .topbar-right {
@@ -444,7 +442,7 @@ body {
 .btn-icon:hover { background: var(--gray-100); color: var(--gray-700); }
 
 .clickable-row { cursor: pointer; }
-.clickable-row:hover { background: var(--blue-pale); }
+.clickable-row:hover { background: var(--blue-pale); box-shadow: inset 0 0 0 1px var(--blue-light); }
 
 .actions-cell { position: relative; z-index: 2; white-space: nowrap; }
 .actions-cell .btn-icon { position: relative; z-index: 3; margin-left: 4px; }
@@ -641,11 +639,17 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   padding: 20px 24px;
   box-shadow: var(--shadow);
   border-left: 4px solid var(--navy);
+  transition: transform 0.15s, box-shadow 0.15s;
 }
 
 .kpi-card:nth-child(2) { border-left-color: var(--blue); }
 .kpi-card:nth-child(3) { border-left-color: var(--orange); }
 .kpi-card:nth-child(4) { border-left-color: var(--success); }
+
+.kpi-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
 
 .kpi-label {
   font-size: 12px;
@@ -678,11 +682,13 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
    ═══════════════════════════════════════════════════════════════════════════ */
 .badge {
   display: inline-block;
-  padding: 3px 10px;
-  border-radius: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
+  min-width: 80px;
+  text-align: center;
 }
 
 .badge-green  { background: var(--success-bg); color: var(--success-text); }
@@ -1607,3 +1613,105 @@ tr:hover .norm-save-btn { opacity: 1; }
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MICRO-INTERACTIONS & POLISH
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Button active press */
+.btn:active:not(:disabled) { transform: scale(0.98); }
+.btn-icon:active { transform: scale(0.96); }
+.btn-export:active { transform: scale(0.98); }
+
+/* View fade-in */
+.view-fade-in { animation: fadeIn 0.2s ease; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Loading spinner */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px;
+  color: var(--gray-400);
+  font-size: 14px;
+  gap: 12px;
+}
+
+.loading::before {
+  content: '';
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid var(--gray-200);
+  border-top-color: var(--navy);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Fieldset alternating background */
+fieldset:nth-of-type(even) {
+  background: var(--gray-50);
+}
+
+/* Dropdown placeholder color */
+.form-group select:invalid { color: var(--gray-400); }
+.form-group select option { color: var(--gray-800); }
+.form-group select option[value=""] { color: var(--gray-400); }
+
+/* Scorecard numeric alignment */
+.text-right { text-align: right; }
+th.text-right { text-align: right; }
+.vm-cell { font-weight: 700; color: var(--navy); font-size: 14px; }
+
+/* Show More button */
+.show-more-wrap {
+  text-align: center;
+  padding: 16px;
+  border-top: 1px solid var(--gray-200);
+}
+
+.show-more-btn {
+  padding: 8px 24px;
+  background: #fff;
+  color: var(--navy);
+  border: 1px solid var(--gray-300);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: 'Roboto', sans-serif;
+  transition: all 0.15s;
+}
+
+.show-more-btn:hover {
+  background: var(--navy);
+  color: #fff;
+  border-color: var(--navy);
+}
+
+/* SVG action icons in buttons */
+.btn-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  vertical-align: middle;
+}
+
+.btn-danger-icon:hover {
+  color: var(--error);
+  border-color: var(--error);
+  background: var(--error-bg);
+}
+
+/* Activity hidden rows */
+.activity-hidden { display: none; }

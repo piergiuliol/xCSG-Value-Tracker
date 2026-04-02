@@ -206,6 +206,10 @@ function route() {
   const titles = { dashboard: 'Dashboard', new: 'New Deliverable', edit: 'Edit Deliverable', deliverables: 'Deliverables', norms: 'Legacy Norms', activity: 'Activity Log' };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Dashboard';
 
+  // Fade-in transition
+  const mc = document.getElementById('mainContent');
+  if (mc) { mc.classList.remove('view-fade-in'); void mc.offsetWidth; mc.classList.add('view-fade-in'); }
+
   // Render
   if (hash === '#dashboard') renderDashboard();
   else if (hash === '#new') renderNewDeliverable();
@@ -251,11 +255,15 @@ async function renderDashboard() {
     // Dashboard header with export
     html += `<div class="dashboard-header"><div></div><button class="btn-export" onclick="exportExcel()">📥 Export to Excel</button></div>`;
 
-    // Checkpoint progress
-    html += `<div class="checkpoint-bar">
-      <div class="checkpoint-label">Checkpoint ${checkpoint} — ${complete} deliverable${complete !== 1 ? 's' : ''} complete${nextThreshold ? `, ${nextThreshold - complete} more to reach Checkpoint ${checkpoint + 1}` : ' — Full evidence package'}</div>
-      <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, (complete / (nextThreshold || complete)) * 100)}%"></div></div>
-    </div>`;
+    // Checkpoint progress — step dots
+    const cpNames = ['Baseline', 'Patterns', 'Trends', 'Scale'];
+    html += `<div class="checkpoint-bar">`;
+    for (let i = 1; i <= 4; i++) {
+      const cls = i < checkpoint ? 'completed' : i === checkpoint ? 'active' : '';
+      html += `<div class="checkpoint-step ${cls}"><div class="checkpoint-dot">${i < checkpoint ? '✓' : i}</div><span>${cpNames[i-1]}</span></div>`;
+      if (i < 4) html += `<div class="checkpoint-line${i < checkpoint ? ' done' : ''}"></div>`;
+    }
+    html += `<div class="checkpoint-meta"><strong>${complete}</strong> / ${nextThreshold || complete} deliverables</div></div>`;
 
     // KPI cards
     const vm = summary.average_value_multiplier || 0;
@@ -272,15 +280,15 @@ async function renderDashboard() {
     if (deliverables.length > 0) {
       html += `<div class="card" style="margin-top:24px"><h3>Deliverable Scorecard</h3>
         <table class="data-table"><thead><tr>
-          <th>Type</th><th>Pioneer</th><th>xCSG Days</th><th>Legacy Days</th><th>Effort Ratio</th><th>Revisions</th><th>Value Multiplier</th>
+          <th>Type</th><th>Pioneer</th><th class="text-right">xCSG Days</th><th class="text-right">Legacy Days</th><th class="text-right">Effort Ratio</th><th>Revisions</th><th class="text-right">Value Multiplier</th>
         </tr></thead><tbody>`;
       for (const d of deliverables) {
         html += `<tr>
           <td>${esc(d.deliverable_type)}</td><td>${esc(d.pioneer_name)}</td>
-          <td>${round2(d.xcsg_person_days)}</td><td>${round2(d.legacy_person_days)}</td>
-          <td><strong>${round2(d.effort_ratio)}x</strong></td>
+          <td class="text-right">${round2(d.xcsg_person_days)}</td><td class="text-right">${round2(d.legacy_person_days)}</td>
+          <td class="text-right"><strong>${round2(d.effort_ratio)}x</strong></td>
           <td>${d.xcsg_revisions} → ${d.legacy_revisions}</td>
-          <td><strong>${round2(d.value_multiplier)}x</strong></td>
+          <td class="text-right vm-cell">${round2(d.value_multiplier)}x</td>
         </tr>`;
       }
       html += '</tbody></table></div>';
@@ -410,11 +418,11 @@ function renderNewDeliverable(prefill = null) {
       <form id="deliverableForm">
         <fieldset><legend>Deliverable Information</legend>
           <div class="form-row">
-            <div class="form-group"><label>Deliverable Type *</label><select id="fType" required>${optionsHTML(DELIVERABLE_TYPES, prefill?.deliverable_type)}</select></div>
-            <div class="form-group"><label>Engagement Stage *</label><select id="fStage" required>${optionsHTML(ENGAGEMENT_STAGES, prefill?.engagement_stage)}</select></div>
+            <div class="form-group"><label>Deliverable Type <span class="required">*</span></label><select id="fType" required>${optionsHTML(DELIVERABLE_TYPES, prefill?.deliverable_type)}</select></div>
+            <div class="form-group"><label>Engagement Stage <span class="required">*</span></label><select id="fStage" required>${optionsHTML(ENGAGEMENT_STAGES, prefill?.engagement_stage)}</select></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label>Pioneer Name *</label><input type="text" id="fPioneer" required value="${esc(prefill?.pioneer_name || '')}"></div>
+            <div class="form-group"><label>Pioneer Name <span class="required">*</span></label><input type="text" id="fPioneer" required value="${esc(prefill?.pioneer_name || '')}"></div>
             <div class="form-group"><label>Pioneer Email</label><input type="email" id="fEmail" value="${esc(prefill?.pioneer_email || '')}"></div>
           </div>
           <div class="form-row">
@@ -432,11 +440,11 @@ function renderNewDeliverable(prefill = null) {
 
         <fieldset><legend>xCSG Performance</legend>
           <div class="form-row">
-            <div class="form-group"><label>Calendar Days *</label><select id="fXDays" required>${optionsHTML(CALENDAR_DAYS, prefill?.xcsg_calendar_days)}</select></div>
-            <div class="form-group"><label>Team Size *</label><select id="fXTeam" required>${optionsHTML(TEAM_SIZES, prefill?.xcsg_team_size)}</select></div>
+            <div class="form-group"><label>Calendar Days <span class="required">*</span></label><select id="fXDays" required>${optionsHTML(CALENDAR_DAYS, prefill?.xcsg_calendar_days)}</select></div>
+            <div class="form-group"><label>Team Size <span class="required">*</span></label><select id="fXTeam" required>${optionsHTML(TEAM_SIZES, prefill?.xcsg_team_size)}</select></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label>Revision Rounds *</label><select id="fXRevisions" required>${optionsHTML(REVISION_ROUNDS, prefill?.xcsg_revision_rounds)}</select></div>
+            <div class="form-group"><label>Revision Rounds <span class="required">*</span></label><select id="fXRevisions" required>${optionsHTML(REVISION_ROUNDS, prefill?.xcsg_revision_rounds)}</select></div>
             <div class="form-group"><label>Scope Expansion</label><select id="fScope">${optionsHTML(SCOPE_OPTIONS, prefill?.scope_expansion)}</select></div>
           </div>
         </fieldset>
@@ -579,12 +587,14 @@ async function renderDeliverables() {
       const statusBadge = d.status === 'complete'
         ? '<span class="badge badge-green">Complete</span>'
         : '<span class="badge badge-orange">Expert Pending</span>';
+      const linkSvg = '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
+      const trashSvg = '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
       const expertBtn = d.status !== 'complete' && d.expert_token
-        ? `<button class="btn-icon" title="Copy expert link" onclick="event.stopPropagation();copyToClipboard('${window.location.origin}${window.location.pathname}#expert/${d.expert_token}')">🔗</button>`
+        ? `<button class="btn-icon" title="Copy expert link" onclick="event.stopPropagation();copyToClipboard('${window.location.origin}${window.location.pathname}#expert/${d.expert_token}')">${linkSvg}</button>`
         : '';
       const isAdmin = state.user && state.user.role === 'admin';
       const deleteBtn = isAdmin
-        ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${d.id},'${esc(d.deliverable_type)}')">🗑</button>`
+        ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${d.id},'${esc(d.deliverable_type)}')">${trashSvg}</button>`
         : '';
       html += `<tr class="clickable-row" onclick="window.location.hash='#edit/${d.id}'">
         <td>${esc(d.deliverable_type)}</td><td>${esc(d.pioneer_name)}</td><td>${esc(d.client_name || '—')}</td>
@@ -809,12 +819,14 @@ async function renderActivity() {
       mc.innerHTML = '<div class="empty-state"><h3>No activity yet</h3><p>Activity will appear here as you use the tracker.</p></div>';
       return;
     }
+    const ACTIVITY_PAGE = 25;
     let html = '<div class="card"><table class="data-table"><thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead><tbody>';
     let lastDay = '';
+    let rowIdx = 0;
     for (const a of items) {
       const day = a.created_at ? new Date(a.created_at).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }) : '';
       if (day && day !== lastDay) {
-        html += `<tr><td colspan="3" class="activity-day-sep">${day}</td></tr>`;
+        html += `<tr class="activity-row${rowIdx >= ACTIVITY_PAGE ? ' activity-hidden' : ''}"><td colspan="3" class="activity-day-sep">${day}</td></tr>`;
         lastDay = day;
       }
       const actionBadge = a.action === 'login' ? 'badge-info'
@@ -823,14 +835,26 @@ async function renderActivity() {
         : a.action.includes('expert') ? 'badge-orange'
         : a.action.includes('updated') ? 'badge-navy'
         : 'badge-gray';
-      html += `<tr>
+      html += `<tr class="activity-row${rowIdx >= ACTIVITY_PAGE ? ' activity-hidden' : ''}">
         <td>${formatDateTime(a.created_at)}</td>
         <td><span class="badge ${actionBadge}">${esc(a.action)}</span></td>
         <td>${esc(a.details || '—')}</td>
       </tr>`;
+      rowIdx++;
     }
-    html += '</tbody></table></div>';
+    html += '</tbody></table>';
+    if (items.length > ACTIVITY_PAGE) {
+      html += `<div class="show-more-wrap"><button class="show-more-btn" id="activityShowMore">Show all ${items.length} entries</button></div>`;
+    }
+    html += '</div>';
     mc.innerHTML = html;
+
+    if (items.length > ACTIVITY_PAGE) {
+      document.getElementById('activityShowMore')?.addEventListener('click', function () {
+        document.querySelectorAll('.activity-hidden').forEach(el => el.classList.remove('activity-hidden'));
+        this.parentElement.remove();
+      });
+    }
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load activity: ${esc(err.message)}</div>`;
   }
