@@ -760,7 +760,8 @@ function renderNewProject(prefill = null) {
       <div><strong>Category defaults loaded.</strong> Adjust these values to match this specific project's legacy context. Overriding improves metric accuracy.</div>
     </div>`;
 
-  // xCSG Performance section uses simple fields = `
+  // xCSG Performance section uses simple fields
+  html += `
     <div class="card">
       <form id="projectForm">
         <fieldset><legend>Project Information</legend>
