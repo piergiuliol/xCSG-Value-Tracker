@@ -2969,3 +2969,254 @@ input[type="range"].xcsg-slider::-moz-range-thumb {
 /* Gate items and summary (used in scaling gates) */
 .gate-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 14px; color: var(--gray-700); }
 .gate-summary { font-size: 14px; font-weight: 600; color: var(--navy); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gray-200); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXPERT FORM REDESIGN — Visual Polish
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Warm gradient background for expert view */
+#expertView {
+  background: linear-gradient(180deg, #eef2f7 0%, #f8f9fb 40%, #ffffff 100%) !important;
+}
+
+/* ── Section Icon Badges ─────────────────────────────────────────────────── */
+.accordion-section-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+.accordion-header:hover .accordion-section-icon {
+  transform: scale(1.08);
+}
+.accordion-header[data-section="B"] .accordion-section-icon { background: #E8F5FC; }
+.accordion-header[data-section="C"] .accordion-section-icon { background: #FFF7ED; }
+.accordion-header[data-section="D"] .accordion-section-icon { background: #F0FDF4; }
+.accordion-header[data-section="F"] .accordion-section-icon { background: #FDF4FF; }
+
+/* ── Section Title + Description ─────────────────────────────────────────── */
+.accordion-title-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.accordion-section-desc-inline {
+  font-size: 12px;
+  color: var(--gray-400);
+  font-weight: 400;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ── Custom Select Styling ───────────────────────────────────────────────── */
+select.expert-select {
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  background-color: #fff !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%239CA3AF' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 14px center !important;
+  background-size: 12px !important;
+  padding-right: 40px !important;
+}
+select.expert-select:focus {
+  border-color: var(--blue) !important;
+  box-shadow: 0 0 0 3px rgba(110,193,228,0.2), 0 2px 8px rgba(110,193,228,0.1) !important;
+}
+
+/* ── Numeric Input Styling ───────────────────────────────────────────────── */
+input.expert-input {
+  background-color: #FFFBF5 !important;
+  border-color: var(--orange-light) !important;
+}
+input.expert-input:focus {
+  border-color: var(--orange) !important;
+  box-shadow: 0 0 0 3px rgba(255,131,0,0.12) !important;
+}
+
+/* ── XCSG / Legacy Column Differentiation ─────────────────────────────────── */
+.accordion-field-group.xcsg-field {
+  position: relative;
+  border-left: 3px solid var(--blue);
+  padding-left: 14px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: rgba(110,193,228,0.03);
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.accordion-field-group.legacy-field {
+  position: relative;
+  border-left: 3px solid var(--gray-300);
+  padding-left: 14px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: rgba(0,0,0,0.015);
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.accordion-field-group.xcsg-field .xcsg-label {
+  color: var(--navy);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.accordion-field-group.legacy-field .legacy-label {
+  color: var(--gray-500);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── Scale Endpoint Labels ───────────────────────────────────────────────── */
+.accordion-scale-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--gray-400);
+  margin-top: 8px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.accordion-scale-labels span:first-child {
+  opacity: 0.7;
+}
+.accordion-scale-labels span:last-child {
+  opacity: 0.7;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+/* ── Question ID Badge ───────────────────────────────────────────────────── */
+.q-id {
+  display: inline-block;
+  background: var(--navy);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-right: 8px;
+  vertical-align: middle;
+  letter-spacing: 0.5px;
+}
+
+/* ── Progress Bar Animation ──────────────────────────────────────────────── */
+.accordion-progress-fill {
+  background: linear-gradient(90deg, var(--navy), var(--navy-light)) !important;
+  transition: width 0.5s cubic-bezier(0.4,0,0.2,1), background 0.4s ease !important;
+  position: relative;
+  overflow: hidden;
+}
+.accordion-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  animation: shimmer 2s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.accordion-progress-fill.complete {
+  background: linear-gradient(90deg, #10B981, #34D399) !important;
+  animation: progress-pulse 2s ease-in-out infinite;
+}
+.accordion-progress-fill.complete::after {
+  animation: none;
+  background: none;
+}
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+/* ── Accordion Question Polish ───────────────────────────────────────────── */
+.accordion-question {
+  padding-bottom: 24px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--gray-100);
+  transition: background 0.15s;
+}
+.accordion-question:hover {
+  background: rgba(110,193,228,0.02);
+  border-radius: var(--radius);
+}
+
+.accordion-question-label {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--gray-800);
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+/* ── Submit Button Polish ────────────────────────────────────────────────── */
+.accordion-submit-area .btn-primary {
+  padding: 14px 36px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: var(--radius);
+  background: var(--navy);
+  transition: all 0.2s;
+}
+.accordion-submit-area .btn-primary:not(:disabled):hover {
+  background: var(--navy-light);
+  box-shadow: 0 4px 16px rgba(18,31,107,0.25);
+  transform: translateY(-1px);
+}
+.accordion-submit-area .btn-primary:not(:disabled):active {
+  transform: translateY(0);
+}
+.accordion-submit-area .btn-primary:disabled {
+  background: var(--gray-300);
+  color: var(--gray-500);
+}
+
+/* ── Context Card Warmth ─────────────────────────────────────────────────── */
+.expert-section-card:first-child {
+  border-left: 4px solid var(--orange);
+}
+
+/* ── Accordion Header Hover ──────────────────────────────────────────────── */
+.accordion-header {
+  transition: all 0.2s ease;
+}
+.accordion-header:hover {
+  box-shadow: var(--shadow);
+}
+
+/* ── Mobile Responsive Polish ────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .accordion-section-icon {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+    border-radius: 8px;
+  }
+  .accordion-section-desc-inline {
+    display: none;
+  }
+  .accordion-field-group.xcsg-field,
+  .accordion-field-group.legacy-field {
+    padding-left: 10px;
+    border-left-width: 2px;
+  }
+  .accordion-question-label {
+    font-size: 14px;
+  }
+  .q-id {
+    font-size: 9px;
+    padding: 1px 6px;
+  }
+}

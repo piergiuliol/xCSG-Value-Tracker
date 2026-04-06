@@ -1322,10 +1322,10 @@ function _expertBuildFieldHTML(fieldDef, savedVal, suffix) {
   const fieldName = fieldDef.key + '_' + suffix;
   const isNumeric = fieldDef.type === 'numeric';
   if (isNumeric) {
-    return '<input type="number" name="' + esc(fieldName) + '" class="accordion-field" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" min="0" step="0.5" placeholder="Enter value" value="' + esc(savedVal ?? '') + '" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
+    return '<input type="number" name="' + esc(fieldName) + '" class="accordion-field expert-input" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" min="0" step="0.5" placeholder="Enter hours" value="' + esc(savedVal ?? '') + '" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
   }
   const opts = fieldDef.options || [];
-  let html = '<select name="' + esc(fieldName) + '" class="accordion-field" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;background:#fff;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
+  let html = '<select name="' + esc(fieldName) + '" class="accordion-field expert-select" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
   html += '<option value="">\u2014 Select \u2014</option>';
   for (const opt of opts) {
     const sel = savedVal === opt ? ' selected' : '';
@@ -1358,7 +1358,10 @@ function _expertUpdateProgress(totalFields) {
   const label = document.getElementById('expertProgressLabel');
   const btn = document.getElementById('expertSubmitBtn');
   if (bar) bar.style.width = pct + '%';
-  if (bar) bar.style.background = filled >= totalFields ? 'var(--success)' : 'var(--navy)';
+  if (bar) {
+    bar.style.background = filled >= totalFields ? 'linear-gradient(90deg, var(--success), #34D399)' : 'linear-gradient(90deg, var(--navy), var(--navy-light))';
+    bar.classList.toggle('complete', filled >= totalFields);
+  }
   if (label) label.textContent = filled + '/' + totalFields + ' fields completed';
   if (btn) {
     btn.textContent = 'Submit Assessment (' + filled + '/' + totalFields + ')';
@@ -1394,6 +1397,24 @@ function _expertToggleAccordion(sectionKey) {
   }
 }
 
+// Full question text and scale labels for the expert assessment form
+const EXPERT_QUESTION_TEXT = {
+  'b1_starting_point': { question: 'What was the starting point for the deliverable?', scale: ['Raw request', 'Full hypothesis deck'] },
+  'b2_research_sources': { question: 'What research sources were primarily used?', scale: ['General web', 'Synthesized firm knowledge'] },
+  'b3_assembly_ratio': { question: 'What proportion of the work was manually assembled?', scale: ['>80% manual', '<20% manual'] },
+  'b4_hypothesis_first': { question: 'How hypothesis-driven was the approach?', scale: ['Exploratory', 'Fully hypothesis-led'] },
+  'c1_specialization': { question: 'How specialized was the team member leading this?', scale: ['Generalist', 'World-class expert'] },
+  'c2_directness': { question: 'How directly was the senior person involved?', scale: ['Delegated', 'Personally leading'] },
+  'c3_judgment_pct': { question: 'What proportion of the output reflects senior judgment?', scale: ['<20%', '>80%'] },
+  'c4_senior_hours': { question: 'Senior hours invested (xCSG only)', scale: null },
+  'c5_junior_hours': { question: 'Junior hours invested (xCSG only)', scale: null },
+  'd1_proprietary_data': { question: 'How much proprietary data/knowledge was used?', scale: ['None', 'Fully proprietary'] },
+  'd2_knowledge_reuse': { question: 'To what extent was prior firm knowledge reused?', scale: ['One-time', 'Maximum'] },
+  'd3_moat_test': { question: 'How defensible is the knowledge advantage?', scale: ['Easily replicable', 'Impossible to replicate'] },
+  'f1_feasibility': { question: 'How thoroughly was feasibility assessed?', scale: ['Not assessed', 'Exceeds requirements'] },
+  'f2_productization': { question: 'What is the productization potential?', scale: ['None', 'Scaled'] },
+};
+
 async function renderExpert(token) {
   const ec = document.getElementById('expertContent');
   ec.innerHTML = '<div class="loading">Loading assessment\u2026</div>';
@@ -1412,7 +1433,7 @@ async function renderExpert(token) {
     // Parse options response
     // Parse flat options object from API into sections
     const fieldDefs = {};
-    const sectionsMap = { B: { title: 'Machine-First Operations', desc: 'How much of this deliverable was built using machine-first processes.', fields: [] }, C: { title: 'Senior-Led Model', desc: 'Evaluate the depth of expert involvement and judgment applied.', fields: [] }, D: { title: 'Proprietary Knowledge', desc: 'Assess how much proprietary or accumulated knowledge made this deliverable unique.', fields: [] }, F: { title: 'Value Creation', desc: 'Evaluate whether xCSG created value that wouldn\u2019t exist in the legacy model.', fields: [] } };
+    const sectionsMap = { B: { title: 'Machine-First Operations', desc: 'How AI-driven was the approach?', icon: '🤖', fields: [] }, C: { title: 'Senior-Led Model', desc: 'How deeply was senior expertise involved?', icon: '👔', fields: [] }, D: { title: 'Proprietary Knowledge', desc: 'How unique was the knowledge advantage?', icon: '🏰', fields: [] }, F: { title: 'Value Creation', desc: 'What value did xCSG create beyond legacy?', icon: '💎', fields: [] } };
     let totalFields = 0;
     const questionOrder = ['b1_starting_point','b2_research_sources','b3_assembly_ratio','b4_hypothesis_first','c1_specialization','c2_directness','c3_judgment_pct','c4_senior_hours','c5_junior_hours','d1_proprietary_data','d2_knowledge_reuse','d3_moat_test','f1_feasibility','f2_productization'];
     for (const key of questionOrder) {
@@ -1458,8 +1479,11 @@ async function renderExpert(token) {
       html += '<div class="accordion-header" data-section="' + secKey + '" onclick="_expertToggleAccordion(\'' + secKey + '\')">';
       html += '<div class="accordion-header-left">';
       html += '<span class="accordion-chevron">\u25B6</span>';
-      html += '<span class="accordion-section-icon">' + esc(sec.icon || '') + '</span>';
-      html += '<span class="accordion-section-title">' + esc(secKey) + ' \u2014 ' + esc(sec.title) + '</span>';
+      html += '<span class="accordion-section-icon" data-section="' + secKey + '">' + (sec.icon || '') + '</span>';
+      html += '<div class="accordion-title-wrap">';
+      html += '<span class="accordion-section-title">Section ' + esc(secKey) + ' \u2014 ' + esc(sec.title) + '</span>';
+      html += '<span class="accordion-section-desc-inline">' + esc(sec.desc) + '</span>';
+      html += '</div>';
       html += '<span class="accordion-count">0/' + secFields.length + '</span>';
       html += '</div></div>';
       html += '<div class="accordion-section" data-section="' + secKey + '">';
@@ -1471,20 +1495,26 @@ async function renderExpert(token) {
         const legacySaved = saved ? saved[f.key + '_legacy'] : (legacyDefault || '');
         const isNorm = !saved && legacyDefault;
         const qId = f.key.split('_')[0].toUpperCase();
+        const qText = EXPERT_QUESTION_TEXT[f.key];
+        const fullLabel = qText ? qText.question : (f.label || f.key);
         html += '<div class="accordion-question">';
-        html += '<div class="accordion-question-label"><span class="q-id">' + esc(qId) + '</span> ' + esc(f.label || f.key) + '</div>';
+        html += '<div class="accordion-question-label"><span class="q-id">' + esc(qId) + '</span> ' + esc(fullLabel) + '</div>';
         html += '<div class="accordion-question-fields">';
-        html += '<div class="accordion-field-group">';
+        html += '<div class="accordion-field-group xcsg-field">';
         html += '<label class="accordion-field-label xcsg-label">xCSG</label>';
         html += _expertBuildFieldHTML(f, xcsgSaved, 'xcsg');
         html += '</div>';
         if (hasLegacy) {
-          html += '<div class="accordion-field-group">';
+          html += '<div class="accordion-field-group legacy-field">';
           html += '<label class="accordion-field-label legacy-label">Legacy' + (isNorm ? ' <span class="norm-suffix">(norm)</span>' : '') + '</label>';
           html += _expertBuildFieldHTML(f, legacySaved, 'legacy');
           html += '</div>';
         }
-        html += '</div></div>';
+        html += '</div>';
+        if (qText && qText.scale) {
+          html += '<div class="accordion-scale-labels"><span>' + esc(qText.scale[0]) + '</span><span>' + esc(qText.scale[1]) + '</span></div>';
+        }
+        html += '</div>';
       }
     }
     html += '</div>';
