@@ -343,6 +343,95 @@ async def list_norms(current_user: dict = Depends(auth.get_current_user)):
     return db.list_norms()
 
 
+# ── Legacy Norms V2 (MUST be before /api/norms/{category_id} to avoid route capture) ──
+
+@app.get("/api/norms/v2")
+async def list_norms_v2(current_user: dict = Depends(auth.get_current_user)):
+    return db.list_norms_v2()
+
+
+@app.get("/api/norms/v2/lookup")
+async def lookup_norm_v2(
+    category_id: int = Query(...),
+    complexity: Optional[float] = Query(None),
+    client_sub_category: Optional[str] = Query(None),
+    geographies: Optional[str] = Query(None),
+    current_user: dict = Depends(auth.get_current_user),
+):
+    geo_list = json.loads(geographies) if geographies else None
+    result = db.lookup_norm(category_id, complexity, client_sub_category, geo_list)
+    if not result:
+        raise HTTPException(status_code=404, detail="No matching norm found")
+    return result
+
+
+@app.post("/api/norms/v2", status_code=201)
+async def create_norm_v2(
+    body: LegacyNormV2Update,
+    category_id: int = Query(...),
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    cat = db.get_category(category_id)
+    if not cat:
+        raise HTTPException(status_code=400, detail="Invalid category_id")
+    data = body.model_dump()
+    data["category_id"] = category_id
+    data["updated_by"] = current_user["sub"]
+    norm_id = db.create_norm_v2(data)
+    result = db.get_norm_v2(norm_id)
+    db.log_activity(current_user["sub"], "norm_v2_created", details=f"Created v2 norm for {cat['name']}")
+    return result
+
+
+@app.get("/api/norms/v2/{norm_id}")
+async def get_norm_v2(norm_id: int, current_user: dict = Depends(auth.get_current_user)):
+    result = db.get_norm_v2(norm_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Norm not found")
+    return result
+
+
+@app.put("/api/norms/v2/{norm_id}")
+async def update_norm_v2_endpoint(
+    norm_id: int,
+    body: LegacyNormV2Update,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    existing = db.get_norm_v2(norm_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Norm not found")
+    data = body.model_dump()
+    db.update_norm_v2(norm_id, data, current_user["sub"])
+    db.log_activity(current_user["sub"], "norm_v2_updated", details=f"Updated v2 norm #{norm_id}")
+    return db.get_norm_v2(norm_id)
+
+
+@app.delete("/api/norms/v2/{norm_id}", status_code=204)
+async def delete_norm_v2_endpoint(
+    norm_id: int,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    existing = db.get_norm_v2(norm_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Norm not found")
+    db.delete_norm_v2(norm_id)
+    db.log_activity(current_user["sub"], "norm_v2_deleted", details=f"Deleted v2 norm #{norm_id}")
+
+
+@app.get("/api/norms/v2/{norm_id}/history")
+async def get_norm_v2_history(norm_id: int, current_user: dict = Depends(auth.get_current_user)):
+    return db.get_norm_history(norm_id)
+
+
+@app.post("/api/norms/v2/recalculate")
+async def recalculate_norms_v2(current_user: dict = Depends(auth.get_current_user_admin)):
+    result = db.recalculate_norms()
+    db.log_activity(current_user["sub"], "norms_v2_recalculated", details=str(result))
+    return result
+
+
+# ── Legacy Norms V1 ─────────────────────────────────────────────────────────
+
 @app.get("/api/norms/{category_id}")
 async def get_norm(
     category_id: int,
@@ -409,81 +498,6 @@ async def metrics_scaling_gates(current_user: dict = Depends(auth.get_current_us
         passed_count=passed,
         total_count=len(gates),
     )
-
-
-# ── Legacy Norms V2 ────────────────────────────────────────────────────────
-
-@app.get("/api/norms/v2")
-async def list_norms_v2(current_user: dict = Depends(auth.get_current_user)):
-    return db.list_norms_v2()
-
-
-@app.get("/api/norms/v2/lookup")
-async def lookup_norm_v2(
-    category_id: int = Query(...),
-    complexity: Optional[float] = Query(None),
-    client_sub_category: Optional[str] = Query(None),
-    geographies: Optional[str] = Query(None),
-    current_user: dict = Depends(auth.get_current_user),
-):
-    geo_list = json.loads(geographies) if geographies else None
-    result = db.lookup_norm(category_id, complexity, client_sub_category, geo_list)
-    if not result:
-        raise HTTPException(status_code=404, detail="No matching norm found")
-    return result
-
-
-@app.post("/api/norms/v2", status_code=201)
-async def create_norm_v2(
-    body: LegacyNormV2Update,
-    category_id: int = Query(...),
-    current_user: dict = Depends(auth.get_current_user_admin),
-):
-    cat = db.get_category(category_id)
-    if not cat:
-        raise HTTPException(status_code=400, detail="Invalid category_id")
-    data = body.model_dump()
-    data["category_id"] = category_id
-    data["updated_by"] = current_user["sub"]
-    norm_id = db.create_norm_v2(data)
-    result = db.get_norm_v2(norm_id)
-    db.log_activity(current_user["sub"], "norm_v2_created", details=f"Created v2 norm for {cat['name']}")
-    return result
-
-
-@app.get("/api/norms/v2/{norm_id}")
-async def get_norm_v2(norm_id: int, current_user: dict = Depends(auth.get_current_user)):
-    result = db.get_norm_v2(norm_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="Norm not found")
-    return result
-
-
-@app.put("/api/norms/v2/{norm_id}")
-async def update_norm_v2_endpoint(
-    norm_id: int,
-    body: LegacyNormV2Update,
-    current_user: dict = Depends(auth.get_current_user_admin),
-):
-    existing = db.get_norm_v2(norm_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Norm not found")
-    data = body.model_dump()
-    db.update_norm_v2(norm_id, data, current_user["sub"])
-    db.log_activity(current_user["sub"], "norm_v2_updated", details=f"Updated v2 norm #{norm_id}")
-    return db.get_norm_v2(norm_id)
-
-
-@app.get("/api/norms/v2/{norm_id}/history")
-async def get_norm_v2_history(norm_id: int, current_user: dict = Depends(auth.get_current_user)):
-    return db.get_norm_history(norm_id)
-
-
-@app.post("/api/norms/v2/recalculate")
-async def recalculate_norms_v2(current_user: dict = Depends(auth.get_current_user_admin)):
-    result = db.recalculate_norms()
-    db.log_activity(current_user["sub"], "norms_v2_recalculated", details=str(result))
-    return result
 
 
 # ── Project Completion (v2 sliders) ──────────────────────────────────────────

@@ -842,6 +842,16 @@ def update_norm_v2(norm_id: int, data: dict, changed_by: str) -> bool:
         conn.close()
 
 
+def delete_norm_v2(norm_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM legacy_norms_v2 WHERE id = ?", (norm_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def get_norm_history(norm_id: int) -> list:
     conn = get_connection()
     try:

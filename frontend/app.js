@@ -116,6 +116,7 @@ const GEOGRAPHIES = {
   'Asia Pacific': ['Japan', 'South Korea', 'China', 'Hong Kong', 'Taiwan', 'Australia', 'New Zealand', 'Singapore', 'India'],
   'Latin America': ['Brazil', 'Argentina', 'Colombia', 'Chile', 'Rest of LatAm'],
   'Middle East & Africa': ['UAE', 'Saudi Arabia', 'Israel', 'South Africa', 'Nigeria', 'Rest of MEA'],
+  'Global': ['Multi-regional'],
 };
 const GEO_KEYS = Object.keys(GEOGRAPHIES);
 
@@ -705,9 +706,6 @@ function renderNewProject(prefill = null) {
       if (grid) grid.style.display = this.checked ? '' : 'none';
       tryAutoLookup();
     });
-    // Initialize visibility
-    const grid = document.querySelector(`.geo-grid[data-region="${cb.value}"]`);
-    if (grid) grid.style.display = cb.checked ? '' : 'none';
   });
 
   // V2 Norm lookup
@@ -1586,30 +1584,61 @@ async function renderNormsV2Page() {
     // Show categories, even those without norms
     for (const cat of cats) {
       const norms = grouped[cat.id] || [];
-      html += `<div class="norms-v2-category">`;
+      html += `<div class="norms-v2-category" data-cat-id="${cat.id}">`;
       html += `<div class="norms-v2-category-header" onclick="this.classList.toggle('collapsed');this.nextElementSibling.classList.toggle('collapsed')">
         <span>${esc(cat.name)} <span style="font-weight:400;color:var(--gray-400);font-size:12px">(${norms.length} norms)</span></span>
         <span class="collapse-icon">\u25BC</span>
       </div>`;
       html += `<div class="norms-v2-category-body">`;
-      if (norms.length === 0) {
+
+      if (norms.length === 0 && !isAdmin) {
         html += '<div style="padding:16px 20px;color:var(--gray-400);font-size:13px">No norms configured for this category.</div>';
+      } else if (norms.length === 0) {
+        html += '<div style="padding:16px 20px;text-align:center">';
+        html += '<div style="color:var(--gray-400);font-size:13px;margin-bottom:12px">No norms yet — add one to define legacy baselines for this category.</div>';
+        html += '<button class="btn btn-primary" onclick="showAddNormForm(' + cat.id + ')" style="font-size:13px;padding:8px 20px">+ Add First Norm</button>';
+        html += '</div>';
+      }
+      // Column headers when norms exist
+      if (norms.length > 0) {
+        html += `<div class="norms-v2-row norms-v2-col-header">
+          <div>Profile</div>
+          <div>Cal Days</div>
+          <div>Team Size</div>
+          <div>Revision Int.</div>
+          <div>Scope Exp.</div>
+          <div>Senior Inv.</div>
+          <div>Sample</div>
+        </div>`;
       }
       for (const n of norms) {
         const sampleSize = n.sample_size || 0;
         const sampleClass = sampleSize >= 20 ? 'badge-green' : sampleSize >= 5 ? 'badge-orange' : 'badge-red';
         html += `<div class="norms-v2-row" id="normv2-${n.id}" onclick="toggleNormEdit(${n.id})">
-          <div><strong>C${n.complexity}</strong> <span class="badge badge-navy" style="font-size:10px">${esc(n.client_sector || '?')}</span> <span class="badge badge-gray" style="font-size:10px">${esc(n.client_sub_category || '?')}</span></div>
-          <div>${n.avg_calendar_days != null ? n.avg_calendar_days : '—'}</div>
-          <div>${n.avg_team_size != null ? n.avg_team_size : '—'}</div>
-          <div>${n.avg_revision_intensity != null ? round2(n.avg_revision_intensity) : '—'}</div>
-          <div>${n.avg_scope_expansion != null ? round2(n.avg_scope_expansion) : '—'}</div>
-          <div>${n.avg_senior_involvement != null ? round2(n.avg_senior_involvement) : '—'}</div>
+          <div><strong>C${n.complexity != null ? n.complexity : '?'}</strong> <span class="badge badge-navy" style="font-size:10px">${esc(n.client_sector || '\u2014')}</span> <span class="badge badge-gray" style="font-size:10px">${esc(n.client_sub_category || '\u2014')}</span></div>
+          <div>${n.avg_calendar_days != null ? n.avg_calendar_days : '\u2014'}</div>
+          <div>${n.avg_team_size != null ? n.avg_team_size : '\u2014'}</div>
+          <div>${n.avg_revision_intensity != null ? round2(n.avg_revision_intensity) : '\u2014'}</div>
+          <div>${n.avg_scope_expansion != null ? round2(n.avg_scope_expansion) : '\u2014'}</div>
+          <div>${n.avg_senior_involvement != null ? round2(n.avg_senior_involvement) : '\u2014'}</div>
           <div><span class="badge ${sampleClass}">n=${sampleSize}</span></div>
         </div>
         <div id="normv2-edit-${n.id}" style="display:none"></div>
       `;
       }
+
+      // Add Norm button (admin only)
+      // When 0 norms, the empty state already has an Add button, so skip the add-area
+      if (isAdmin && norms.length > 0) {
+        html += `<div class="norms-v2-add-area" id="normv2-add-area-${cat.id}" style="padding:12px 20px;border-top:1px solid var(--gray-100)">`;
+        html += `<button class="btn btn-primary" onclick="showAddNormForm(${cat.id})" style="font-size:13px;padding:8px 20px">+ Add Norm</button>`;
+        html += `<div id="normv2-add-form-${cat.id}" style="display:none"></div>`;
+        html += '</div>';
+      } else if (isAdmin) {
+        // Still need the hidden form container for the empty-state Add button
+        html += `<div id="normv2-add-form-${cat.id}" style="display:none"></div>`;
+      }
+
       html += '</div></div>';
     }
 
@@ -1627,6 +1656,117 @@ async function renderNormsV2Page() {
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
   }
+}
+
+/* ── Norm form helpers (shared between add/edit) ── */
+
+function _normFormHTML(prefix, defaults) {
+  defaults = defaults || {};
+  const sectorOptions = Object.keys(SECTORS).map(s =>
+    `<option value="${esc(s)}"${defaults.client_sector === s ? ' selected' : ''}>${esc(s)}</option>`
+  ).join('');
+
+  let geoChecks = '';
+  for (const region of GEO_KEYS) {
+    geoChecks += `<div class="norm-geo-region"><strong>${esc(region)}</strong>`;
+    for (const c of GEOGRAPHIES[region]) {
+      const checked = (defaults._geoList || []).includes(c) ? ' checked' : '';
+      geoChecks += `<label class="norm-geo-check"><input type="checkbox" name="${prefix}_geo" value="${esc(c)}"${checked}> ${esc(c)}</label>`;
+    }
+    geoChecks += '</div>';
+  }
+
+  // Build sub-category options for current sector
+  let subcatOptions = '<option value="">\u2014</option>';
+  if (defaults.client_sector && SECTORS[defaults.client_sector]) {
+    for (const sc of SECTORS[defaults.client_sector]) {
+      subcatOptions += `<option value="${esc(sc)}"${defaults.client_sub_category === sc ? ' selected' : ''}>${esc(sc)}</option>`;
+    }
+  }
+
+  return `
+    <div class="norms-v2-edit-panel">
+      <div class="edit-grid">
+        <div><label>Complexity (1-7)</label><input type="number" min="1" max="7" step="1" id="${prefix}_complexity" value="${defaults.complexity != null ? defaults.complexity : ''}"></div>
+        <div><label>Client Sector</label><select id="${prefix}_sector" onchange="_onSectorChange('${prefix}')"><option value="">\u2014</option>${sectorOptions}</select></div>
+        <div><label>Client Sub-Category</label><select id="${prefix}_subcat">${subcatOptions}</select></div>
+        <div><label>Avg Calendar Days</label><input type="number" step="0.1" id="${prefix}_cal" value="${defaults.avg_calendar_days != null ? defaults.avg_calendar_days : ''}"></div>
+        <div><label>Avg Team Size</label><input type="number" step="0.1" id="${prefix}_team" value="${defaults.avg_team_size != null ? defaults.avg_team_size : ''}"></div>
+        <div><label>Avg Revision Intensity (1-7)</label><input type="number" min="1" max="7" step="0.1" id="${prefix}_ri" value="${defaults.avg_revision_intensity != null ? defaults.avg_revision_intensity : ''}"></div>
+        <div><label>Avg Scope Expansion</label><input type="number" step="0.1" id="${prefix}_se" value="${defaults.avg_scope_expansion != null ? defaults.avg_scope_expansion : ''}"></div>
+        <div><label>Avg Senior Involvement</label><input type="number" step="0.1" id="${prefix}_si" value="${defaults.avg_senior_involvement != null ? defaults.avg_senior_involvement : ''}"></div>
+        <div><label>Avg AI Usage</label><input type="number" step="0.1" id="${prefix}_ai" value="${defaults.avg_ai_usage != null ? defaults.avg_ai_usage : ''}"></div>
+      </div>
+      <div><label style="font-size:12px;font-weight:500;color:var(--gray-600);display:block;margin-bottom:4px">Geographies</label><div class="norm-geo-grid">${geoChecks}</div></div>
+      <div style="margin-top:8px"><label style="font-size:12px;font-weight:500;color:var(--gray-600);display:block;margin-bottom:4px">Notes</label><textarea id="${prefix}_notes" rows="2" style="width:100%;padding:8px;border:1px solid var(--gray-300);border-radius:var(--radius-sm);font-size:13px;font-family:Roboto,sans-serif">${esc(defaults.notes || '')}</textarea></div>
+    </div>`;
+}
+
+function _onSectorChange(prefix) {
+  const sector = document.getElementById(`${prefix}_sector`).value;
+  const subcatSel = document.getElementById(`${prefix}_subcat`);
+  subcatSel.innerHTML = '<option value="">\u2014</option>';
+  if (sector && SECTORS[sector]) {
+    for (const sc of SECTORS[sector]) {
+      subcatSel.innerHTML += `<option value="${esc(sc)}">${esc(sc)}</option>`;
+    }
+  }
+}
+
+function _collectNormFields(prefix) {
+  const geoChecked = [];
+  document.querySelectorAll(`input[name="${prefix}_geo"]:checked`).forEach(cb => geoChecked.push(cb.value));
+  return {
+    complexity: document.getElementById(`${prefix}_complexity`)?.value ? parseFloat(document.getElementById(`${prefix}_complexity`).value) : null,
+    client_sector: document.getElementById(`${prefix}_sector`)?.value || null,
+    client_sub_category: document.getElementById(`${prefix}_subcat`)?.value || null,
+    geographies: geoChecked.length ? geoChecked : null,
+    avg_calendar_days: document.getElementById(`${prefix}_cal`)?.value ? parseFloat(document.getElementById(`${prefix}_cal`).value) : null,
+    avg_team_size: document.getElementById(`${prefix}_team`)?.value ? parseFloat(document.getElementById(`${prefix}_team`).value) : null,
+    avg_revision_intensity: document.getElementById(`${prefix}_ri`)?.value ? parseFloat(document.getElementById(`${prefix}_ri`).value) : null,
+    avg_scope_expansion: document.getElementById(`${prefix}_se`)?.value ? parseFloat(document.getElementById(`${prefix}_se`).value) : null,
+    avg_senior_involvement: document.getElementById(`${prefix}_si`)?.value ? parseFloat(document.getElementById(`${prefix}_si`).value) : null,
+    avg_ai_usage: document.getElementById(`${prefix}_ai`)?.value ? parseFloat(document.getElementById(`${prefix}_ai`).value) : null,
+    notes: document.getElementById(`${prefix}_notes`)?.value || null,
+  };
+}
+
+/* ── Add Norm ── */
+
+function showAddNormForm(catId) {
+  const container = document.getElementById(`normv2-add-form-${catId}`);
+  if (!container) return;
+  if (container.style.display !== 'none') {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+  container.style.display = '';
+  container.innerHTML = _normFormHTML('newnorm', {}) +
+    `<div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="createNormV2(${catId})">Save</button>
+      <button class="btn btn-sm" style="background:transparent;border:1px solid var(--gray-300)" onclick="showAddNormForm(${catId})">Cancel</button>
+    </div>`;
+}
+
+async function createNormV2(catId) {
+  const payload = _collectNormFields('newnorm');
+  try {
+    await apiCall('POST', `/norms/v2?category_id=${catId}`, payload);
+    showToast('Norm created');
+    renderNormsV2Page();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+/* ── Delete Norm ── */
+
+async function deleteNormV2(normId) {
+  if (!confirm('Delete this norm? This cannot be undone.')) return;
+  try {
+    await apiCall('DELETE', `/norms/v2/${normId}`);
+    showToast('Norm deleted');
+    renderNormsV2Page();
+  } catch (err) { showToast(err.message, 'error'); }
 }
 
 let activeNormEdit = null;
@@ -1648,23 +1788,20 @@ async function toggleNormEdit(normId) {
     panel.style.display = '';
     try {
       const norm = await apiCall('GET', `/norms/v2/${normId}`);
-      panel.innerHTML = `
-        <div class="norms-v2-edit-panel">
-          <div class="edit-grid">
-            <div><label>Avg Calendar Days</label><input type="number" step="0.1" id="editN2Calendar" value="${norm.avg_calendar_days || ''}"></div>
-            <div><label>Avg Team Size</label><input type="number" step="0.1" id="editN2Team" value="${norm.avg_team_size || ''}"></div>
-            <div><label>Avg Revision Intensity</label><input type="number" step="0.1" id="editN2RI" value="${norm.avg_revision_intensity || ''}"></div>
-            <div><label>Avg Scope Expansion</label><input type="number" step="0.1" id="editN2SE" value="${norm.avg_scope_expansion || ''}"></div>
-            <div><label>Avg Senior Involvement</label><input type="number" step="0.1" id="editN2SI" value="${norm.avg_senior_involvement || ''}"></div>
-            <div><label>Avg AI Usage</label><input type="number" step="0.1" id="editN2AI" value="${norm.avg_ai_usage || ''}"></div>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary btn-sm" onclick="saveNormV2(${normId})">Save</button>
-            <button class="btn btn-secondary btn-sm" onclick="loadNormHistory(${normId})">History</button>
-            <button class="btn btn-sm" style="background:transparent;border:1px solid var(--gray-300)" onclick="toggleNormEdit(${normId})">Close</button>
-          </div>
-          <div id="normHistory-${normId}"></div>
-        </div>`;
+      // Parse geographies for the checkbox defaults
+      let geoList = [];
+      if (norm.geographies) {
+        try { geoList = JSON.parse(norm.geographies); } catch(e) { geoList = [norm.geographies]; }
+      }
+      const defaults = { ...norm, _geoList: geoList };
+      panel.innerHTML = _normFormHTML(`edit${normId}`, defaults) +
+        `<div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-primary btn-sm" onclick="saveNormV2(${normId})">Save</button>
+          <button class="btn btn-secondary btn-sm" onclick="loadNormHistory(${normId})">History</button>
+          <button class="btn btn-sm" style="background:transparent;border:1px solid var(--gray-300)" onclick="toggleNormEdit(${normId})">Cancel</button>
+          <button class="btn btn-sm" style="background:var(--error-bg);color:var(--error-text);border:1px solid var(--error-text);margin-left:auto" onclick="deleteNormV2(${normId})">Delete</button>
+        </div>
+        <div id="normHistory-${normId}"></div>`;
     } catch (err) {
       panel.innerHTML = `<div style="color:var(--error);font-size:13px;padding:12px">Failed: ${esc(err.message)}</div>`;
     }
@@ -1677,17 +1814,11 @@ async function toggleNormEdit(normId) {
 }
 
 async function saveNormV2(normId) {
-  const payload = {
-    avg_calendar_days: document.getElementById('editN2Calendar')?.value ? parseFloat(document.getElementById('editN2Calendar').value) : null,
-    avg_team_size: document.getElementById('editN2Team')?.value ? parseFloat(document.getElementById('editN2Team').value) : null,
-    avg_revision_intensity: document.getElementById('editN2RI')?.value ? parseFloat(document.getElementById('editN2RI').value) : null,
-    avg_scope_expansion: document.getElementById('editN2SE')?.value ? parseFloat(document.getElementById('editN2SE').value) : null,
-    avg_senior_involvement: document.getElementById('editN2SI')?.value ? parseFloat(document.getElementById('editN2SI').value) : null,
-    avg_ai_usage: document.getElementById('editN2AI')?.value ? parseFloat(document.getElementById('editN2AI').value) : null,
-  };
+  const payload = _collectNormFields(`edit${normId}`);
   try {
     await apiCall('PUT', `/norms/v2/${normId}`, payload);
     showToast('Norm updated');
+    renderNormsV2Page();
   } catch (err) { showToast(err.message, 'error'); }
 }
 
@@ -1716,6 +1847,8 @@ async function loadNormHistory(normId) {
     container.innerHTML = `<div style="color:var(--error);font-size:13px">Failed: ${esc(err.message)}</div>`;
   }
 }
+
+
 
 /* ═══════════════════════════════════════════════════════════════════════
    ACTIVITY LOG
