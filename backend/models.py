@@ -1,13 +1,13 @@
 """
-models.py — Pydantic request/response models for xCSG Value Tracker v2
-Project-centric redesign.
+models.py — Pydantic request/response models for xCSG Value Tracker
+Realigned to final spec (April 2026).
 """
 from __future__ import annotations
 
 from datetime import date
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, model_validator
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -50,13 +50,6 @@ class CategoryUpdate(BaseModel):
     description: Optional[str] = None
 
 
-class CategoryResponse(BaseModel):
-    id: int
-    name: str
-    description: Optional[str]
-    created_at: str
-
-
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 class ProjectCreate(BaseModel):
@@ -75,13 +68,6 @@ class ProjectCreate(BaseModel):
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
-    legacy_overridden: bool = False
-    # v2 fields
-    complexity: Optional[float] = None
-    client_sector: Optional[str] = None
-    client_sub_category: Optional[str] = None
-    geographies: Optional[List[str]] = None
-    countries_served: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectCreate":
@@ -113,19 +99,6 @@ class ProjectUpdate(BaseModel):
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
-    # v2 fields
-    complexity: Optional[float] = None
-    client_sector: Optional[str] = None
-    client_sub_category: Optional[str] = None
-    geographies: Optional[List[str]] = None
-    countries_served: Optional[List[str]] = None
-    xcsg_revision_intensity: Optional[float] = None
-    xcsg_scope_expansion_score: Optional[float] = None
-    legacy_scope_expansion: Optional[float] = None
-    legacy_senior_involvement: Optional[float] = None
-    legacy_ai_usage: Optional[float] = None
-    xcsg_senior_involvement: Optional[float] = None
-    xcsg_ai_usage: Optional[float] = None
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectUpdate":
@@ -141,35 +114,11 @@ class ProjectUpdate(BaseModel):
         return self
 
 
-class ProjectResponse(BaseModel):
-    id: int
-    created_by: int
-    project_name: str
-    category_id: int
-    category_name: str
-    client_name: Optional[str]
-    pioneer_name: str
-    pioneer_email: Optional[str]
-    description: Optional[str]
-    date_started: Optional[str]
-    date_delivered: Optional[str]
-    status: str
-    xcsg_calendar_days: str
-    xcsg_team_size: str
-    xcsg_revision_rounds: str
-    xcsg_scope_expansion: Optional[str]
-    legacy_calendar_days: Optional[str]
-    legacy_team_size: Optional[str]
-    legacy_revision_rounds: Optional[str]
-    legacy_overridden: bool
-    expert_token: str
-    created_at: str
-    updated_at: str
-
-
 # ── Expert ────────────────────────────────────────────────────────────────────
 
 class ExpertResponseCreate(BaseModel):
+    """Expert assessment — 14 questions (matching current framework).
+    Will be expanded to 23-field model in Phase 1."""
     b1_starting_point: str
     b2_research_sources: str
     b3_assembly_ratio: str
@@ -200,17 +149,6 @@ class ExpertContextResponse(BaseModel):
 
 # ── Norms ─────────────────────────────────────────────────────────────────────
 
-class NormResponse(BaseModel):
-    id: int
-    category_id: int
-    category_name: str
-    typical_calendar_days: str
-    typical_team_size: str
-    typical_revision_rounds: str
-    notes: Optional[str]
-    updated_at: str
-
-
 class NormUpdate(BaseModel):
     typical_calendar_days: Optional[str] = None
     typical_team_size: Optional[str] = None
@@ -240,16 +178,6 @@ class ProjectMetrics(BaseModel):
     created_at: str
 
 
-class ProjectCompleteRequest(BaseModel):
-    xcsg_revision_intensity: Optional[float] = None
-    xcsg_scope_expansion_score: Optional[float] = None
-    xcsg_senior_involvement: Optional[float] = None
-    xcsg_ai_usage: Optional[float] = None
-    legacy_scope_expansion: Optional[float] = None
-    legacy_senior_involvement: Optional[float] = None
-    legacy_ai_usage: Optional[float] = None
-
-
 class MetricsSummary(BaseModel):
     total_projects: int
     complete_projects: int
@@ -263,10 +191,6 @@ class MetricsSummary(BaseModel):
     proprietary_knowledge_avg: float
     checkpoint: int
     projects_to_next_checkpoint: int
-    # v2 metrics
-    ai_adoption_rate: float = 0.0
-    senior_leverage: Optional[float] = None
-    scope_predictability: Optional[float] = None
 
 
 class TrendPoint(BaseModel):
@@ -299,64 +223,6 @@ class ScalingGates(BaseModel):
     gates: List[ScalingGate]
     passed_count: int
     total_count: int
-
-
-# ── Activity Log ──────────────────────────────────────────────────────────────
-
-# ── Legacy Norms V2 ──────────────────────────────────────────────────────────
-
-class LegacyNormV2Response(BaseModel):
-    id: int
-    category_id: int
-    category_name: Optional[str] = None
-    complexity: Optional[float] = None
-    client_sector: Optional[str] = None
-    client_sub_category: Optional[str] = None
-    geographies: Optional[str] = None
-    countries_served: Optional[str] = None
-    avg_calendar_days: Optional[float] = None
-    avg_team_size: Optional[float] = None
-    avg_revision_intensity: Optional[float] = None
-    avg_scope_expansion: Optional[float] = None
-    avg_senior_involvement: Optional[float] = None
-    avg_ai_usage: Optional[float] = None
-    sample_size: int = 0
-    notes: Optional[str] = None
-    updated_by: Optional[str] = None
-    updated_at: str
-    confidence: Optional[str] = None
-
-
-class LegacyNormV2Update(BaseModel):
-    complexity: Optional[float] = None
-    client_sector: Optional[str] = None
-    client_sub_category: Optional[str] = None
-    geographies: Optional[List[str]] = None
-    countries_served: Optional[List[str]] = None
-    avg_calendar_days: Optional[float] = None
-    avg_team_size: Optional[float] = None
-    avg_revision_intensity: Optional[float] = None
-    avg_scope_expansion: Optional[float] = None
-    avg_senior_involvement: Optional[float] = None
-    avg_ai_usage: Optional[float] = None
-    notes: Optional[str] = None
-
-
-class NormLookupRequest(BaseModel):
-    category_id: int
-    complexity: Optional[float] = None
-    client_sub_category: Optional[str] = None
-    geographies: Optional[List[str]] = None
-
-
-class NormHistoryEntry(BaseModel):
-    id: int
-    norm_id: int
-    field_changed: str
-    old_value: Optional[str] = None
-    new_value: Optional[str] = None
-    changed_by: Optional[str] = None
-    changed_at: str
 
 
 # ── Activity Log ──────────────────────────────────────────────────────────────
