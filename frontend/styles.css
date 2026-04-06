@@ -1616,6 +1616,245 @@ tr:hover .norm-save-btn { opacity: 1; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ACCORDION EXPERT FORM — Phase 1
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Sticky progress bar */
+.accordion-progress-bar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.accordion-progress-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.accordion-progress-track {
+  flex: 1;
+  height: 8px;
+  background: var(--gray-200);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.accordion-progress-fill {
+  height: 100%;
+  background: var(--navy);
+  border-radius: 4px;
+  transition: width 0.4s ease, background 0.4s ease;
+}
+.accordion-progress-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-600);
+  white-space: nowrap;
+  min-width: 130px;
+  text-align: right;
+}
+
+/* Accordion headers */
+.accordion-header {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, box-shadow 0.15s;
+  box-shadow: var(--shadow-sm);
+}
+.accordion-header:hover {
+  background: var(--blue-pale);
+}
+.accordion-header.open {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-bottom-color: transparent;
+  background: var(--gray-50);
+  box-shadow: var(--shadow-sm);
+}
+.accordion-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.accordion-chevron {
+  font-size: 10px;
+  color: var(--gray-400);
+  transition: transform 0.2s;
+}
+.accordion-header.open .accordion-chevron {
+  transform: rotate(90deg);
+}
+.accordion-section-icon {
+  font-size: 18px;
+}
+.accordion-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--navy);
+}
+.accordion-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-400);
+  margin-left: auto;
+}
+.accordion-count-complete {
+  color: var(--success);
+}
+
+/* Accordion sections */
+.accordion-section {
+  display: none;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-top: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  padding: 24px 20px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.accordion-section.open {
+  display: block;
+}
+
+/* Question blocks */
+.accordion-question {
+  padding-bottom: 24px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--gray-100);
+}
+.accordion-question:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
+}
+.accordion-question-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gray-700);
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+.accordion-question-hint {
+  font-size: 12px;
+  color: var(--gray-400);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+/* Two-column xCSG / Legacy fields */
+.accordion-question-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.accordion-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.accordion-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.xcsg-label {
+  color: var(--navy);
+}
+.legacy-label {
+  color: #C8C0B4;
+}
+.norm-suffix {
+  font-weight: 400;
+  color: var(--gray-400);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Submit area */
+.accordion-submit-area {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow);
+  margin-top: 20px;
+}
+
+/* Metrics preview on success */
+.accordion-metrics-preview {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  margin-top: 24px;
+}
+.accordion-metric {
+  text-align: center;
+  padding: 16px 24px;
+  background: var(--gray-50);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--gray-200);
+  min-width: 120px;
+}
+.accordion-metric-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--navy);
+}
+.accordion-metric-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-500);
+  margin-top: 4px;
+}
+
+/* Mobile: single column */
+@media (max-width: 600px) {
+  .accordion-question-fields {
+    grid-template-columns: 1fr;
+  }
+  .accordion-header-left {
+    flex-wrap: wrap;
+    gap: 6px 12px;
+  }
+  .accordion-metrics-preview {
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+  }
+  .accordion-progress-inner {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .accordion-progress-label {
+    text-align: left;
+    min-width: auto;
+  }
+  /* 48px touch targets */
+  .accordion-field-group select,
+  .accordion-field-group input {
+    min-height: 48px;
+    font-size: 16px;
+  }
+  .accordion-header {
+    padding: 16px;
+  }
+}
+
    MICRO-INTERACTIONS & POLISH
    ═══════════════════════════════════════════════════════════════════════════ */
 

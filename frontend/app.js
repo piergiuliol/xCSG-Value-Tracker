@@ -1244,128 +1244,277 @@ async function doDelete(id) {
     showToast(err.message, 'error');
   }
 }
-
 /* ═══════════════════════════════════════════════════════════════════════
-   EXPERT FORM (standalone, no auth)
+   EXPERT FORM — Phase 1 Accordion (standalone, no auth)
    ═══════════════════════════════════════════════════════════════════════ */
+
+function _expertLocalStorageKey(token) { return `expert_form_${token}`; }
+
+function _expertSaveToStorage(token, formData) {
+  try { localStorage.setItem(_expertLocalStorageKey(token), JSON.stringify(formData)); } catch {}
+}
+
+function _expertLoadFromStorage(token) {
+  try { const raw = localStorage.getItem(_expertLocalStorageKey(token)); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+function _expertClearStorage(token) {
+  try { localStorage.removeItem(_expertLocalStorageKey(token)); } catch {}
+}
+
+function _expertBuildFieldHTML(fieldDef, savedVal) {
+  const isNumeric = fieldDef.type === 'number';
+  if (isNumeric) {
+    return `<input type="number" name="${esc(fieldDef.key)}" class="accordion-field" data-key="${esc(fieldDef.key)}" data-section="${esc(fieldDef.section)}" min="0" step="1" placeholder="Enter value" value="${esc(savedVal ?? '')}" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s">`;
+  }
+  const opts = fieldDef.options || [];
+  let html = '<select name="' + esc(fieldDef.key) + '" class="accordion-field" data-key="' + esc(fieldDef.key) + '" data-section="' + esc(fieldDef.section) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;background:#fff;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s">';
+  html += '<option value="">\u2014 Select \u2014</option>';
+  for (const opt of opts) {
+    const sel = savedVal === opt ? ' selected' : '';
+    html += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+  }
+  html += '</select>';
+  return html;
+}
+
+function _expertGetFieldValues() {
+  const values = {};
+  document.querySelectorAll('.accordion-field').forEach(el => {
+    values[el.dataset.key] = el.value;
+  });
+  return values;
+}
+
+function _expertCountFilled() {
+  let count = 0;
+  document.querySelectorAll('.accordion-field').forEach(el => {
+    if (el.value !== '' && el.value != null) count++;
+  });
+  return count;
+}
+
+function _expertUpdateProgress(totalFields) {
+  const filled = _expertCountFilled();
+  const pct = Math.round((filled / totalFields) * 100);
+  const bar = document.getElementById('expertProgressBar');
+  const label = document.getElementById('expertProgressLabel');
+  const btn = document.getElementById('expertSubmitBtn');
+  if (bar) bar.style.width = pct + '%';
+  if (bar) bar.style.background = filled >= totalFields ? 'var(--success)' : 'var(--navy)';
+  if (label) label.textContent = filled + '/' + totalFields + ' fields completed';
+  if (btn) {
+    btn.textContent = 'Submit Assessment (' + filled + '/' + totalFields + ')';
+    btn.disabled = filled < totalFields;
+  }
+  document.querySelectorAll('.accordion-section').forEach(sec => {
+    const secKey = sec.dataset.section;
+    const fields = sec.querySelectorAll('.accordion-field');
+    let secFilled = 0;
+    fields.forEach(f => { if (f.value !== '' && f.value != null) secFilled++; });
+    const header = document.querySelector('.accordion-header[data-section="' + secKey + '"]');
+    if (header) {
+      const countEl = header.querySelector('.accordion-count');
+      if (countEl) {
+        const total = fields.length;
+        countEl.textContent = secFilled + '/' + total + (secFilled === total ? ' \u2713' : '');
+        if (secFilled === total) countEl.classList.add('accordion-count-complete');
+        else countEl.classList.remove('accordion-count-complete');
+      }
+    }
+  });
+}
+
+function _expertToggleAccordion(sectionKey) {
+  const wasOpen = document.querySelector('.accordion-section.open[data-section="' + sectionKey + '"]');
+  document.querySelectorAll('.accordion-section.open').forEach(s => s.classList.remove('open'));
+  document.querySelectorAll('.accordion-header.open').forEach(h => h.classList.remove('open'));
+  if (!wasOpen) {
+    const sec = document.querySelector('.accordion-section[data-section="' + sectionKey + '"]');
+    const hdr = document.querySelector('.accordion-header[data-section="' + sectionKey + '"]');
+    if (sec) sec.classList.add('open');
+    if (hdr) hdr.classList.add('open');
+  }
+}
 
 async function renderExpert(token) {
   const ec = document.getElementById('expertContent');
   ec.innerHTML = '<div class="loading">Loading assessment\u2026</div>';
 
   try {
-    const ctx = await apiCall('GET', `/expert/${token}`);
+    const [ctx, optionsResp] = await Promise.all([
+      apiCall('GET', '/expert/' + token),
+      apiCall('GET', '/expert/options'),
+    ]);
 
     if (ctx.already_completed) {
-      ec.innerHTML = `
-        <div class="expert-thankyou">
-          <div class="thankyou-icon">&#10003;</div>
-          <h2>Thank You</h2>
-          <p>This assessment has already been submitted. Your responses have been recorded.</p>
-        </div>`;
+      ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment has already been submitted. Your responses have been recorded.</p></div>';
       return;
     }
 
-    ec.innerHTML = `
-      <div class="expert-section-card">
-        <div class="context-title">${esc(ctx.project_name)}</div>
-        <div class="context-subtitle">${esc(ctx.category_name)}${ctx.client_name ? ' \u00b7 ' + esc(ctx.client_name) : ''}</div>
-        ${ctx.description ? `<p class="context-description">${esc(ctx.description)}</p>` : ''}
-        <div class="context-grid">
-          <div class="context-item">
-            <span class="label">Pioneer</span>
-            <span class="value">${esc(ctx.pioneer_name)}</span>
-          </div>
-          <div class="context-item">
-            <span class="label">Timeline</span>
-            <span class="value">${esc(ctx.date_started || '?')} \u2192 ${esc(ctx.date_delivered || '?')}</span>
-          </div>
-          <div class="context-item">
-            <span class="label">Team Size</span>
-            <span class="value">${esc(ctx.xcsg_team_size)}</span>
-          </div>
-          <div class="context-item">
-            <span class="label">Calendar Days</span>
-            <span class="value">${esc(ctx.xcsg_calendar_days)}</span>
-          </div>
-        </div>
-      </div>
+    // Parse options response
+    // Parse flat options object from API into sections
+    const fieldDefs = {};
+    const sectionsMap = { B: { title: 'Machine-First Operations', desc: 'How much of this deliverable was built using machine-first processes.', fields: [] }, C: { title: 'Senior-Led Model', desc: 'Evaluate the depth of expert involvement and judgment applied.', fields: [] }, D: { title: 'Proprietary Knowledge', desc: 'Assess how much proprietary or accumulated knowledge made this deliverable unique.', fields: [] }, F: { title: 'Value Creation', desc: 'Evaluate whether xCSG created value that wouldn\u2019t exist in the legacy model.', fields: [] } };
+    let totalFields = 0;
+    const questionOrder = ['b1_starting_point','b2_research_sources','b3_assembly_ratio','b4_hypothesis_first','c1_specialization','c2_directness','c3_judgment_pct','c4_senior_hours','c5_junior_hours','d1_proprietary_data','d2_knowledge_reuse','d3_moat_test','f1_feasibility','f2_productization'];
+    for (const key of questionOrder) {
+      const o = optionsResp[key];
+      if (!o) continue;
+      const def = { key, section: o.section, label: o.label, options: o.options, type: o.type || 'categorical', has_legacy: o.has_legacy, legacy_default: o.legacy_default || null };
+      fieldDefs[key] = def;
+      sectionsMap[o.section].fields.push(def);
+      totalFields += 1 + (o.has_legacy ? 1 : 0);
+    }
 
-      <div class="expert-progress">
-        <span class="expert-progress-dot active"></span>
-        <span class="expert-progress-dot"></span>
-        <span class="expert-progress-dot"></span>
-        <span class="expert-progress-dot"></span>
-        <span class="expert-progress-label">4 sections to complete</span>
-      </div>
+    // Restore from localStorage
+    const saved = _expertLoadFromStorage(token);
 
-      <form id="expertForm">
-        <div class="expert-section-card">
-          <div class="expert-section-title">Section B: How AI-Driven Was This Work?</div>
-          <div class="expert-section-desc">Assess how much of this deliverable was built using machine-first processes.</div>
-          <div class="expert-question"><label><span class="q-id">B1</span> Starting point: Did you build the final deliverable from an AI-generated draft or from a blank page?</label><span class="helper-text">Select whether the initial draft originated from AI tools or was created manually.</span><select name="b1_starting_point" required>${optionsHTML(B1_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">B2</span> Research throughput: How many distinct data sources were synthesized?</label><span class="helper-text">Count unique databases, reports, or feeds that contributed to the analysis.</span><select name="b2_research_sources" required>${optionsHTML(B2_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">B3</span> Assembly ratio: What percentage of data collection and structuring was AI-performed?</label><span class="helper-text">Estimate the share of raw data gathering and organization done by AI vs. manually.</span><select name="b3_assembly_ratio" required>${optionsHTML(B3_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">B4</span> Hypothesis approach: Was this structured around a pre-formed hypothesis or open-ended discovery?</label><span class="helper-text">Hypothesis-first means the team tested a specific thesis; discovery-first means open-ended research.</span><select name="b4_hypothesis_first" required>${optionsHTML(B4_OPTIONS)}</select></div>
-        </div>
+    // Build HTML
+    let html = '';
 
-        <div class="expert-section-card">
-          <div class="expert-section-title">Section C: How Senior-Led Was the Engagement?</div>
-          <div class="expert-section-desc">Evaluate the depth of expert involvement and judgment applied.</div>
-          <div class="expert-question"><label><span class="q-id">C1</span> Specialization match: Is the analyst a recognized domain specialist in this subject?</label><span class="helper-text">Deep specialist = published or recognized expert in this therapeutic area or methodology.</span><select name="c1_specialization" required>${optionsHTML(C1_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">C2</span> Directness: Did the expert author or only review the deliverable?</label><span class="helper-text">Distinguish between hands-on authorship vs. oversight/review role.</span><select name="c2_directness" required>${optionsHTML(C2_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">C3</span> Judgment concentration: What % of expert time was high-value work vs assembly?</label><span class="helper-text">High-value = strategic interpretation, client insight, novel analysis. Assembly = formatting, data entry.</span><select name="c3_judgment_pct" required>${optionsHTML(C3_OPTIONS)}</select></div>
-        </div>
+    // Context card
+    html += '<div class="expert-section-card">';
+    html += '<div class="context-title">' + esc(ctx.project_name) + '</div>';
+    html += '<div class="context-subtitle">' + esc(ctx.category_name) + (ctx.client_name ? ' \u00b7 ' + esc(ctx.client_name) : '') + '</div>';
+    if (ctx.description) html += '<p class="context-description">' + esc(ctx.description) + '</p>';
+    html += '<div class="context-grid">';
+    html += '<div class="context-item"><span class="label">Pioneer</span><span class="value">' + esc(ctx.pioneer_name) + '</span></div>';
+    html += '<div class="context-item"><span class="label">Timeline</span><span class="value">' + esc(ctx.date_started || '?') + ' \u2192 ' + esc(ctx.date_delivered || '?') + '</span></div>';
+    html += '<div class="context-item"><span class="label">Team Size</span><span class="value">' + esc(ctx.xcsg_team_size) + '</span></div>';
+    html += '<div class="context-item"><span class="label">Calendar Days</span><span class="value">' + esc(ctx.xcsg_calendar_days) + '</span></div>';
+    html += '</div></div>';
 
-        <div class="expert-section-card">
-          <div class="expert-section-title">Section D: Proprietary Knowledge Moat</div>
-          <div class="expert-section-desc">Assess how much proprietary or accumulated knowledge made this deliverable unique.</div>
-          <div class="expert-question"><label><span class="q-id">D1</span> Does this contain data from Alira proprietary sources not available publicly?</label><span class="helper-text">Proprietary sources include internal databases, prior engagement data, or licensed datasets.</span><select name="d1_proprietary_data" required>${optionsHTML(D1_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">D2</span> Did this build on reusable knowledge assets from previous engagements?</label><span class="helper-text">E.g., frameworks, templates, or datasets created in prior work that accelerated this deliverable.</span><select name="d2_knowledge_reuse" required>${optionsHTML(D2_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">D3</span> Could a competitor without Alira's proprietary data have produced an equivalent deliverable?</label><span class="helper-text">This measures the competitive moat created by accumulated institutional knowledge.</span><select name="d3_moat_test" required>${optionsHTML(D3_OPTIONS)}</select></div>
-        </div>
+    // Sticky progress bar
+    html += '<div class="accordion-progress-bar"><div class="accordion-progress-inner">';
+    html += '<div class="accordion-progress-track"><div class="accordion-progress-fill" id="expertProgressBar" style="width:0%"></div></div>';
+    html += '<span id="expertProgressLabel" class="accordion-progress-label">0/' + totalFields + ' fields completed</span>';
+    html += '</div></div>';
 
-        <div class="expert-section-note">Section E is reserved for future framework expansion and is not part of this assessment.</div>
+    // Accordion sections
+    html += '<div id="expertAccordion">';
+    const secKeys = Object.keys(sectionsMap);
+    for (let si = 0; si < secKeys.length; si++) {
+      const secKey = secKeys[si];
+      const sec = sectionsMap[secKey];
+      const secFields = sec.fields;
+      html += '<div class="accordion-header" data-section="' + secKey + '" onclick="_expertToggleAccordion(\'' + secKey + '\')">';
+      html += '<div class="accordion-header-left">';
+      html += '<span class="accordion-chevron">\u25B6</span>';
+      html += '<span class="accordion-section-icon">' + esc(sec.icon || '') + '</span>';
+      html += '<span class="accordion-section-title">' + esc(secKey) + ' \u2014 ' + esc(sec.title) + '</span>';
+      html += '<span class="accordion-count">0/' + secFields.length + '</span>';
+      html += '</div></div>';
+      html += '<div class="accordion-section" data-section="' + secKey + '">';
+      for (let fi = 0; fi < secFields.length; fi++) {
+        const f = secFields[fi];
+        const hasLegacy = f.has_legacy;
+        const legacyDefault = f.legacy_default || null;
+        const savedVal = saved ? saved[f.key] : (legacyDefault || null);
+        const qId = f.key.split('_')[0].toUpperCase();
+        html += '<div class="accordion-question">';
+        html += '<div class="accordion-question-label"><span class="q-id">' + esc(qId) + '</span> ' + esc(f.label || f.key) + '</div>';
+        if (f.hint) html += '<div class="accordion-question-hint">' + esc(f.hint) + '</div>';
+        html += '<div class="accordion-question-fields">';
+        html += '<div class="accordion-field-group">';
+        html += '<label class="accordion-field-label xcsg-label">xCSG</label>';
+        html += _expertBuildFieldHTML(f, savedVal);
+        html += '</div>';
+        if (hasLegacy) {
+          html += '<div class="accordion-field-group">';
+          html += '<label class="accordion-field-label legacy-label">Legacy' + (legacyDefault ? ' <span class="norm-suffix">(norm)</span>' : '') + '</label>';
+          html += '<select disabled class="accordion-legacy-field" style="width:100%;padding:12px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;background:var(--gray-50);color:var(--gray-500);cursor:default"><option value="">' + esc(legacyDefault || '\u2014 Not set \u2014') + '</option></select>';
+          html += '</div>';
+        }
+        html += '</div></div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
 
-        <div class="expert-section-card">
-          <div class="expert-section-title">Section F: Value Creation</div>
-          <div class="expert-section-desc">Evaluate whether xCSG created value that wouldn't exist in the legacy model.</div>
-          <div class="expert-question"><label><span class="q-id">F1</span> Would this deliverable have been feasible in the legacy model?</label><span class="helper-text">Consider scope, timeline, and resource constraints of the pre-xCSG approach.</span><select name="f1_feasibility" required>${optionsHTML(F1_OPTIONS)}</select></div>
-          <div class="expert-question"><label><span class="q-id">F2</span> Could a component be reused as a standardized offering?</label><span class="helper-text">Indicates whether the output or methodology has potential for productization.</span><select name="f2_productization" required>${optionsHTML(F2_OPTIONS)}</select></div>
-        </div>
+    // Submit area
+    html += '<div class="accordion-submit-area">';
+    html += '<span class="time-hint">Takes approximately 3 minutes</span>';
+    html += '<button type="button" class="btn btn-primary" id="expertSubmitBtn" disabled>Submit Assessment (0/' + totalFields + ')</button>';
+    html += '</div>';
 
-        <div class="expert-submit-area">
-          <span class="time-hint">Takes approximately 3 minutes</span>
-          <button type="submit" class="btn btn-primary" id="expertSubmit">Submit Assessment</button>
-        </div>
-      </form>`;
+    ec.innerHTML = html;
 
-    document.getElementById('expertForm').addEventListener('submit', async function (e) {
-      e.preventDefault();
-      const btn = document.getElementById('expertSubmit');
+    // Pre-fill legacy defaults for fields not in localStorage
+    if (!saved) {
+      const fKeys = Object.keys(fieldDefs);
+      for (let i = 0; i < fKeys.length; i++) {
+        const key = fKeys[i];
+        const def = fieldDefs[key];
+        if (def.legacy_default) {
+          const el = document.querySelector('.accordion-field[data-key="' + key + '"]');
+          if (el && !el.value) el.value = def.legacy_default;
+        }
+      }
+    }
+
+    // Wire field change handlers
+    const allFields = document.querySelectorAll('.accordion-field');
+    for (let i = 0; i < allFields.length; i++) {
+      const el = allFields[i];
+      el.addEventListener('change', function() {
+        _expertSaveToStorage(token, _expertGetFieldValues());
+        _expertUpdateProgress(totalFields);
+      });
+      el.addEventListener('input', function() {
+        _expertSaveToStorage(token, _expertGetFieldValues());
+        _expertUpdateProgress(totalFields);
+      });
+      el.addEventListener('focus', function() {
+        this.style.borderColor = 'var(--blue)';
+        this.style.boxShadow = '0 0 0 3px rgba(110,193,228,0.15)';
+      });
+      el.addEventListener('blur', function() {
+        this.style.borderColor = 'var(--gray-300)';
+        this.style.boxShadow = 'none';
+      });
+    }
+
+    // Submit
+    document.getElementById('expertSubmitBtn').addEventListener('click', async function() {
+      const btn = document.getElementById('expertSubmitBtn');
+      const filled = _expertCountFilled();
+      if (filled < totalFields) return;
       btn.disabled = true;
       btn.textContent = 'Submitting\u2026';
-      const fd = new FormData(this);
-      const payload = Object.fromEntries(fd.entries());
+      const payload = _expertGetFieldValues();
       try {
-        const result = await apiCall('POST', `/expert/${token}`, payload);
+        const result = await apiCall('POST', '/expert/' + token, payload);
+        _expertClearStorage(token);
         if (result.already_completed) {
-          ec.innerHTML = `<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>`;
+          ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>';
         } else {
-          ec.innerHTML = `<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Thank You!</h2><p>Your assessment has been recorded successfully.</p></div>`;
+          const m = result.metrics || {};
+          ec.innerHTML = '<div class="expert-thankyou">';
+          ec.innerHTML += '<div class="thankyou-icon">&#10003;</div>';
+          ec.innerHTML += '<h2>Thank You!</h2>';
+          ec.innerHTML += '<p>Your assessment has been recorded successfully.</p>';
+          ec.innerHTML += '<div class="accordion-metrics-preview">';
+          ec.innerHTML += '<div class="accordion-metric"><div class="accordion-metric-value">' + (m.machine_first_score != null ? Math.round(m.machine_first_score) + '%' : '\u2014') + '</div><div class="accordion-metric-label">Machine-First</div></div>';
+          ec.innerHTML += '<div class="accordion-metric"><div class="accordion-metric-value">' + (m.senior_led_score != null ? Math.round(m.senior_led_score) + '%' : '\u2014') + '</div><div class="accordion-metric-label">Senior-Led</div></div>';
+          ec.innerHTML += '<div class="accordion-metric"><div class="accordion-metric-value">' + (m.proprietary_knowledge_score != null ? Math.round(m.proprietary_knowledge_score) + '%' : '\u2014') + '</div><div class="accordion-metric-label">Knowledge Moat</div></div>';
+          ec.innerHTML += '</div></div>';
         }
       } catch (err) {
         showToast(err.message, 'error');
         btn.disabled = false;
-        btn.textContent = 'Submit Assessment';
+        _expertUpdateProgress(totalFields);
       }
     });
 
+    // Initial progress
+    _expertUpdateProgress(totalFields);
+
   } catch (err) {
     if (err.message.includes('404') || err.message.includes('invalid')) {
-      ec.innerHTML = `<div class="expert-error"><h2>Invalid Link</h2><p>This expert assessment link is invalid or has expired. Please contact the PMO team for a new link.</p></div>`;
+      ec.innerHTML = '<div class="expert-error"><h2>Invalid Link</h2><p>This expert assessment link is invalid or has expired. Please contact the PMO team for a new link.</p></div>';
     } else {
-      ec.innerHTML = `<div class="expert-error"><h2>Connection Error</h2><p>Unable to load the assessment. Please check your connection and try again.</p><button class="btn btn-primary" onclick="renderExpert('${esc(token)}')">Retry</button></div>`;
+      ec.innerHTML = '<div class="expert-error"><h2>Connection Error</h2><p>Unable to load the assessment. Please check your connection and try again.</p><button class="btn btn-primary" onclick="renderExpert(\'' + esc(token) + '\')">Retry</button></div>';
     }
   }
 }
