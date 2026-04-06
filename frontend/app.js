@@ -211,9 +211,9 @@ async function handleLogin(e) {
 async function route() {
   const hash = window.location.hash || '#portfolio';
 
-  // Expert route — no auth
-  if (hash.startsWith('#expert/')) {
-    const token = hash.slice(8);
+  // Expert route — no auth (support both #expert/ and #assess/)
+  if (hash.startsWith('#expert/') || hash.startsWith('#assess/')) {
+    const token = hash.slice(hash.indexOf('/') + 1);
     showScreen('expert');
     renderExpert(token);
     return;
@@ -742,15 +742,7 @@ function renderNewProject(prefill = null) {
   const legacyOverridden = isEdit && prefill?.legacy_overridden;
   const catName = prefill ? (state.categories.find(c => c.id == prefill.category_id)?.name || '') : '';
 
-  // Pre-fill v2 fields
-  const pfComplexity = prefill?.complexity || '';
-  const pfSector = prefill?.client_sector || '';
-  const pfSubCat = prefill?.client_sub_category || '';
-  let pfGeos = [];
-  try { pfGeos = prefill?.geographies ? JSON.parse(prefill.geographies) : []; } catch {}
-  let pfCountries = [];
-  try { pfCountries = prefill?.countries_served ? JSON.parse(prefill.countries_served) : []; } catch {}
-  const pfRevisionIntensity = prefill?.xcsg_revision_intensity || '';
+  // Pre-fill fields
   const pfScopeExpansion = prefill?.xcsg_scope_expansion || '';
 
   function legacySourceText(field) {
@@ -768,30 +760,7 @@ function renderNewProject(prefill = null) {
       <div><strong>Category defaults loaded.</strong> Adjust these values to match this specific project's legacy context. Overriding improves metric accuracy.</div>
     </div>`;
 
-  // Build geo checkboxes HTML
-  function geoCheckboxesHTML() {
-    let html = '<div class="geo-section" id="geoSection">';
-    html += '<div class="geo-section-title">Geographies</div>';
-    for (const geo of GEO_KEYS) {
-      const checked = pfGeos.includes(geo) ? 'checked' : '';
-      html += `<div class="geo-section" style="margin-bottom:8px">`;
-      html += `<label style="font-size:13px;font-weight:500;color:var(--gray-700);cursor:pointer;display:flex;align-items:center;gap:6px"><input type="checkbox" class="geo-region-check" value="${esc(geo)}" ${checked} style="accent-color:var(--navy)">${esc(geo)}</label>`;
-      html += `<div class="geo-grid" data-region="${esc(geo)}">`;
-      for (const country of GEOGRAPHIES[geo]) {
-        const cChecked = pfCountries.includes(country) ? 'checked' : '';
-        html += `<label><input type="checkbox" class="country-check" value="${esc(country)}" ${cChecked}>${esc(country)}</label>`;
-      }
-      html += '</div></div>';
-    }
-    html += '</div>';
-    return html;
-  }
-
-  // Sub-category options
-  const subCatOptions = SECTORS[pfSector] || [];
-  const subCatHTML = '<option value="">— Select Sub-Category —</option>' + subCatOptions.map(v => `<option value="${esc(v)}"${v === pfSubCat ? ' selected' : ''}>${esc(v)}</option>`).join('');
-
-  mc.innerHTML = `
+  // xCSG Performance section uses simple fields = `
     <div class="card">
       <form id="projectForm">
         <fieldset><legend>Project Information</legend>
@@ -818,37 +787,16 @@ function renderNewProject(prefill = null) {
           </div>
         </fieldset>
 
-        <fieldset><legend>Project Context</legend>
-          <div class="slider-group">
-            <label>Complexity <span class="slider-value-badge" id="complexityBadge">${pfComplexity || '—'}</span></label>
-            <div class="slider-labels"><span>1 \u2014 Straightforward</span><span>7 \u2014 Highly complex</span></div>
-            <input type="range" class="xcsg-slider" id="fComplexity" min="1" max="7" step="1" value="${pfComplexity || 4}">
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Client Sector <span class="required">*</span></label>
-              <select id="fSector" required><option value="">— Select Sector —</option>${Object.keys(SECTORS).map(s => `<option value="${esc(s)}"${s === pfSector ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select>
-            </div>
-            <div class="form-group"><label>Client Sub-Category <span class="required">*</span></label>
-              <select id="fSubCategory" required>${subCatHTML}</select>
-            </div>
-          </div>
-          ${geoCheckboxesHTML()}
-        </fieldset>
+
 
         <fieldset><legend>xCSG Performance</legend>
           <div class="form-row">
             <div class="form-group"><label>Calendar Days <span class="required">*</span></label><select id="fXDays" required>${optionsHTML(CALENDAR_DAYS, prefill?.xcsg_calendar_days)}</select></div>
             <div class="form-group"><label>Team Size <span class="required">*</span></label><select id="fXTeam" required>${optionsHTML(TEAM_SIZES, prefill?.xcsg_team_size)}</select></div>
           </div>
-          <div class="slider-group">
-            <label>Revision Intensity <span class="slider-value-badge" id="revisionIntensityBadge">${pfRevisionIntensity || '—'}</span></label>
-            <div class="slider-labels"><span>Minimal</span><span>Exhaustive</span></div>
-            <input type="range" class="xcsg-slider" id="fRevisionIntensity" min="1" max="7" step="1" value="${pfRevisionIntensity || 3}">
-          </div>
-          <div class="slider-group">
-            <label>Scope Expansion <span class="slider-value-badge" id="scopeExpansionBadge">${pfScopeExpansion || '—'}</span></label>
-            <div class="slider-labels"><span>Stayed on scope</span><span>Blew past scope</span></div>
-            <input type="range" class="xcsg-slider" id="fScopeExpansion" min="1" max="7" step="1" value="${pfScopeExpansion || 3}">
+          <div class="form-row">
+            <div class="form-group"><label>Revision Rounds <span class="required">*</span></label><input type="number" id="fRevisions" min="0" step="1" required value="${prefill?.xcsg_revision_rounds || 0}"></div>
+            <div class="form-group"><label>Scope Expansion <span class="required">*</span></label><select id="fScopeExpansion" required>${optionsHTML(['None', 'Minor', 'Major'], prefill?.xcsg_scope_expansion)}</select></div>
           </div>
         </fieldset>
 
@@ -873,80 +821,35 @@ function renderNewProject(prefill = null) {
       </form>
     </div>`;
 
-  // Slider live value updates
-  const complexitySlider = document.getElementById('fComplexity');
-  if (complexitySlider) {
-    complexitySlider.addEventListener('input', () => {
-      document.getElementById('complexityBadge').textContent = complexitySlider.value;
-      tryAutoLookup();
-    });
-  }
-  ['fRevisionIntensity', 'fScopeExpansion'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('input', () => {
-      const badgeId = id === 'fRevisionIntensity' ? 'revisionIntensityBadge' : 'scopeExpansionBadge';
-      document.getElementById(badgeId).textContent = el.value;
-    });
-  });
-
-  // Sector → Sub-category cascade
-  document.getElementById('fSector')?.addEventListener('change', function () {
- const subs = SECTORS[this.value] || [];
-    document.getElementById('fSubCategory').innerHTML = '<option value="">— Select Sub-Category —</option>' + subs.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
-    tryAutoLookup();
-  });
-  document.getElementById('fSubCategory')?.addEventListener('change', () => tryAutoLookup());
-  document.getElementById('fCategory')?.addEventListener('change', () => tryAutoLookup());
-
-  // Geo region check → toggle countries visibility
-  document.querySelectorAll('.geo-region-check').forEach(cb => {
-    cb.addEventListener('change', function () {
-      const grid = document.querySelector(`.geo-grid[data-region="${this.value}"]`);
-      if (grid) grid.style.display = this.checked ? '' : 'none';
-      tryAutoLookup();
-    });
-  });
-
-  // V2 Norm lookup
+  // Category-based norm load (v1)
   let legacyManuallyChanged = false;
-  async function tryAutoLookup() {
+  document.getElementById('fCategory')?.addEventListener('change', async function () {
     if (isEdit) return;
-    const catId = document.getElementById('fCategory')?.value;
-    const complexity = document.getElementById('fComplexity')?.value;
-    const subCat = document.getElementById('fSubCategory')?.value;
-    const geoRegions = [];
-    document.querySelectorAll('.geo-region-check:checked').forEach(cb => geoRegions.push(cb.value));
-
-    if (!catId || !complexity || !subCat || geoRegions.length === 0) return;
-
+    const catId = this.value;
+    if (!catId) return;
+    const selectedCat = state.categories.find(c => c.id == catId);
+    const catDisplayName = selectedCat ? selectedCat.name : 'category';
     try {
-      const params = new URLSearchParams({ category_id: catId, complexity, client_sub_category: subCat, geographies: JSON.stringify(geoRegions) });
-      const norm = await apiCall('GET', `/norms/v2/lookup?${params}`);
-      if (norm && norm.sample_size > 0) {
-        const n = norm.sample_size;
-        let confClass, confText;
-        if (n >= 20) { confClass = 'confidence-high'; confText = `Based on ${n} projects`; }
-        else if (n >= 5) { confClass = 'confidence-med'; confText = `Based on ${n} projects \u2014 limited data`; }
-        else { confClass = 'confidence-low'; confText = 'Limited data \u2014 generic baseline'; }
-        const infoEl = document.getElementById('legacyNormInfo');
-        if (infoEl) infoEl.innerHTML = `<div style="margin-bottom:16px"><span class="confidence-badge ${confClass}">${confText}</span></div>`;
-
-        const banner = document.getElementById('legacyBanner');
-        const noNorms = document.getElementById('legacyNoNorms');
-        if (banner) banner.style.display = '';
-        if (noNorms) noNorms.style.display = 'none';
-
+      const norm = await apiCall('GET', `/norms/${catId}`);
+      if (norm) {
+        const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
+        if (banner) banner.style.display = ''; if (noNorms) noNorms.style.display = 'none';
         ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
           const el = document.getElementById(id);
           if (el) { el.classList.remove('legacy-overridden'); el.classList.add('legacy-auto'); }
         });
-        if (norm.avg_calendar_days) document.getElementById('fLDays').value = norm.avg_calendar_days;
-        if (norm.avg_team_size) document.getElementById('fLTeam').value = norm.avg_team_size;
-        if (norm.avg_revision_intensity) document.getElementById('fLRevisions').value = norm.avg_revision_intensity;
+        document.getElementById('fLDays').value = norm.typical_calendar_days || '';
+        document.getElementById('fLTeam').value = norm.typical_team_size || '';
+        document.getElementById('fLRevisions').value = norm.typical_revision_rounds || '';
         legacyManuallyChanged = false;
+        document.querySelectorAll('[data-legacy-source]').forEach(span => { span.textContent = `(from ${catDisplayName} defaults)`; span.classList.remove('overridden'); });
       }
-    } catch {}
-  }
+    } catch {
+      const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
+      if (banner) banner.style.display = 'none'; if (noNorms) noNorms.style.display = '';
+      ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; el.classList.remove('legacy-auto', 'legacy-overridden'); } });
+    }
+  });
 
   // Legacy field override tracking (new project only)
   if (!isEdit) {
@@ -963,43 +866,6 @@ function renderNewProject(prefill = null) {
     });
   }
 
-  // Fallback: old category-based norm load (when no v2 lookup params)
-  document.getElementById('fCategory').addEventListener('change', async function () {
-    if (isEdit) return;
-    const catId = this.value;
-    if (!catId) return;
-    // Try v2 lookup first; if not all params set, fall back to v1
-    const complexity = document.getElementById('fComplexity')?.value;
-    const subCat = document.getElementById('fSubCategory')?.value;
-    const geoRegions = [];
-    document.querySelectorAll('.geo-region-check:checked').forEach(cb => geoRegions.push(cb.value));
-    if (!complexity || !subCat || geoRegions.length === 0) {
-      // Fallback to v1 norms
-      const selectedCat = state.categories.find(c => c.id == catId);
-      const catDisplayName = selectedCat ? selectedCat.name : 'category';
-      try {
-        const norm = await apiCall('GET', `/norms/${catId}`);
-        if (norm) {
-          const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
-          if (banner) banner.style.display = ''; if (noNorms) noNorms.style.display = 'none';
-          ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) { el.classList.remove('legacy-overridden'); el.classList.add('legacy-auto'); }
-          });
-          document.getElementById('fLDays').value = norm.typical_calendar_days || '';
-          document.getElementById('fLTeam').value = norm.typical_team_size || '';
-          document.getElementById('fLRevisions').value = norm.typical_revision_rounds || '';
-          legacyManuallyChanged = false;
-          document.querySelectorAll('[data-legacy-source]').forEach(span => { span.textContent = `(from ${catDisplayName} defaults)`; span.classList.remove('overridden'); });
-        }
-      } catch {
-        const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
-        if (banner) banner.style.display = 'none'; if (noNorms) noNorms.style.display = '';
-        ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; el.classList.remove('legacy-auto', 'legacy-overridden'); } });
-      }
-    }
-  });
-
   // Submit
   document.getElementById('projectForm').addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -1007,11 +873,6 @@ function renderNewProject(prefill = null) {
     const dateEnd = document.getElementById('fDateEnd').value;
     if (dateStart && dateEnd && dateStart > dateEnd) { showToast('Start date must be before delivery date', 'error'); return; }
     const btn = document.getElementById('projectSubmit'); btn.disabled = true; btn.textContent = 'Saving\u2026';
-
-    const geoRegions = [];
-    document.querySelectorAll('.geo-region-check:checked').forEach(cb => geoRegions.push(cb.value));
-    const countries = [];
-    document.querySelectorAll('.country-check:checked').forEach(cb => countries.push(cb.value));
 
     const payload = {
       project_name: document.getElementById('fName').value.trim(),
@@ -1022,14 +883,9 @@ function renderNewProject(prefill = null) {
       description: document.getElementById('fDesc').value.trim() || null,
       date_started: dateStart || null,
       date_delivered: dateEnd || null,
-      complexity: parseFloat(document.getElementById('fComplexity').value),
-      client_sector: document.getElementById('fSector').value || null,
-      client_sub_category: document.getElementById('fSubCategory').value || null,
-      geographies: JSON.stringify(geoRegions),
-      countries_served: JSON.stringify(countries),
       xcsg_calendar_days: document.getElementById('fXDays').value,
       xcsg_team_size: document.getElementById('fXTeam').value,
-      xcsg_revision_intensity: parseFloat(document.getElementById('fRevisionIntensity').value),
+      xcsg_revision_rounds: parseInt(document.getElementById('fRevisions').value) || 0,
       xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
       legacy_calendar_days: document.getElementById('fLDays').value || null,
       legacy_team_size: document.getElementById('fLTeam').value || null,
