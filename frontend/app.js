@@ -1262,13 +1262,14 @@ function _expertClearStorage(token) {
   try { localStorage.removeItem(_expertLocalStorageKey(token)); } catch {}
 }
 
-function _expertBuildFieldHTML(fieldDef, savedVal) {
-  const isNumeric = fieldDef.type === 'number';
+function _expertBuildFieldHTML(fieldDef, savedVal, suffix) {
+  const fieldName = fieldDef.key + '_' + suffix;
+  const isNumeric = fieldDef.type === 'numeric';
   if (isNumeric) {
-    return `<input type="number" name="${esc(fieldDef.key)}" class="accordion-field" data-key="${esc(fieldDef.key)}" data-section="${esc(fieldDef.section)}" min="0" step="1" placeholder="Enter value" value="${esc(savedVal ?? '')}" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s">`;
+    return '<input type="number" name="' + esc(fieldName) + '" class="accordion-field" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" min="0" step="0.5" placeholder="Enter value" value="' + esc(savedVal ?? '') + '" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
   }
   const opts = fieldDef.options || [];
-  let html = '<select name="' + esc(fieldDef.key) + '" class="accordion-field" data-key="' + esc(fieldDef.key) + '" data-section="' + esc(fieldDef.section) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;background:#fff;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s">';
+  let html = '<select name="' + esc(fieldName) + '" class="accordion-field" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;background:#fff;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
   html += '<option value="">\u2014 Select \u2014</option>';
   for (const opt of opts) {
     const sel = savedVal === opt ? ' selected' : '';
@@ -1410,25 +1411,25 @@ async function renderExpert(token) {
         const f = secFields[fi];
         const hasLegacy = f.has_legacy;
         const legacyDefault = f.legacy_default || null;
-        const savedVal = saved ? saved[f.key] : (legacyDefault || null);
+        const xcsgSaved = saved ? saved[f.key + '_xcsg'] : '';
+        const legacySaved = saved ? saved[f.key + '_legacy'] : (legacyDefault || '');
+        const isNorm = !saved && legacyDefault;
         const qId = f.key.split('_')[0].toUpperCase();
         html += '<div class="accordion-question">';
         html += '<div class="accordion-question-label"><span class="q-id">' + esc(qId) + '</span> ' + esc(f.label || f.key) + '</div>';
-        if (f.hint) html += '<div class="accordion-question-hint">' + esc(f.hint) + '</div>';
         html += '<div class="accordion-question-fields">';
         html += '<div class="accordion-field-group">';
         html += '<label class="accordion-field-label xcsg-label">xCSG</label>';
-        html += _expertBuildFieldHTML(f, savedVal);
+        html += _expertBuildFieldHTML(f, xcsgSaved, 'xcsg');
         html += '</div>';
         if (hasLegacy) {
           html += '<div class="accordion-field-group">';
-          html += '<label class="accordion-field-label legacy-label">Legacy' + (legacyDefault ? ' <span class="norm-suffix">(norm)</span>' : '') + '</label>';
-          html += '<select disabled class="accordion-legacy-field" style="width:100%;padding:12px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;background:var(--gray-50);color:var(--gray-500);cursor:default"><option value="">' + esc(legacyDefault || '\u2014 Not set \u2014') + '</option></select>';
+          html += '<label class="accordion-field-label legacy-label">Legacy' + (isNorm ? ' <span class="norm-suffix">(norm)</span>' : '') + '</label>';
+          html += _expertBuildFieldHTML(f, legacySaved, 'legacy');
           html += '</div>';
         }
         html += '</div></div>';
       }
-      html += '</div>';
     }
     html += '</div>';
 
@@ -1439,19 +1440,6 @@ async function renderExpert(token) {
     html += '</div>';
 
     ec.innerHTML = html;
-
-    // Pre-fill legacy defaults for fields not in localStorage
-    if (!saved) {
-      const fKeys = Object.keys(fieldDefs);
-      for (let i = 0; i < fKeys.length; i++) {
-        const key = fKeys[i];
-        const def = fieldDefs[key];
-        if (def.legacy_default) {
-          const el = document.querySelector('.accordion-field[data-key="' + key + '"]');
-          if (el && !el.value) el.value = def.legacy_default;
-        }
-      }
-    }
 
     // Wire field change handlers
     const allFields = document.querySelectorAll('.accordion-field');
