@@ -2753,3 +2753,219 @@ input[type="range"].xcsg-slider::-moz-range-thumb {
 
 /* Wider modal for completion */
 .modal-card.wide-modal { width: 760px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHECKPOINT CARDS — Progressive Dashboard
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.checkpoint-card {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+  overflow: hidden;
+  transition: opacity 0.6s ease, border-color 0.6s ease, box-shadow 0.6s ease;
+}
+
+.checkpoint-card.locked {
+  opacity: 0.5;
+  border: 2px dashed #d1d5db;
+  box-shadow: none;
+}
+
+.checkpoint-card.unlocked {
+  border: 1px solid var(--gray-200);
+}
+
+.checkpoint-card-header {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--gray-200);
+  user-select: none;
+}
+
+.checkpoint-card.unlocked .checkpoint-card-header {
+  cursor: pointer;
+}
+.checkpoint-card.unlocked .checkpoint-card-header:hover {
+  background: var(--blue-pale);
+}
+
+.checkpoint-card.locked .checkpoint-card-header {
+  cursor: default;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.checkpoint-card-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.cp-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.checkpoint-card.locked .cp-number {
+  background: var(--gray-300);
+  color: var(--gray-500);
+}
+
+.cp-check {
+  color: var(--success);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.cp-lock {
+  font-size: 18px;
+}
+
+.checkpoint-card-toggle {
+  font-size: 12px;
+  color: var(--gray-400);
+  transition: transform 0.2s;
+}
+
+.checkpoint-card.collapsed .checkpoint-card-toggle {
+  transform: rotate(-90deg);
+}
+
+.checkpoint-card-body {
+  overflow: hidden;
+}
+
+.checkpoint-card.collapsed .checkpoint-card-body {
+  display: none;
+}
+
+/* Locked card centered content */
+.checkpoint-lock-content {
+  text-align: center;
+  padding: 32px 24px 28px;
+}
+
+.checkpoint-lock-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  display: block;
+}
+
+.checkpoint-lock-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gray-600);
+  margin-bottom: 4px;
+}
+
+.checkpoint-lock-desc {
+  font-size: 13px;
+  color: var(--gray-400);
+  margin-bottom: 20px;
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.5;
+}
+
+.checkpoint-lock-progress {
+  max-width: 300px;
+  margin: 0 auto;
+}
+
+.checkpoint-lock-progress .progress-track {
+  height: 6px;
+  background: var(--gray-200);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.checkpoint-lock-progress .progress-fill {
+  height: 100%;
+  background: var(--navy);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.checkpoint-lock-progress .progress-label {
+  font-size: 12px;
+  color: var(--gray-400);
+  text-align: center;
+}
+
+/* Celebration animation on unlock */
+@keyframes checkpoint-celebrate {
+  0%   { border-color: var(--orange); box-shadow: 0 0 0 0 rgba(255,131,0,0.4); opacity: 0.5; }
+  50%  { border-color: var(--navy);   box-shadow: 0 0 24px 4px rgba(18,31,107,0.15); opacity: 1; }
+  100% { border-color: var(--gray-200); box-shadow: var(--shadow); opacity: 1; }
+}
+
+.checkpoint-card.just-unlocked {
+  animation: checkpoint-celebrate 600ms ease-out forwards;
+}
+
+/* Category averages grid inside checkpoint cards */
+.cp-category-averages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  padding: 0 0 8px;
+}
+
+.cp-category-item {
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  text-align: center;
+}
+
+.cp-category-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-600);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cp-category-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.cp-category-sub {
+  font-size: 11px;
+  color: var(--gray-400);
+  margin-top: 2px;
+}
+
+/* Responsive checkpoint cards */
+@media (max-width: 768px) {
+  .checkpoint-card-header { padding: 14px 16px; }
+  .checkpoint-card-title { font-size: 14px; gap: 8px; }
+  .cp-category-averages { grid-template-columns: 1fr 1fr; }
+}
+
+/* Gate items and summary (used in scaling gates) */
+.gate-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 14px; color: var(--gray-700); }
+.gate-summary { font-size: 14px; font-weight: 600; color: var(--navy); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gray-200); }
