@@ -1,0 +1,11 @@
+{
+  "name": "xcsg-value-tracker-tests",
+  "private": true,
+  "scripts": {
+    "test": "npx playwright test --config tests/playwright.config.ts",
+    "test:headed": "npx playwright test --config tests/playwright.config.ts --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}

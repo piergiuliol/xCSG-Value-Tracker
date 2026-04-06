@@ -76,6 +76,12 @@ class ProjectCreate(BaseModel):
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
     legacy_overridden: bool = False
+    # v2 fields
+    complexity: Optional[float] = None
+    client_sector: Optional[str] = None
+    client_sub_category: Optional[str] = None
+    geographies: Optional[List[str]] = None
+    countries_served: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectCreate":
@@ -107,6 +113,19 @@ class ProjectUpdate(BaseModel):
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
+    # v2 fields
+    complexity: Optional[float] = None
+    client_sector: Optional[str] = None
+    client_sub_category: Optional[str] = None
+    geographies: Optional[List[str]] = None
+    countries_served: Optional[List[str]] = None
+    xcsg_revision_intensity: Optional[float] = None
+    xcsg_scope_expansion_score: Optional[float] = None
+    legacy_scope_expansion: Optional[float] = None
+    legacy_senior_involvement: Optional[float] = None
+    legacy_ai_usage: Optional[float] = None
+    xcsg_senior_involvement: Optional[float] = None
+    xcsg_ai_usage: Optional[float] = None
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectUpdate":
@@ -221,6 +240,16 @@ class ProjectMetrics(BaseModel):
     created_at: str
 
 
+class ProjectCompleteRequest(BaseModel):
+    xcsg_revision_intensity: Optional[float] = None
+    xcsg_scope_expansion_score: Optional[float] = None
+    xcsg_senior_involvement: Optional[float] = None
+    xcsg_ai_usage: Optional[float] = None
+    legacy_scope_expansion: Optional[float] = None
+    legacy_senior_involvement: Optional[float] = None
+    legacy_ai_usage: Optional[float] = None
+
+
 class MetricsSummary(BaseModel):
     total_projects: int
     complete_projects: int
@@ -234,6 +263,10 @@ class MetricsSummary(BaseModel):
     proprietary_knowledge_avg: float
     checkpoint: int
     projects_to_next_checkpoint: int
+    # v2 metrics
+    ai_adoption_rate: float = 0.0
+    senior_leverage: Optional[float] = None
+    scope_predictability: Optional[float] = None
 
 
 class TrendPoint(BaseModel):
@@ -266,6 +299,64 @@ class ScalingGates(BaseModel):
     gates: List[ScalingGate]
     passed_count: int
     total_count: int
+
+
+# ── Activity Log ──────────────────────────────────────────────────────────────
+
+# ── Legacy Norms V2 ──────────────────────────────────────────────────────────
+
+class LegacyNormV2Response(BaseModel):
+    id: int
+    category_id: int
+    category_name: Optional[str] = None
+    complexity: Optional[float] = None
+    client_sector: Optional[str] = None
+    client_sub_category: Optional[str] = None
+    geographies: Optional[str] = None
+    countries_served: Optional[str] = None
+    avg_calendar_days: Optional[float] = None
+    avg_team_size: Optional[float] = None
+    avg_revision_intensity: Optional[float] = None
+    avg_scope_expansion: Optional[float] = None
+    avg_senior_involvement: Optional[float] = None
+    avg_ai_usage: Optional[float] = None
+    sample_size: int = 0
+    notes: Optional[str] = None
+    updated_by: Optional[str] = None
+    updated_at: str
+    confidence: Optional[str] = None
+
+
+class LegacyNormV2Update(BaseModel):
+    complexity: Optional[float] = None
+    client_sector: Optional[str] = None
+    client_sub_category: Optional[str] = None
+    geographies: Optional[List[str]] = None
+    countries_served: Optional[List[str]] = None
+    avg_calendar_days: Optional[float] = None
+    avg_team_size: Optional[float] = None
+    avg_revision_intensity: Optional[float] = None
+    avg_scope_expansion: Optional[float] = None
+    avg_senior_involvement: Optional[float] = None
+    avg_ai_usage: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class NormLookupRequest(BaseModel):
+    category_id: int
+    complexity: Optional[float] = None
+    client_sub_category: Optional[str] = None
+    geographies: Optional[List[str]] = None
+
+
+class NormHistoryEntry(BaseModel):
+    id: int
+    norm_id: int
+    field_changed: str
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    changed_by: Optional[str] = None
+    changed_at: str
 
 
 # ── Activity Log ──────────────────────────────────────────────────────────────

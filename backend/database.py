@@ -2,6 +2,7 @@
 database.py — SQLite CRUD, schema, and seed data for xCSG Value Tracker v2
 Project-centric redesign: deliverables → projects, category-keyed norms.
 """
+import json
 import os
 import secrets
 import sqlite3
@@ -114,6 +115,7 @@ def init_db() -> None:
     finally:
         conn.close()
 
+    migrate_v2()
     seed_data()
 
 
@@ -194,7 +196,76 @@ def seed_data() -> None:
         conn.close()
 
 
-# ── Users ─────────────────────────────────────────────────────────────────────
+def migrate_v2() -> None:
+    """Add v2 columns and tables. Idempotent."""
+    conn = get_connection()
+    try:
+        # New columns on projects
+        new_cols = [
+            ("complexity", "REAL"),
+            ("client_sector", "TEXT"),
+            ("client_sub_category", "TEXT"),
+            ("geographies", "TEXT"),
+            ("countries_served", "TEXT"),
+            ("xcsg_revision_intensity", "REAL"),
+            ("xcsg_scope_expansion_score", "REAL"),
+            ("legacy_scope_expansion", "REAL"),
+            ("legacy_senior_involvement", "REAL"),
+            ("legacy_ai_usage", "REAL"),
+            ("xcsg_senior_involvement", "REAL"),
+            ("xcsg_ai_usage", "REAL"),
+            ("machine_first_score", "REAL"),
+        ]
+        for col_name, col_type in new_cols:
+            try:
+                conn.execute(f"ALTER TABLE projects ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
+        # V2 norms table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS legacy_norms_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                complexity REAL,
+                client_sector TEXT,
+                client_sub_category TEXT,
+                geographies TEXT,
+                countries_served TEXT,
+                avg_calendar_days REAL,
+                avg_team_size REAL,
+                avg_revision_intensity REAL,
+                avg_scope_expansion REAL,
+                avg_senior_involvement REAL,
+                avg_ai_usage REAL,
+                sample_size INTEGER DEFAULT 0,
+                notes TEXT,
+                updated_by TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES project_categories(id)
+            )
+        """)
+
+        # History table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS legacy_norms_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                norm_id INTEGER NOT NULL,
+                field_changed TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                changed_by TEXT,
+                changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (norm_id) REFERENCES legacy_norms_v2(id) ON DELETE CASCADE
+            )
+        """)
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Users ──────────────────────────────────────────────────────────────────────
 
 def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
     conn = get_connection()
@@ -331,8 +402,9 @@ def create_project(data: dict) -> int:
                 date_started, date_delivered,
                 xcsg_calendar_days, xcsg_team_size, xcsg_revision_rounds, xcsg_scope_expansion,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
-                legacy_overridden, expert_token)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                legacy_overridden, expert_token,
+                complexity, client_sector, client_sub_category, geographies, countries_served)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -352,6 +424,11 @@ def create_project(data: dict) -> int:
                 data["legacy_revision_rounds"],
                 1 if legacy_overridden else 0,
                 token,
+                data.get("complexity"),
+                data.get("client_sector"),
+                data.get("client_sub_category"),
+                json.dumps(data["geographies"]) if data.get("geographies") else None,
+                json.dumps(data["countries_served"]) if data.get("countries_served") else None,
             ),
         )
         conn.commit()
@@ -412,6 +489,10 @@ def update_project(project_id: int, data: dict) -> bool:
         fields = {k: v for k, v in data.items() if v is not None}
         if not fields:
             return False
+        # Serialize list fields to JSON
+        for list_field in ("geographies", "countries_served"):
+            if list_field in fields and isinstance(fields[list_field], list):
+                fields[list_field] = json.dumps(fields[list_field])
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         set_clause += ", updated_at = CURRENT_TIMESTAMP"
         values = list(fields.values()) + [project_id]
@@ -601,6 +682,279 @@ def get_activity_count() -> int:
     conn = get_connection()
     try:
         return conn.execute("SELECT COUNT(*) FROM activity_log").fetchone()[0]
+    finally:
+        conn.close()
+
+
+# ── Legacy Norms V2 ──────────────────────────────────────────────────────────
+
+
+def list_norms_v2() -> list:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT n.*, pc.name as category_name
+               FROM legacy_norms_v2 n
+               JOIN project_categories pc ON n.category_id = pc.id
+               ORDER BY pc.name, n.complexity""").fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["confidence"] = _norm_confidence(d.get("sample_size", 0))
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def get_norm_v2(norm_id: int) -> Optional[sqlite3.Row]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """SELECT n.*, pc.name as category_name
+               FROM legacy_norms_v2 n
+               JOIN project_categories pc ON n.category_id = pc.id
+               WHERE n.id = ?""", (norm_id,)).fetchone()
+        if row:
+            d = dict(row)
+            d["confidence"] = _norm_confidence(d.get("sample_size", 0))
+            return d
+        return None
+    finally:
+        conn.close()
+
+
+def _norm_confidence(sample_size: int) -> str:
+    if sample_size >= 20:
+        return "high"
+    elif sample_size >= 5:
+        return "limited"
+    return "low"
+
+
+def lookup_norm(category_id: int, complexity=None, client_sub_category=None, geographies=None) -> dict:
+    """Cascading lookup: most specific match first."""
+    conn = get_connection()
+    try:
+        # Build cascading queries from most to least specific
+        queries = [
+            # category + complexity + segment + geo
+            ("SELECT n.*, pc.name as category_name FROM legacy_norms_v2 n JOIN project_categories pc ON n.category_id = pc.id WHERE n.category_id = ? AND n.complexity = ? AND n.client_sub_category = ? AND n.geographies IS NOT NULL",
+             [category_id, complexity, client_sub_category]),
+            # category + complexity + segment
+            ("SELECT n.*, pc.name as category_name FROM legacy_norms_v2 n JOIN project_categories pc ON n.category_id = pc.id WHERE n.category_id = ? AND n.complexity = ? AND n.client_sub_category = ? AND n.geographies IS NULL",
+             [category_id, complexity, client_sub_category]),
+            # category + complexity
+            ("SELECT n.*, pc.name as category_name FROM legacy_norms_v2 n JOIN project_categories pc ON n.category_id = pc.id WHERE n.category_id = ? AND n.complexity = ? AND n.client_sub_category IS NULL AND n.geographies IS NULL",
+             [category_id, complexity]),
+            # category only
+            ("SELECT n.*, pc.name as category_name FROM legacy_norms_v2 n JOIN project_categories pc ON n.category_id = pc.id WHERE n.category_id = ? AND n.complexity IS NULL AND n.client_sub_category IS NULL AND n.geographies IS NULL",
+             [category_id]),
+        ]
+
+        # Only include queries that have the required params
+        for i, (query, params) in enumerate(queries):
+            if i == 0 and (complexity is None or client_sub_category is None):
+                continue
+            if i == 1 and (complexity is None or client_sub_category is None):
+                continue
+            if i == 2 and complexity is None:
+                continue
+            row = conn.execute(query, params).fetchone()
+            if row:
+                d = dict(row)
+                d["confidence"] = _norm_confidence(d.get("sample_size", 0))
+                return d
+        return {}
+    finally:
+        conn.close()
+
+
+def create_norm_v2(data: dict) -> int:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """INSERT INTO legacy_norms_v2
+               (category_id, complexity, client_sector, client_sub_category,
+                geographies, countries_served,
+                avg_calendar_days, avg_team_size, avg_revision_intensity,
+                avg_scope_expansion, avg_senior_involvement, avg_ai_usage,
+                sample_size, notes, updated_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                data["category_id"],
+                data.get("complexity"),
+                data.get("client_sector"),
+                data.get("client_sub_category"),
+                json.dumps(data["geographies"]) if data.get("geographies") else None,
+                json.dumps(data["countries_served"]) if data.get("countries_served") else None,
+                data.get("avg_calendar_days"),
+                data.get("avg_team_size"),
+                data.get("avg_revision_intensity"),
+                data.get("avg_scope_expansion"),
+                data.get("avg_senior_involvement"),
+                data.get("avg_ai_usage"),
+                data.get("sample_size", 0),
+                data.get("notes"),
+                data.get("updated_by"),
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def update_norm_v2(norm_id: int, data: dict, changed_by: str) -> bool:
+    conn = get_connection()
+    try:
+        existing = get_norm_v2(norm_id)
+        if not existing:
+            return False
+
+        fields = {k: v for k, v in data.items() if v is not None}
+        if not fields:
+            return False
+
+        # Serialize list fields
+        for list_field in ("geographies", "countries_served"):
+            if list_field in fields and isinstance(fields[list_field], list):
+                fields[list_field] = json.dumps(fields[list_field])
+
+        # Audit trail: record changes
+        for field, new_val in fields.items():
+            old_val = existing.get(field)
+            old_str = json.dumps(old_val) if isinstance(old_val, (list, dict)) else (str(old_val) if old_val is not None else None)
+            new_str = json.dumps(new_val) if isinstance(new_val, (list, dict)) else (str(new_val) if new_val is not None else None)
+            if old_str != new_str:
+                conn.execute(
+                    "INSERT INTO legacy_norms_history (norm_id, field_changed, old_value, new_value, changed_by) VALUES (?, ?, ?, ?, ?)",
+                    (norm_id, field, old_str, new_str, changed_by),
+                )
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        set_clause += ", updated_at = CURRENT_TIMESTAMP"
+        values = list(fields.values()) + [norm_id]
+        conn.execute(f"UPDATE legacy_norms_v2 SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_norm_history(norm_id: int) -> list:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM legacy_norms_history WHERE norm_id = ? ORDER BY changed_at DESC",
+            (norm_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def recalculate_norms() -> dict:
+    """Recalculate all v2 norms from completed projects."""
+    from backend import metrics as mtx
+
+    conn = get_connection()
+    try:
+        norms = conn.execute("SELECT * FROM legacy_norms_v2").fetchall()
+        updated = 0
+        errors = 0
+
+        for norm in norms:
+            # Build query to find matching completed projects
+            query = "SELECT * FROM projects WHERE status = 'complete' AND category_id = ?"
+            params = [norm["category_id"]]
+
+            if norm["complexity"] is not None:
+                query += " AND complexity = ?"
+                params.append(norm["complexity"])
+            else:
+                query += " AND complexity IS NULL"
+
+            if norm["client_sub_category"] is not None:
+                query += " AND client_sub_category = ?"
+                params.append(norm["client_sub_category"])
+            else:
+                query += " AND client_sub_category IS NULL"
+
+            projects = conn.execute(query, params).fetchall()
+            n = len(projects)
+
+            if n == 0:
+                continue
+
+            # Compute averages
+            def avg_field(field, use_float=True):
+                vals = [p[field] for p in projects if p[field] is not None]
+                if not vals:
+                    return None
+                if use_float:
+                    return round(sum(vals) / len(vals), 1)
+                return round(sum(float(v) for v in vals) / len(vals), 1)
+
+            updates = {
+                "avg_revision_intensity": avg_field("xcsg_revision_intensity"),
+                "avg_scope_expansion": avg_field("xcsg_scope_expansion_score"),
+                "avg_senior_involvement": avg_field("xcsg_senior_involvement"),
+                "avg_ai_usage": avg_field("xcsg_ai_usage"),
+                "sample_size": n,
+            }
+
+            # Calendar days and team size need midpoint conversion
+            xcsg_pds = []
+            for p in projects:
+                if p["xcsg_calendar_days"] and p["xcsg_team_size"]:
+                    xcsg_pds.append(mtx.compute_person_days(p["xcsg_calendar_days"], p["xcsg_team_size"]))
+            if xcsg_pds:
+                updates["avg_calendar_days"] = round(sum(xcsg_pds) / len(xcsg_pds), 1)
+
+            team_sizes = [float(p["xcsg_team_size"]) for p in projects if p["xcsg_team_size"] is not None and p["xcsg_team_size"] not in mtx.TEAM_MIDPOINTS]
+            if not team_sizes:
+                # Use midpoints
+                team_sizes = [mtx.TEAM_MIDPOINTS.get(p["xcsg_team_size"], 2.0) for p in projects if p["xcsg_team_size"]]
+            if team_sizes:
+                updates["avg_team_size"] = round(sum(team_sizes) / len(team_sizes), 1)
+
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            set_clause += ", updated_at = CURRENT_TIMESTAMP"
+            values = list(updates.values()) + [norm["id"]]
+            conn.execute(f"UPDATE legacy_norms_v2 SET {set_clause} WHERE id = ?", values)
+            updated += 1
+
+        conn.commit()
+        return {"norms_checked": len(norms), "norms_updated": updated, "errors": errors}
+    finally:
+        conn.close()
+
+
+def complete_project(project_id: int, data: dict) -> bool:
+    """Set completion sliders and compute machine_first_score."""
+    from backend import metrics as mtx
+
+    conn = get_connection()
+    try:
+        fields = {k: v for k, v in data.items() if v is not None}
+        if not fields:
+            return False
+
+        # Compute machine_first_score if we have the required sliders
+        si = data.get("xcsg_senior_involvement")
+        ai = data.get("xcsg_ai_usage")
+        ri = data.get("xcsg_revision_intensity")
+        se = data.get("xcsg_scope_expansion_score")
+        if all(v is not None for v in (si, ai, ri, se)):
+            fields["machine_first_score"] = mtx.compute_machine_first_v2(data)
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        set_clause += ", updated_at = CURRENT_TIMESTAMP"
+        values = list(fields.values()) + [project_id]
+        conn.execute(f"UPDATE projects SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+        return True
     finally:
         conn.close()
 

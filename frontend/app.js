@@ -747,6 +747,191 @@ function renderNewProject(prefill = null) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   EXPERT ASSESSMENT READ-ONLY VIEW
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const ASSESSMENT_FIELDS = [
+  {
+    section: 'B', title: 'Machine-First Operations',
+    desc: 'How much of this work was driven by AI vs. manual effort?',
+    icon: '🤖',
+    fields: [
+      { id: 'B1', key: 'b1_starting_point', label: 'Starting Point', hint: 'Did the final deliverable start from an AI draft or blank page?', scores: { 'From AI draft': 1.0, 'Mixed (AI structure, manual content)': 0.5, 'From blank page': 0.0 } },
+      { id: 'B2', key: 'b2_research_sources', label: 'Research Throughput', hint: 'How many distinct data sources were synthesized?', scores: { '1-3': 0.25, '4-7': 0.5, '8-12': 0.75, '13+': 1.0 } },
+      { id: 'B3', key: 'b3_assembly_ratio', label: 'Assembly Ratio', hint: 'What % of data collection & structuring was AI-performed?', scores: { '>75% AI': 1.0, '50-75%': 0.75, '25-50%': 0.5, '<25%': 0.25 } },
+      { id: 'B4', key: 'b4_hypothesis_first', label: 'Hypothesis Approach', hint: 'Was this structured around a thesis or open-ended discovery?', scores: { 'Hypothesis-first (tested a specific thesis)': 1.0, 'Hybrid (hypothesis emerged during work)': 0.5, 'Discovery-first (open-ended research)': 0.0 } },
+    ]
+  },
+  {
+    section: 'C', title: 'Senior-Led Engagement',
+    desc: 'How deeply was senior expertise involved in crafting the output?',
+    icon: '👔',
+    fields: [
+      { id: 'C1', key: 'c1_specialization', label: 'Specialization Match', hint: 'Is the analyst a recognized domain specialist?', scores: { 'Deep specialist in this TA/methodology': 1.0, 'Adjacent expertise': 0.5, 'Generalist': 0.0 } },
+      { id: 'C2', key: 'c2_directness', label: 'Directness', hint: 'Did the expert author, co-author, or only review?', scores: { 'Expert authored (with AI assist)': 1.0, 'Expert co-authored (shared with team)': 0.5, 'Expert reviewed only': 0.0 } },
+      { id: 'C3', key: 'c3_judgment_pct', label: 'Judgment Concentration', hint: 'What % of expert time was high-value judgment vs assembly?', scores: { '>75% judgment': 1.0, '50-75%': 0.75, '25-50%': 0.5, '<25%': 0.25 } },
+    ]
+  },
+  {
+    section: 'D', title: 'Proprietary Knowledge Moat',
+    desc: 'How much proprietary or accumulated knowledge made this unique?',
+    icon: '🏰',
+    fields: [
+      { id: 'D1', key: 'd1_proprietary_data', label: 'Proprietary Data', hint: 'Does this contain data from Alira proprietary sources?', scores: { 'Yes': 1.0, 'No': 0.0 } },
+      { id: 'D2', key: 'd2_knowledge_reuse', label: 'Knowledge Reuse', hint: 'Did this build on reusable assets from prior engagements?', scores: { 'Yes, directly reused and extended': 1.0, 'Yes, provided useful starting context': 0.5, 'No, built from scratch': 0.0 } },
+      { id: 'D3', key: 'd3_moat_test', label: 'Moat Test', hint: 'Could a competitor without Alira\'s data produce an equivalent?', scores: { 'No \u2014 proprietary inputs decisive': 1.0, 'Partially \u2014 they would miss key insights': 0.5, 'Yes \u2014 all inputs publicly available': 0.0 } },
+    ]
+  },
+  {
+    section: 'F', title: 'Value Creation',
+    desc: 'Whether xCSG created value that wouldn\'t exist in the legacy model.',
+    icon: '💎',
+    fields: [
+      { id: 'F1', key: 'f1_feasibility', label: 'Legacy Feasibility', hint: 'Would this have been feasible without AI?', scores: { 'Not feasible \u2014 scope or timeline was only possible with AI': 1.0, 'Feasible but at 2x+ the cost and time': 0.67, 'Feasible at similar cost \u2014 xCSG provided marginal benefit': 0.33, 'Legacy would have been more effective': 0.0 } },
+      { id: 'F2', key: 'f2_productization', label: 'Productization Potential', hint: 'Could a component be reused as a standardized offering?', scores: { 'Yes, largely as-is': 1.0, 'Yes, with moderate customization': 0.5, 'No, fully bespoke': 0.0 } },
+    ]
+  },
+];
+
+function scoreColor(score) {
+  if (score >= 0.7) return '#10B981'; // green
+  if (score >= 0.4) return '#F59E0B'; // amber
+  return '#EF4444'; // red
+}
+
+function scoreLabel(score) {
+  if (score >= 0.8) return 'Strong';
+  if (score >= 0.6) return 'Good';
+  if (score >= 0.4) return 'Moderate';
+  return 'Low';
+}
+
+function gaugeHTML(score, size = 56) {
+  const pct = Math.round(score * 100);
+  const color = scoreColor(score);
+  const circumference = 2 * Math.PI * 20;
+  const offset = circumference * (1 - score);
+  return `<div class="score-gauge" style="width:${size}px;height:${size}px">
+    <svg viewBox="0 0 48 48" width="${size}" height="${size}">
+      <circle cx="24" cy="24" r="20" fill="none" stroke="var(--gray-200)" stroke-width="4"/>
+      <circle cx="24" cy="24" r="20" fill="none" stroke="${color}" stroke-width="4"
+        stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+        stroke-linecap="round" transform="rotate(-90 24 24)"/>
+      <text x="24" y="26" text-anchor="middle" font-size="11" font-weight="700" fill="${color}">${pct}</text>
+    </svg>
+  </div>`;
+}
+
+function barHTML(score, label) {
+  const pct = Math.round(score * 100);
+  const color = scoreColor(score);
+  return `<div class="assessment-bar">
+    <div class="assessment-bar-track">
+      <div class="assessment-bar-fill" style="width:${pct}%;background:${color}"></div>
+    </div>
+    <span class="assessment-bar-label" style="color:${color}">${label || pct + '%'}</span>
+  </div>`;
+}
+
+function renderExpertAssessment(er, metrics) {
+  // Compute section scores
+  const sectionScores = {};
+  for (const sec of ASSESSMENT_FIELDS) {
+    let sum = 0, count = 0;
+    for (const f of sec.fields) {
+      const val = er[f.key];
+      const s = f.scores[val];
+      if (s !== undefined) { sum += s; count++; }
+    }
+    sectionScores[sec.section] = count > 0 ? sum / count : null;
+  }
+
+  // Overall xCSG Score = average of B, C, D (F is descriptive)
+  const coreScores = [sectionScores.B, sectionScores.C, sectionScores.D].filter(s => s !== null);
+  const overall = coreScores.length > 0 ? coreScores.reduce((a, b) => a + b, 0) / coreScores.length : null;
+
+  // Value multiplier from metrics
+  const vm = metrics.value_multiplier;
+  const effortRatio = metrics.effort_ratio;
+  const qualityRatio = metrics.quality_ratio;
+
+  let html = `<div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+    <span>Expert Assessment</span>
+    <span class="badge badge-complete" style="font-size:11px">Submitted</span>
+  </div>`;
+
+  html += `<div class="card-body">`;
+
+  // ── Overall Score Banner ──
+  html += `<div class="assessment-overall-banner">
+    <div class="assessment-overall-left">
+      ${overall !== null ? gaugeHTML(overall, 72) : '<div class="score-gauge" style="width:72px;height:72px"><div class="score-na">N/A</div></div>'}
+      <div>
+        <div class="assessment-overall-title">xCSG Score</div>
+        <div class="assessment-overall-subtitle">${overall !== null ? scoreLabel(overall) + ' (' + Math.round(overall * 100) + '/100)' : 'Insufficient data'}</div>
+        <div class="assessment-overall-hint">Average of Machine-First, Senior-Led, and Knowledge Moat</div>
+      </div>
+    </div>
+    <div class="assessment-overall-metrics">
+      <div class="assessment-metric-chip ${effortRatio >= 2 ? 'chip-green' : effortRatio >= 1 ? 'chip-amber' : 'chip-red'}">
+        <span class="chip-value">${effortRatio !== undefined ? effortRatio.toFixed(1) + '×' : '—'}</span>
+        <span class="chip-label">Effort Ratio</span>
+        <span class="chip-hint">Person-days saved vs legacy</span>
+      </div>
+      <div class="assessment-metric-chip ${qualityRatio >= 1 ? 'chip-green' : qualityRatio >= 0.5 ? 'chip-amber' : 'chip-red'}">
+        <span class="chip-value">${qualityRatio !== undefined ? qualityRatio.toFixed(1) + '×' : '—'}</span>
+        <span class="chip-label">Quality Ratio</span>
+        <span class="chip-hint">Revision reduction vs legacy</span>
+      </div>
+      <div class="assessment-metric-chip ${vm >= 3 ? 'chip-green' : vm >= 1.5 ? 'chip-amber' : 'chip-red'}">
+        <span class="chip-value">${vm !== undefined ? vm.toFixed(1) + '×' : '—'}</span>
+        <span class="chip-label">Value Multiplier</span>
+        <span class="chip-hint">Effort × Quality combined</span>
+      </div>
+    </div>
+  </div>`;
+
+  // ── Section Cards ──
+  for (const sec of ASSESSMENT_FIELDS) {
+    const secScore = sectionScores[sec.section];
+    html += `<div class="assessment-section-card">
+      <div class="assessment-section-header">
+        <div class="assessment-section-title-row">
+          <span class="assessment-section-icon">${sec.icon}</span>
+          <div>
+            <div class="assessment-section-label">Section ${sec.section}: ${esc(sec.title)}</div>
+            <div class="assessment-section-desc">${esc(sec.desc)}</div>
+          </div>
+        </div>
+        ${secScore !== null ? gaugeHTML(secScore, 44) : ''}
+      </div>
+      <div class="assessment-fields">`;
+
+    for (const f of sec.fields) {
+      const val = er[f.key] || '—';
+      const score = f.scores[val];
+      const displayVal = val === 'Yes' ? 'Yes ✓' : val === 'No' ? 'No ✗' : val;
+      html += `<div class="assessment-field">
+        <div class="assessment-field-top">
+          <span class="assessment-field-id">${f.id}</span>
+          <span class="assessment-field-label">${esc(f.label)}</span>
+          <span class="assessment-field-hint">${esc(f.hint)}</span>
+        </div>
+        <div class="assessment-field-answer">
+          <span class="assessment-field-value">${esc(displayVal)}</span>
+          ${score !== undefined ? barHTML(score, scoreLabel(score)) : ''}
+        </div>
+      </div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    EDIT PROJECT
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -757,40 +942,14 @@ async function renderEditProject(id) {
     const p = await apiCall('GET', `/projects/${id}`);
     renderNewProject(p);
 
-    // If expert response exists, show grouped read-only summary below form
+    // If expert response exists, show rich read-only assessment below form
     if (p.expert_response) {
       const er = p.expert_response;
+      const m = p.metrics || {};
       const card = document.createElement('div');
       card.className = 'card';
       card.style.marginTop = '24px';
-      card.innerHTML = `
-        <div class="card-header">Expert Assessment (Read-Only)</div>
-        <div class="card-body">
-          <h4 class="expert-response-section">Section B: Machine-First Operations</h4>
-          <div class="expert-response-grid">
-            <div><span class="q-id">B1</span> ${esc(er.b1_starting_point)}</div>
-            <div><span class="q-id">B2</span> ${esc(er.b2_research_sources)}</div>
-            <div><span class="q-id">B3</span> ${esc(er.b3_assembly_ratio)}</div>
-            <div><span class="q-id">B4</span> ${esc(er.b4_hypothesis_first)}</div>
-          </div>
-          <h4 class="expert-response-section">Section C: Senior-Led Engagement</h4>
-          <div class="expert-response-grid">
-            <div><span class="q-id">C1</span> ${esc(er.c1_specialization)}</div>
-            <div><span class="q-id">C2</span> ${esc(er.c2_directness)}</div>
-            <div><span class="q-id">C3</span> ${esc(er.c3_judgment_pct)}</div>
-          </div>
-          <h4 class="expert-response-section">Section D: Proprietary Knowledge</h4>
-          <div class="expert-response-grid">
-            <div><span class="q-id">D1</span> ${esc(er.d1_proprietary_data)}</div>
-            <div><span class="q-id">D2</span> ${esc(er.d2_knowledge_reuse)}</div>
-            <div><span class="q-id">D3</span> ${esc(er.d3_moat_test)}</div>
-          </div>
-          <h4 class="expert-response-section">Section F: Value Creation</h4>
-          <div class="expert-response-grid">
-            <div><span class="q-id">F1</span> ${esc(er.f1_feasibility)}</div>
-            <div><span class="q-id">F2</span> ${esc(er.f2_productization)}</div>
-          </div>
-        </div>`;
+      card.innerHTML = renderExpertAssessment(er, m);
       mc.appendChild(card);
     }
   } catch (err) {

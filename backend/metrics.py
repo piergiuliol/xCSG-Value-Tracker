@@ -93,9 +93,9 @@ D2_SCORES = {
 
 # D3 moat test — uses em dashes (—)
 D3_SCORES = {
-    "No \u2014 proprietary inputs were decisive": 1.0,
-    "Partially \u2014 they\u2019d miss key insights": 0.5,
-    "Yes \u2014 all inputs were publicly available": 0.0,
+    "No \u2014 proprietary inputs decisive": 1.0,
+    "Partially \u2014 they would miss key insights": 0.5,
+    "Yes \u2014 all inputs publicly available": 0.0,
 }
 
 
@@ -123,6 +123,23 @@ def compute_quality_ratio(legacy_revisions: str, xcsg_revisions: str) -> float:
 
 def compute_value_multiplier(effort_ratio: float, quality_ratio: float) -> float:
     return round(effort_ratio * quality_ratio, 2)
+
+
+def compute_machine_first_v2(data: dict) -> Optional[float]:
+    """Machine-first score v2: composite from completion sliders (0-100)."""
+    si = data.get("xcsg_senior_involvement")
+    ai = data.get("xcsg_ai_usage")
+    ri = data.get("xcsg_revision_intensity")
+    se = data.get("xcsg_scope_expansion_score")
+    if any(v is None for v in (si, ai, ri, se)):
+        return None
+    score = (
+        (si / 7) * 25 +
+        (ai / 7) * 25 +
+        ((8 - ri) / 7) * 25 +
+        ((8 - se) / 7) * 25
+    )
+    return round(score, 1)
 
 
 def compute_machine_first_score(er: dict) -> Optional[float]:
@@ -290,7 +307,46 @@ def compute_summary(complete_projects: list, total_projects: list) -> dict:
         "proprietary_knowledge_avg": pk_avg,
         "checkpoint": determine_checkpoint(complete),
         "projects_to_next_checkpoint": projects_to_next_checkpoint(complete),
+        # v2 metrics
+        "ai_adoption_rate": _compute_ai_adoption_rate(complete_projects),
+        "senior_leverage": _compute_senior_leverage(complete_projects),
+        "scope_predictability": _compute_scope_predictability(complete_projects),
     }
+
+
+def _compute_ai_adoption_rate(complete_projects: list) -> float:
+    """% of projects with ai_usage >= 3."""
+    v2_projects = [p for p in complete_projects if p.get("xcsg_ai_usage") is not None]
+    if not v2_projects:
+        return 0.0
+    adopted = sum(1 for p in v2_projects if p["xcsg_ai_usage"] >= 3)
+    return round(adopted / len(v2_projects) * 100, 1)
+
+
+def _compute_senior_leverage(complete_projects: list) -> Optional[float]:
+    """avg senior_involvement xCSG vs legacy."""
+    projects = [p for p in complete_projects
+                if p.get("xcsg_senior_involvement") is not None and p.get("legacy_senior_involvement") is not None]
+    if not projects:
+        return None
+    avg_xcsg = sum(p["xcsg_senior_involvement"] for p in projects) / len(projects)
+    avg_legacy = sum(p["legacy_senior_involvement"] for p in projects) / len(projects)
+    if avg_legacy == 0:
+        return None
+    return round(avg_xcsg / avg_legacy, 2)
+
+
+def _compute_scope_predictability(complete_projects: list) -> Optional[float]:
+    """avg scope_expansion xCSG vs legacy (lower is better, so ratio > 1 means xCSG is more predictable)."""
+    projects = [p for p in complete_projects
+                if p.get("xcsg_scope_expansion_score") is not None and p.get("legacy_scope_expansion") is not None]
+    if not projects:
+        return None
+    avg_xcsg = sum(p["xcsg_scope_expansion_score"] for p in projects) / len(projects)
+    avg_legacy = sum(p["legacy_scope_expansion"] for p in projects) / len(projects)
+    if avg_legacy == 0:
+        return None
+    return round(avg_xcsg / avg_legacy, 2)
 
 
 def compute_trend_data(complete_projects: list) -> list:
