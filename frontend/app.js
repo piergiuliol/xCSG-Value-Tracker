@@ -741,9 +741,7 @@ function renderNewProject(prefill = null) {
   const legacyClass = isEdit ? '' : 'legacy-auto';
   const legacyOverridden = isEdit && prefill?.legacy_overridden;
   const catName = prefill ? (state.categories.find(c => c.id == prefill.category_id)?.name || '') : '';
-
-  // Pre-fill fields
-  const pfScopeExpansion = prefill?.xcsg_scope_expansion || '';
+  let html = '';
 
   function legacySourceText(field) {
     if (isEdit) {
@@ -796,7 +794,7 @@ function renderNewProject(prefill = null) {
             <div class="form-group"><label>Team Size <span class="required">*</span></label><select id="fXTeam" required>${optionsHTML(TEAM_SIZES, prefill?.xcsg_team_size)}</select></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label>Revision Rounds <span class="required">*</span></label><input type="number" id="fRevisions" min="0" step="1" required value="${prefill?.xcsg_revision_rounds || 0}"></div>
+            <div class="form-group"><label>Revision Rounds <span class="required">*</span></label><select id="fRevisions" required>${optionsHTML(REVISION_ROUNDS, prefill?.xcsg_revision_rounds)}</select></div>
             <div class="form-group"><label>Scope Expansion <span class="required">*</span></label><select id="fScopeExpansion" required>${optionsHTML(['None', 'Minor', 'Major'], prefill?.xcsg_scope_expansion)}</select></div>
           </div>
         </fieldset>
@@ -821,6 +819,8 @@ function renderNewProject(prefill = null) {
         </div>
       </form>
     </div>`;
+
+  mc.innerHTML = html;
 
   // Category-based norm load (v1)
   let legacyManuallyChanged = false;
@@ -886,7 +886,7 @@ function renderNewProject(prefill = null) {
       date_delivered: dateEnd || null,
       xcsg_calendar_days: document.getElementById('fXDays').value,
       xcsg_team_size: document.getElementById('fXTeam').value,
-      xcsg_revision_rounds: parseInt(document.getElementById('fRevisions').value) || 0,
+      xcsg_revision_rounds: document.getElementById('fRevisions').value,
       xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
       legacy_calendar_days: document.getElementById('fLDays').value || null,
       legacy_team_size: document.getElementById('fLTeam').value || null,
