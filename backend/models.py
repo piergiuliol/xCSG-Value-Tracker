@@ -117,20 +117,53 @@ class ProjectUpdate(BaseModel):
 # ── Expert ────────────────────────────────────────────────────────────────────
 
 class ExpertResponseCreate(BaseModel):
-    """Expert assessment — 14 questions (matching current framework).
-    Will be expanded to 23-field model in Phase 1."""
-    b1_starting_point: str
-    b2_research_sources: str
-    b3_assembly_ratio: str
-    b4_hypothesis_first: str
-    c1_specialization: str
-    c2_directness: str
-    c3_judgment_pct: str
-    d1_proprietary_data: str
-    d2_knowledge_reuse: str
-    d3_moat_test: str
-    f1_feasibility: str
-    f2_productization: str
+    """Expert assessment — 23 fields matching the realigned framework (Phase 1).
+
+    B1-B4: machine-first (4 questions × 2 columns: xcsg + legacy) = 8 string fields
+    C1-C3: senior-led (3 fields, xcsg only) = 3 string fields
+    C4-C5: senior/junior hours = 2 numeric fields
+    D1-D3: proprietary knowledge (3 questions × 2 columns) = 6 string fields
+    F1-F2: value creation (2 questions × 2 columns) = 4 string fields
+
+    All string fields are 5-level categorical. See /api/expert/options for valid values.
+    """
+    # B — Machine-First Operations (4 questions × 2 columns = 8 fields)
+    b1_starting_point_xcsg: Optional[str] = None
+    b1_starting_point_legacy: Optional[str] = None
+    b2_research_sources_xcsg: Optional[str] = None
+    b2_research_sources_legacy: Optional[str] = None
+    b3_assembly_ratio_xcsg: Optional[str] = None
+    b3_assembly_ratio_legacy: Optional[str] = None
+    b4_hypothesis_first_xcsg: Optional[str] = None
+    b4_hypothesis_first_legacy: Optional[str] = None
+
+    # C — Senior-Led Model (5 fields, xCSG only)
+    c1_specialization: Optional[str] = None
+    c2_directness: Optional[str] = None
+    c3_judgment_pct: Optional[str] = None
+    c4_senior_hours: Optional[float] = None
+    c5_junior_hours: Optional[float] = None
+
+    # D — Proprietary Knowledge (3 questions × 2 columns = 6 fields)
+    d1_proprietary_data_xcsg: Optional[str] = None
+    d1_proprietary_data_legacy: Optional[str] = None
+    d2_knowledge_reuse_xcsg: Optional[str] = None
+    d2_knowledge_reuse_legacy: Optional[str] = None
+    d3_moat_test_xcsg: Optional[str] = None
+    d3_moat_test_legacy: Optional[str] = None
+
+    # F — Value Creation (2 questions × 2 columns = 4 fields)
+    f1_feasibility_xcsg: Optional[str] = None
+    f1_feasibility_legacy: Optional[str] = None
+    f2_productization_xcsg: Optional[str] = None
+    f2_productization_legacy: Optional[str] = None
+
+
+class ExpertAssessmentMetrics(BaseModel):
+    """Computed flywheel leg scores from expert assessment."""
+    machine_first_score: Optional[float] = None
+    senior_led_score: Optional[float] = None
+    proprietary_knowledge_score: Optional[float] = None
 
 
 class ExpertContextResponse(BaseModel):

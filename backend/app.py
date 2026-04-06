@@ -1,5 +1,6 @@
 """
-app.py — FastAPI routes for xCSG Value Tracker v2
+app.py — FastAPI routes for xCSG Value Tracker
+Phase 1 realignment (April 2026).
 
 IMPORTANT: app.mount("/", StaticFiles(...)) MUST be the LAST line.
 """
@@ -21,16 +22,13 @@ from backend.models import (
     ActivityLogEntry,
     CategoryCreate,
     CategoryUpdate,
+    ExpertAssessmentMetrics,
     ExpertContextResponse,
     ExpertResponseCreate,
-    LegacyNormV2Response,
-    LegacyNormV2Update,
     LoginRequest,
     LoginResponse,
     MetricsSummary,
-    NormLookupRequest,
     NormUpdate,
-    ProjectCompleteRequest,
     ProjectCreate,
     ProjectUpdate,
     RegisterRequest,
@@ -39,9 +37,181 @@ from backend.models import (
     UserInfo,
 )
 
+
+# ── Expert field options (canonical source of truth for dropdown values) ──────
+
+EXPERT_FIELD_OPTIONS = {
+    "b1_starting_point": {
+        "section": "B",
+        "label": "Starting point",
+        "options": [
+            "Raw request",
+            "Light brief",
+            "Structured brief",
+            "Hypothesis",
+            "Full hypothesis deck",
+        ],
+        "has_legacy": True,
+        "legacy_default": "Raw request",
+    },
+    "b2_research_sources": {
+        "section": "B",
+        "label": "Research sources",
+        "options": [
+            "General web",
+            "Industry databases",
+            "Proprietary database",
+            "Internal knowledge base",
+            "Synthesized firm knowledge",
+        ],
+        "has_legacy": True,
+        "legacy_default": None,
+    },
+    "b3_assembly_ratio": {
+        "section": "B",
+        "label": "Assembly ratio",
+        "options": [
+            ">80% manual",
+            "60-80%",
+            "40-60%",
+            "20-40%",
+            "<20% manual",
+        ],
+        "has_legacy": True,
+        "legacy_default": ">80% manual",
+    },
+    "b4_hypothesis_first": {
+        "section": "B",
+        "label": "Hypothesis approach",
+        "options": [
+            "Exploratory",
+            "Mostly exploratory",
+            "Balanced",
+            "Mostly hypothesis-led",
+            "Fully hypothesis-led",
+        ],
+        "has_legacy": True,
+        "legacy_default": "Exploratory",
+    },
+    "c1_specialization": {
+        "section": "C",
+        "label": "Specialization match",
+        "options": [
+            "Generalist",
+            "Mixed",
+            "Specialist",
+            "Deep specialist",
+            "World-class expert",
+        ],
+        "has_legacy": False,
+    },
+    "c2_directness": {
+        "section": "C",
+        "label": "Directness",
+        "options": [
+            "Delegated",
+            "Partially delegated",
+            "Shared",
+            "Hands-on",
+            "Personally leading",
+        ],
+        "has_legacy": False,
+    },
+    "c3_judgment_pct": {
+        "section": "C",
+        "label": "Judgment concentration",
+        "options": [
+            "<20%",
+            "20-40%",
+            "40-60%",
+            "60-80%",
+            ">80%",
+        ],
+        "has_legacy": False,
+    },
+    "c4_senior_hours": {
+        "section": "C",
+        "label": "Senior hours",
+        "type": "numeric",
+        "has_legacy": False,
+    },
+    "c5_junior_hours": {
+        "section": "C",
+        "label": "Junior hours",
+        "type": "numeric",
+        "has_legacy": False,
+    },
+    "d1_proprietary_data": {
+        "section": "D",
+        "label": "Proprietary data",
+        "options": [
+            "None",
+            "Public data",
+            "Some proprietary",
+            "Mostly proprietary",
+            "Fully proprietary",
+        ],
+        "has_legacy": True,
+        "legacy_default": None,
+    },
+    "d2_knowledge_reuse": {
+        "section": "D",
+        "label": "Knowledge reuse",
+        "options": [
+            "One-time",
+            "Some reuse",
+            "Moderate",
+            "High",
+            "Maximum",
+        ],
+        "has_legacy": True,
+        "legacy_default": None,
+    },
+    "d3_moat_test": {
+        "section": "D",
+        "label": "Moat test",
+        "options": [
+            "Easily replicable",
+            "Somewhat",
+            "Moderately unique",
+            "Highly unique",
+            "Impossible to replicate",
+        ],
+        "has_legacy": True,
+        "legacy_default": None,
+    },
+    "f1_feasibility": {
+        "section": "F",
+        "label": "Feasibility",
+        "options": [
+            "Not assessed",
+            "Basic",
+            "Standard",
+            "Comprehensive",
+            "Exceeds requirements",
+        ],
+        "has_legacy": True,
+        "legacy_default": None,
+    },
+    "f2_productization": {
+        "section": "F",
+        "label": "Productization",
+        "options": [
+            "None",
+            "Identified",
+            "Designed",
+            "Implemented",
+            "Scaled",
+        ],
+        "has_legacy": True,
+        "legacy_default": None,
+    },
+}
+
+
 # ── App init ──────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="xCSG Value Tracker", version="2.0.0")
+app = FastAPI(title="xCSG Value Tracker", version="2.1.0")
 
 # CORS
 _raw_origins = os.environ.get(
@@ -71,7 +241,7 @@ async def startup_event():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "2.1.0"}
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -206,7 +376,6 @@ async def create_project(
     body: ProjectCreate,
     current_user: dict = Depends(auth.get_current_user),
 ):
-    # Validate category exists
     cat = db.get_category(body.category_id)
     if not cat:
         raise HTTPException(status_code=400, detail="Invalid category_id")
@@ -214,7 +383,6 @@ async def create_project(
     data = body.model_dump()
     data["created_by"] = current_user["sub"]
 
-    # Compute legacy_overridden: compare submitted legacy values against category norms
     norm = db.get_norm_by_category(body.category_id)
     if norm:
         data["legacy_overridden"] = (
@@ -245,11 +413,9 @@ async def get_project(
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
     result = dict(row)
-    # Include expert response if exists
     er = db.get_expert_response(project_id)
     if er:
         result["expert_response"] = dict(er)
-    # Include computed metrics for completed projects
     if row["status"] == "complete":
         merged = dict(row)
         if er:
@@ -297,6 +463,12 @@ async def delete_project(
 
 # ── Expert (NO auth — token-based) ───────────────────────────────────────────
 
+@app.get("/api/expert/options")
+async def get_expert_options():
+    """Return all field definitions for building the expert assessment form."""
+    return EXPERT_FIELD_OPTIONS
+
+
 @app.get("/api/expert/{token}", response_model=ExpertContextResponse)
 async def get_expert_context(token: str):
     row = db.get_project_by_token(token)
@@ -318,6 +490,27 @@ async def get_expert_context(token: str):
     )
 
 
+@app.get("/api/expert/{token}/metrics", response_model=ExpertAssessmentMetrics)
+async def get_expert_metrics(token: str):
+    """Return computed flywheel leg scores for a submitted expert assessment."""
+    row = db.get_project_by_token(token)
+    if not row:
+        raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
+    if row["status"] != "complete":
+        raise HTTPException(status_code=404, detail="Assessment not yet submitted")
+
+    er = db.get_expert_response(row["id"])
+    if not er:
+        raise HTTPException(status_code=404, detail="No response found")
+
+    er_dict = dict(er)
+    return ExpertAssessmentMetrics(
+        machine_first_score=mtx.compute_machine_first_score(er_dict),
+        senior_led_score=mtx.compute_senior_led_score(er_dict),
+        proprietary_knowledge_score=mtx.compute_proprietary_knowledge_score(er_dict),
+    )
+
+
 @app.post("/api/expert/{token}", status_code=201)
 async def submit_expert_response(token: str, body: ExpertResponseCreate):
     row = db.get_project_by_token(token)
@@ -333,7 +526,15 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
         project_id=row["id"],
         details=f"Expert assessment submitted for '{row['project_name']}' (pioneer: {row['pioneer_name']})",
     )
-    return {"success": True, "message": "Assessment submitted successfully"}
+
+    # Compute and return metrics on successful submission
+    er = db.get_expert_response(row["id"])
+    metrics = {
+        "machine_first_score": mtx.compute_machine_first_score(dict(er)),
+        "senior_led_score": mtx.compute_senior_led_score(dict(er)),
+        "proprietary_knowledge_score": mtx.compute_proprietary_knowledge_score(dict(er)),
+    }
+    return {"success": True, "message": "Assessment submitted successfully", "metrics": metrics}
 
 
 # ── Legacy Norms ──────────────────────────────────────────────────────────────
@@ -342,95 +543,6 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
 async def list_norms(current_user: dict = Depends(auth.get_current_user)):
     return db.list_norms()
 
-
-# ── Legacy Norms V2 (MUST be before /api/norms/{category_id} to avoid route capture) ──
-
-@app.get("/api/norms/v2")
-async def list_norms_v2(current_user: dict = Depends(auth.get_current_user)):
-    return db.list_norms_v2()
-
-
-@app.get("/api/norms/v2/lookup")
-async def lookup_norm_v2(
-    category_id: int = Query(...),
-    complexity: Optional[float] = Query(None),
-    client_sub_category: Optional[str] = Query(None),
-    geographies: Optional[str] = Query(None),
-    current_user: dict = Depends(auth.get_current_user),
-):
-    geo_list = json.loads(geographies) if geographies else None
-    result = db.lookup_norm(category_id, complexity, client_sub_category, geo_list)
-    if not result:
-        raise HTTPException(status_code=404, detail="No matching norm found")
-    return result
-
-
-@app.post("/api/norms/v2", status_code=201)
-async def create_norm_v2(
-    body: LegacyNormV2Update,
-    category_id: int = Query(...),
-    current_user: dict = Depends(auth.get_current_user_admin),
-):
-    cat = db.get_category(category_id)
-    if not cat:
-        raise HTTPException(status_code=400, detail="Invalid category_id")
-    data = body.model_dump()
-    data["category_id"] = category_id
-    data["updated_by"] = current_user["sub"]
-    norm_id = db.create_norm_v2(data)
-    result = db.get_norm_v2(norm_id)
-    db.log_activity(current_user["sub"], "norm_v2_created", details=f"Created v2 norm for {cat['name']}")
-    return result
-
-
-@app.get("/api/norms/v2/{norm_id}")
-async def get_norm_v2(norm_id: int, current_user: dict = Depends(auth.get_current_user)):
-    result = db.get_norm_v2(norm_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="Norm not found")
-    return result
-
-
-@app.put("/api/norms/v2/{norm_id}")
-async def update_norm_v2_endpoint(
-    norm_id: int,
-    body: LegacyNormV2Update,
-    current_user: dict = Depends(auth.get_current_user_admin),
-):
-    existing = db.get_norm_v2(norm_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Norm not found")
-    data = body.model_dump()
-    db.update_norm_v2(norm_id, data, current_user["sub"])
-    db.log_activity(current_user["sub"], "norm_v2_updated", details=f"Updated v2 norm #{norm_id}")
-    return db.get_norm_v2(norm_id)
-
-
-@app.delete("/api/norms/v2/{norm_id}", status_code=204)
-async def delete_norm_v2_endpoint(
-    norm_id: int,
-    current_user: dict = Depends(auth.get_current_user_admin),
-):
-    existing = db.get_norm_v2(norm_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Norm not found")
-    db.delete_norm_v2(norm_id)
-    db.log_activity(current_user["sub"], "norm_v2_deleted", details=f"Deleted v2 norm #{norm_id}")
-
-
-@app.get("/api/norms/v2/{norm_id}/history")
-async def get_norm_v2_history(norm_id: int, current_user: dict = Depends(auth.get_current_user)):
-    return db.get_norm_history(norm_id)
-
-
-@app.post("/api/norms/v2/recalculate")
-async def recalculate_norms_v2(current_user: dict = Depends(auth.get_current_user_admin)):
-    result = db.recalculate_norms()
-    db.log_activity(current_user["sub"], "norms_v2_recalculated", details=str(result))
-    return result
-
-
-# ── Legacy Norms V1 ─────────────────────────────────────────────────────────
 
 @app.get("/api/norms/{category_id}")
 async def get_norm(
@@ -500,26 +612,6 @@ async def metrics_scaling_gates(current_user: dict = Depends(auth.get_current_us
     )
 
 
-# ── Project Completion (v2 sliders) ──────────────────────────────────────────
-
-@app.post("/api/projects/{project_id}/complete")
-async def complete_project_v2(
-    project_id: int,
-    body: ProjectCompleteRequest,
-    current_user: dict = Depends(auth.get_current_user),
-):
-    row = db.get_project(project_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Project not found")
-    data = body.model_dump()
-    db.complete_project(project_id, data)
-    db.log_activity(current_user["sub"], "project_completed_v2", project_id=project_id, details=f"Set v2 completion sliders for #{project_id}")
-    updated = db.get_project(project_id)
-    result = dict(updated)
-    result["machine_first_score"] = data.get("machine_first_score")
-    return result
-
-
 # ── Activity Log ──────────────────────────────────────────────────────────────
 
 @app.get("/api/activity")
@@ -560,8 +652,16 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         "xCSG Calendar Days", "xCSG Team Size", "xCSG Revisions",
         "Legacy Calendar Days", "Legacy Team Size", "Legacy Revisions",
         "Status", "Created At",
-        "B1", "B2", "B3", "B4", "C1", "C2", "C3",
-        "D1", "D2", "D3", "F1", "F2",
+        # B — Machine-First (xcsg / legacy)
+        "B1 xcsg", "B1 legacy", "B2 xcsg", "B2 legacy",
+        "B3 xcsg", "B3 legacy", "B4 xcsg", "B4 legacy",
+        # C — Senior-Led (xcsg only)
+        "C1", "C2", "C3", "C4 senior hrs", "C5 junior hrs",
+        # D — Proprietary Knowledge (xcsg / legacy)
+        "D1 xcsg", "D1 legacy", "D2 xcsg", "D2 legacy",
+        "D3 xcsg", "D3 legacy",
+        # F — Value Creation (xcsg / legacy)
+        "F1 xcsg", "F1 legacy", "F2 xcsg", "F2 legacy",
     ]
     ws1.append(headers1)
     for cell in ws1[1]:
@@ -580,13 +680,21 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
             p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
             p.get("legacy_revision_rounds", ""),
             p["status"], p["created_at"],
-            er.get("b1_starting_point", ""), er.get("b2_research_sources", ""),
-            er.get("b3_assembly_ratio", ""), er.get("b4_hypothesis_first", ""),
-            er.get("c1_specialization", ""), er.get("c2_directness", ""),
-            er.get("c3_judgment_pct", ""),
-            er.get("d1_proprietary_data", ""), er.get("d2_knowledge_reuse", ""),
-            er.get("d3_moat_test", ""), er.get("f1_feasibility", ""),
-            er.get("f2_productization", ""),
+            # B
+            er.get("b1_starting_point_xcsg", ""), er.get("b1_starting_point_legacy", ""),
+            er.get("b2_research_sources_xcsg", ""), er.get("b2_research_sources_legacy", ""),
+            er.get("b3_assembly_ratio_xcsg", ""), er.get("b3_assembly_ratio_legacy", ""),
+            er.get("b4_hypothesis_first_xcsg", ""), er.get("b4_hypothesis_first_legacy", ""),
+            # C
+            er.get("c1_specialization", ""), er.get("c2_directness", ""), er.get("c3_judgment_pct", ""),
+            er.get("c4_senior_hours", ""), er.get("c5_junior_hours", ""),
+            # D
+            er.get("d1_proprietary_data_xcsg", ""), er.get("d1_proprietary_data_legacy", ""),
+            er.get("d2_knowledge_reuse_xcsg", ""), er.get("d2_knowledge_reuse_legacy", ""),
+            er.get("d3_moat_test_xcsg", ""), er.get("d3_moat_test_legacy", ""),
+            # F
+            er.get("f1_feasibility_xcsg", ""), er.get("f1_feasibility_legacy", ""),
+            er.get("f2_productization_xcsg", ""), er.get("f2_productization_legacy", ""),
         ])
 
     # ── Sheet 2: Computed Metrics ──

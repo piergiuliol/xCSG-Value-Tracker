@@ -71,18 +71,33 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS expert_responses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id INTEGER UNIQUE NOT NULL,
-                b1_starting_point TEXT NOT NULL,
-                b2_research_sources TEXT NOT NULL,
-                b3_assembly_ratio TEXT NOT NULL,
-                b4_hypothesis_first TEXT NOT NULL,
-                c1_specialization TEXT NOT NULL,
-                c2_directness TEXT NOT NULL,
-                c3_judgment_pct TEXT NOT NULL,
-                d1_proprietary_data TEXT NOT NULL,
-                d2_knowledge_reuse TEXT NOT NULL,
-                d3_moat_test TEXT NOT NULL,
-                f1_feasibility TEXT NOT NULL,
-                f2_productization TEXT NOT NULL,
+                -- B: Machine-First Operations (4 questions × 2 columns)
+                b1_starting_point_xcsg TEXT,
+                b1_starting_point_legacy TEXT,
+                b2_research_sources_xcsg TEXT,
+                b2_research_sources_legacy TEXT,
+                b3_assembly_ratio_xcsg TEXT,
+                b3_assembly_ratio_legacy TEXT,
+                b4_hypothesis_first_xcsg TEXT,
+                b4_hypothesis_first_legacy TEXT,
+                -- C: Senior-Led Model (xcsg only)
+                c1_specialization TEXT,
+                c2_directness TEXT,
+                c3_judgment_pct TEXT,
+                c4_senior_hours REAL,
+                c5_junior_hours REAL,
+                -- D: Proprietary Knowledge (3 questions × 2 columns)
+                d1_proprietary_data_xcsg TEXT,
+                d1_proprietary_data_legacy TEXT,
+                d2_knowledge_reuse_xcsg TEXT,
+                d2_knowledge_reuse_legacy TEXT,
+                d3_moat_test_xcsg TEXT,
+                d3_moat_test_legacy TEXT,
+                -- F: Value Creation (2 questions × 2 columns)
+                f1_feasibility_xcsg TEXT,
+                f1_feasibility_legacy TEXT,
+                f2_productization_xcsg TEXT,
+                f2_productization_legacy TEXT,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
@@ -117,6 +132,9 @@ def init_db() -> None:
     # Clean up v2 tables if they exist
     _drop_v2_tables()
 
+    # Migrate expert_responses from old 12-field schema to new 23-field schema
+    _migrate_expert_responses()
+
     seed_data()
 
 
@@ -133,12 +151,83 @@ def _drop_v2_tables() -> None:
             "legacy_scope_expansion", "legacy_senior_involvement", "legacy_ai_usage",
             "xcsg_senior_involvement", "xcsg_ai_usage", "machine_first_score",
         ]
-        # SQLite doesn't support DROP COLUMN before 3.35.0, so we check version
         try:
             for col in v2_cols:
                 conn.execute(f"ALTER TABLE projects DROP COLUMN {col}")
         except sqlite3.OperationalError:
-            pass  # column doesn't exist or SQLite too old — harmless
+            pass
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _migrate_expert_responses() -> None:
+    """Migrate expert_responses from old 12-field schema to new 23-field schema.
+
+    Preserves id and project_id so the project–response link stays valid.
+    Old response data is lost (columns renamed/removed); projects with null
+    new fields are reset to 'expert_pending' so experts can re-submit.
+    """
+    conn = get_connection()
+    try:
+        # Check if table exists at all
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='expert_responses'"
+        ).fetchone()
+        if not table:
+            return  # Fresh install — will be created by CREATE TABLE IF NOT EXISTS
+
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()]
+
+        # Already on new schema?
+        if "b1_starting_point_xcsg" in columns:
+            return  # Nothing to do
+
+        # Rebuild table: rename old, create new, copy ids, drop old
+        conn.execute("ALTER TABLE expert_responses RENAME TO _expert_responses_old")
+        conn.execute("""CREATE TABLE expert_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER UNIQUE NOT NULL,
+            b1_starting_point_xcsg TEXT,
+            b1_starting_point_legacy TEXT,
+            b2_research_sources_xcsg TEXT,
+            b2_research_sources_legacy TEXT,
+            b3_assembly_ratio_xcsg TEXT,
+            b3_assembly_ratio_legacy TEXT,
+            b4_hypothesis_first_xcsg TEXT,
+            b4_hypothesis_first_legacy TEXT,
+            c1_specialization TEXT,
+            c2_directness TEXT,
+            c3_judgment_pct TEXT,
+            c4_senior_hours REAL,
+            c5_junior_hours REAL,
+            d1_proprietary_data_xcsg TEXT,
+            d1_proprietary_data_legacy TEXT,
+            d2_knowledge_reuse_xcsg TEXT,
+            d2_knowledge_reuse_legacy TEXT,
+            d3_moat_test_xcsg TEXT,
+            d3_moat_test_legacy TEXT,
+            f1_feasibility_xcsg TEXT,
+            f1_feasibility_legacy TEXT,
+            f2_productization_xcsg TEXT,
+            f2_productization_legacy TEXT,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )""")
+        # Preserve id + project_id links; response data is now null
+        conn.execute(
+            "INSERT INTO expert_responses (id, project_id, submitted_at) "
+            "SELECT id, project_id, submitted_at FROM _expert_responses_old"
+        )
+        conn.execute("DROP TABLE _expert_responses_old")
+
+        # Reset projects with null responses back to expert_pending
+        conn.execute(
+            """UPDATE projects SET status = 'expert_pending', updated_at = CURRENT_TIMESTAMP
+               WHERE id IN (
+                   SELECT project_id FROM expert_responses WHERE b1_starting_point_xcsg IS NULL
+               )"""
+        )
         conn.commit()
     finally:
         conn.close()
@@ -499,25 +588,33 @@ def create_expert_response(project_id: int, data: dict) -> int:
     try:
         cur = conn.execute(
             """INSERT INTO expert_responses
-               (project_id, b1_starting_point, b2_research_sources, b3_assembly_ratio,
-                b4_hypothesis_first, c1_specialization, c2_directness, c3_judgment_pct,
-                d1_proprietary_data, d2_knowledge_reuse, d3_moat_test,
-                f1_feasibility, f2_productization)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (project_id,
+                b1_starting_point_xcsg, b1_starting_point_legacy,
+                b2_research_sources_xcsg, b2_research_sources_legacy,
+                b3_assembly_ratio_xcsg, b3_assembly_ratio_legacy,
+                b4_hypothesis_first_xcsg, b4_hypothesis_first_legacy,
+                c1_specialization, c2_directness, c3_judgment_pct,
+                c4_senior_hours, c5_junior_hours,
+                d1_proprietary_data_xcsg, d1_proprietary_data_legacy,
+                d2_knowledge_reuse_xcsg, d2_knowledge_reuse_legacy,
+                d3_moat_test_xcsg, d3_moat_test_legacy,
+                f1_feasibility_xcsg, f1_feasibility_legacy,
+                f2_productization_xcsg, f2_productization_legacy)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project_id,
-                data["b1_starting_point"],
-                data["b2_research_sources"],
-                data["b3_assembly_ratio"],
-                data["b4_hypothesis_first"],
-                data["c1_specialization"],
-                data["c2_directness"],
-                data["c3_judgment_pct"],
-                data["d1_proprietary_data"],
-                data["d2_knowledge_reuse"],
-                data["d3_moat_test"],
-                data["f1_feasibility"],
-                data["f2_productization"],
+                data.get("b1_starting_point_xcsg"), data.get("b1_starting_point_legacy"),
+                data.get("b2_research_sources_xcsg"), data.get("b2_research_sources_legacy"),
+                data.get("b3_assembly_ratio_xcsg"), data.get("b3_assembly_ratio_legacy"),
+                data.get("b4_hypothesis_first_xcsg"), data.get("b4_hypothesis_first_legacy"),
+                data.get("c1_specialization"), data.get("c2_directness"), data.get("c3_judgment_pct"),
+                data.get("c4_senior_hours"), data.get("c5_junior_hours"),
+                data.get("d1_proprietary_data_xcsg"), data.get("d1_proprietary_data_legacy"),
+                data.get("d2_knowledge_reuse_xcsg"), data.get("d2_knowledge_reuse_legacy"),
+                data.get("d3_moat_test_xcsg"), data.get("d3_moat_test_legacy"),
+                data.get("f1_feasibility_xcsg"), data.get("f1_feasibility_legacy"),
+                data.get("f2_productization_xcsg"), data.get("f2_productization_legacy"),
             ),
         )
         # Mark project as complete

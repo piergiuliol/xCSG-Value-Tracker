@@ -1,8 +1,9 @@
 """
-metrics.py — All metric computations for xCSG Value Tracker v2
+metrics.py — All metric computations for xCSG Value Tracker
+Realigned to Phase 1 spec (April 2026).
 
-IMPORTANT: String values in scoring maps MUST match exactly the HTML option values
-and the JavaScript chart logic. Em dashes (—) are used in D3 moat test options.
+Scoring: all categorical fields use a 1–5 ordinal scale.
+The option value maps to its position (1 = lowest, 5 = highest).
 """
 from typing import List, Optional
 
@@ -32,70 +33,108 @@ REVISION_NUMBERS = {
 }
 
 
-# ── Tier 2 scoring maps ───────────────────────────────────────────────────────
-# NOTE: D3 uses em dashes (—) — must match HTML <option> values exactly.
+# ── Phase 1 scoring maps (1–5 ordinal) ───────────────────────────────────────
+# Each option maps to 1–5 based on position in the progression.
+# These MUST match the HTML <option> values exactly.
 
+# B — Machine-First Operations
 B1_SCORES = {
-    "From AI draft": 1.0,
-    "Mixed (AI structure, manual content)": 0.5,
-    "From blank page": 0.0,
+    "Raw request": 1,
+    "Light brief": 2,
+    "Structured brief": 3,
+    "Hypothesis": 4,
+    "Full hypothesis deck": 5,
 }
 
 B2_SCORES = {
-    "1-3": 0.25,
-    "4-7": 0.5,
-    "8-12": 0.75,
-    "13+": 1.0,
+    "General web": 1,
+    "Industry databases": 2,
+    "Proprietary database": 3,
+    "Internal knowledge base": 4,
+    "Synthesized firm knowledge": 5,
 }
 
 B3_SCORES = {
-    ">75% AI": 1.0,
-    "50-75%": 0.75,
-    "25-50%": 0.5,
-    "<25%": 0.25,
+    ">80% manual": 1,
+    "60-80%": 2,
+    "40-60%": 3,
+    "20-40%": 4,
+    "<20% manual": 5,
 }
 
 B4_SCORES = {
-    "Hypothesis-first (tested a specific thesis)": 1.0,
-    "Hybrid (hypothesis emerged during work)": 0.5,
-    "Discovery-first (open-ended research)": 0.0,
+    "Exploratory": 1,
+    "Mostly exploratory": 2,
+    "Balanced": 3,
+    "Mostly hypothesis-led": 4,
+    "Fully hypothesis-led": 5,
 }
 
+# C — Senior-Led Model (xcsg only)
 C1_SCORES = {
-    "Deep specialist in this TA/methodology": 1.0,
-    "Adjacent expertise": 0.5,
-    "Generalist": 0.0,
+    "Generalist": 1,
+    "Mixed": 2,
+    "Specialist": 3,
+    "Deep specialist": 4,
+    "World-class expert": 5,
 }
 
 C2_SCORES = {
-    "Expert authored (with AI assist)": 1.0,
-    "Expert co-authored (shared with team)": 0.5,
-    "Expert reviewed only": 0.0,
+    "Delegated": 1,
+    "Partially delegated": 2,
+    "Shared": 3,
+    "Hands-on": 4,
+    "Personally leading": 5,
 }
 
 C3_SCORES = {
-    ">75% judgment": 1.0,
-    "50-75%": 0.75,
-    "25-50%": 0.5,
-    "<25%": 0.25,
+    "<20%": 1,
+    "20-40%": 2,
+    "40-60%": 3,
+    "60-80%": 4,
+    ">80%": 5,
 }
 
+# D — Proprietary Knowledge
 D1_SCORES = {
-    "Yes": 1.0,
-    "No": 0.0,
+    "None": 1,
+    "Public data": 2,
+    "Some proprietary": 3,
+    "Mostly proprietary": 4,
+    "Fully proprietary": 5,
 }
 
 D2_SCORES = {
-    "Yes, directly reused and extended": 1.0,
-    "Yes, provided useful starting context": 0.5,
-    "No, built from scratch": 0.0,
+    "One-time": 1,
+    "Some reuse": 2,
+    "Moderate": 3,
+    "High": 4,
+    "Maximum": 5,
 }
 
-# D3 moat test — uses em dashes (—)
 D3_SCORES = {
-    "No \u2014 proprietary inputs decisive": 1.0,
-    "Partially \u2014 they would miss key insights": 0.5,
-    "Yes \u2014 all inputs publicly available": 0.0,
+    "Easily replicable": 1,
+    "Somewhat": 2,
+    "Moderately unique": 3,
+    "Highly unique": 4,
+    "Impossible to replicate": 5,
+}
+
+# F — Value Creation
+F1_SCORES = {
+    "Not assessed": 1,
+    "Basic": 2,
+    "Standard": 3,
+    "Comprehensive": 4,
+    "Exceeds requirements": 5,
+}
+
+F2_SCORES = {
+    "None": 1,
+    "Identified": 2,
+    "Designed": 3,
+    "Implemented": 4,
+    "Scaled": 5,
 }
 
 
@@ -116,7 +155,6 @@ def compute_effort_ratio(legacy_pd: float, xcsg_pd: float) -> float:
 def compute_quality_ratio(legacy_revisions: str, xcsg_revisions: str) -> float:
     legacy_r = REVISION_NUMBERS.get(legacy_revisions, 1.0)
     xcsg_r = REVISION_NUMBERS.get(xcsg_revisions, 0.5)
-    # If xCSG revisions = 0, use 0.5 as denominator
     denominator = xcsg_r if xcsg_r > 0 else 0.5
     return round(legacy_r / denominator, 2)
 
@@ -125,70 +163,41 @@ def compute_value_multiplier(effort_ratio: float, quality_ratio: float) -> float
     return round(effort_ratio * quality_ratio, 2)
 
 
-def compute_machine_first_v2(data: dict) -> Optional[float]:
-    """Machine-first score v2: composite from completion sliders (0-100)."""
-    si = data.get("xcsg_senior_involvement")
-    ai = data.get("xcsg_ai_usage")
-    ri = data.get("xcsg_revision_intensity")
-    se = data.get("xcsg_scope_expansion_score")
-    if any(v is None for v in (si, ai, ri, se)):
+def _avg_score(data: dict, fields: list, score_maps: list) -> Optional[float]:
+    """Average of mapped scores for a set of fields. Returns None if no values found."""
+    scores = []
+    for field, score_map in zip(fields, score_maps):
+        val = data.get(field)
+        if val and val in score_map:
+            scores.append(score_map[val])
+    if not scores:
         return None
-    score = (
-        (si / 7) * 25 +
-        (ai / 7) * 25 +
-        ((8 - ri) / 7) * 25 +
-        ((8 - se) / 7) * 25
+    return round(sum(scores) / len(scores), 2)
+
+
+def compute_machine_first_score(data: dict) -> Optional[float]:
+    """Machine-First = avg(B1_xcsg, B2_xcsg, B3_xcsg, B4_xcsg) on 1–5 scale."""
+    return _avg_score(data,
+        ["b1_starting_point_xcsg", "b2_research_sources_xcsg",
+         "b3_assembly_ratio_xcsg", "b4_hypothesis_first_xcsg"],
+        [B1_SCORES, B2_SCORES, B3_SCORES, B4_SCORES],
     )
-    return round(score, 1)
 
 
-def compute_machine_first_score(er: dict) -> Optional[float]:
-    """Machine-First = average of B1, B2, B3, B4 (4 components per Palladio fix)."""
-    scores = []
-    for field, score_map in [
-        ("b1_starting_point", B1_SCORES),
-        ("b2_research_sources", B2_SCORES),
-        ("b3_assembly_ratio", B3_SCORES),
-        ("b4_hypothesis_first", B4_SCORES),
-    ]:
-        val = er.get(field)
-        if val and val in score_map:
-            scores.append(score_map[val])
-    if not scores:
-        return None
-    return round(sum(scores) / len(scores), 4)
+def compute_senior_led_score(data: dict) -> Optional[float]:
+    """Senior-Led = avg(C1, C2, C3) on 1–5 scale."""
+    return _avg_score(data,
+        ["c1_specialization", "c2_directness", "c3_judgment_pct"],
+        [C1_SCORES, C2_SCORES, C3_SCORES],
+    )
 
 
-def compute_senior_led_score(er: dict) -> Optional[float]:
-    """Senior-Led = average of C1, C2, C3."""
-    scores = []
-    for field, score_map in [
-        ("c1_specialization", C1_SCORES),
-        ("c2_directness", C2_SCORES),
-        ("c3_judgment_pct", C3_SCORES),
-    ]:
-        val = er.get(field)
-        if val and val in score_map:
-            scores.append(score_map[val])
-    if not scores:
-        return None
-    return round(sum(scores) / len(scores), 4)
-
-
-def compute_proprietary_knowledge_score(er: dict) -> Optional[float]:
-    """Proprietary Knowledge = average of D1, D2, D3."""
-    scores = []
-    for field, score_map in [
-        ("d1_proprietary_data", D1_SCORES),
-        ("d2_knowledge_reuse", D2_SCORES),
-        ("d3_moat_test", D3_SCORES),
-    ]:
-        val = er.get(field)
-        if val and val in score_map:
-            scores.append(score_map[val])
-    if not scores:
-        return None
-    return round(sum(scores) / len(scores), 4)
+def compute_proprietary_knowledge_score(data: dict) -> Optional[float]:
+    """Proprietary Knowledge = avg(D1_xcsg, D2_xcsg, D3_xcsg) on 1–5 scale."""
+    return _avg_score(data,
+        ["d1_proprietary_data_xcsg", "d2_knowledge_reuse_xcsg", "d3_moat_test_xcsg"],
+        [D1_SCORES, D2_SCORES, D3_SCORES],
+    )
 
 
 def compute_project_metrics(d: dict) -> dict:
@@ -231,7 +240,6 @@ def compute_project_metrics(d: dict) -> dict:
 
 
 def determine_checkpoint(complete_count: int) -> int:
-    """Determine current checkpoint based on complete project count."""
     if complete_count >= 20:
         return 4
     elif complete_count >= 8:
@@ -243,15 +251,14 @@ def determine_checkpoint(complete_count: int) -> int:
 
 
 def projects_to_next_checkpoint(complete_count: int) -> int:
-    """How many more complete projects to reach next checkpoint."""
     if complete_count >= 20:
-        return 0  # Already at CP4
+        return 0
     elif complete_count >= 8:
-        return 20 - complete_count  # To CP4
+        return 20 - complete_count
     elif complete_count >= 3:
-        return 8 - complete_count   # To CP3
+        return 8 - complete_count
     else:
-        return 3 - complete_count   # To CP2
+        return 3 - complete_count
 
 
 def compute_summary(complete_projects: list, total_projects: list) -> dict:
@@ -286,13 +293,13 @@ def compute_summary(complete_projects: list, total_projects: list) -> dict:
     sl_scores = [m["senior_led_score"] for m in metrics_list if m["senior_led_score"] is not None]
     pk_scores = [m["proprietary_knowledge_score"] for m in metrics_list if m["proprietary_knowledge_score"] is not None]
 
-    mf_avg = round(sum(mf_scores) / len(mf_scores), 4) if mf_scores else 0.0
-    sl_avg = round(sum(sl_scores) / len(sl_scores), 4) if sl_scores else 0.0
-    pk_avg = round(sum(pk_scores) / len(pk_scores), 4) if pk_scores else 0.0
+    mf_avg = round(sum(mf_scores) / len(mf_scores), 2) if mf_scores else 0.0
+    sl_avg = round(sum(sl_scores) / len(sl_scores), 2) if sl_scores else 0.0
+    pk_avg = round(sum(pk_scores) / len(pk_scores), 2) if pk_scores else 0.0
 
     # Flywheel health = average of the three leg scores (only those computed)
     leg_avgs = [v for v in [mf_avg, sl_avg, pk_avg] if v > 0]
-    flywheel = round(sum(leg_avgs) / len(leg_avgs), 4) if leg_avgs else 0.0
+    flywheel = round(sum(leg_avgs) / len(leg_avgs), 2) if leg_avgs else 0.0
 
     return {
         "total_projects": total,
@@ -307,56 +314,16 @@ def compute_summary(complete_projects: list, total_projects: list) -> dict:
         "proprietary_knowledge_avg": pk_avg,
         "checkpoint": determine_checkpoint(complete),
         "projects_to_next_checkpoint": projects_to_next_checkpoint(complete),
-        # v2 metrics
-        "ai_adoption_rate": _compute_ai_adoption_rate(complete_projects),
-        "senior_leverage": _compute_senior_leverage(complete_projects),
-        "scope_predictability": _compute_scope_predictability(complete_projects),
     }
 
 
-def _compute_ai_adoption_rate(complete_projects: list) -> float:
-    """% of projects with ai_usage >= 3."""
-    v2_projects = [p for p in complete_projects if p.get("xcsg_ai_usage") is not None]
-    if not v2_projects:
-        return 0.0
-    adopted = sum(1 for p in v2_projects if p["xcsg_ai_usage"] >= 3)
-    return round(adopted / len(v2_projects) * 100, 1)
-
-
-def _compute_senior_leverage(complete_projects: list) -> Optional[float]:
-    """avg senior_involvement xCSG vs legacy."""
-    projects = [p for p in complete_projects
-                if p.get("xcsg_senior_involvement") is not None and p.get("legacy_senior_involvement") is not None]
-    if not projects:
-        return None
-    avg_xcsg = sum(p["xcsg_senior_involvement"] for p in projects) / len(projects)
-    avg_legacy = sum(p["legacy_senior_involvement"] for p in projects) / len(projects)
-    if avg_legacy == 0:
-        return None
-    return round(avg_xcsg / avg_legacy, 2)
-
-
-def _compute_scope_predictability(complete_projects: list) -> Optional[float]:
-    """avg scope_expansion xCSG vs legacy (lower is better, so ratio > 1 means xCSG is more predictable)."""
-    projects = [p for p in complete_projects
-                if p.get("xcsg_scope_expansion_score") is not None and p.get("legacy_scope_expansion") is not None]
-    if not projects:
-        return None
-    avg_xcsg = sum(p["xcsg_scope_expansion_score"] for p in projects) / len(projects)
-    avg_legacy = sum(p["legacy_scope_expansion"] for p in projects) / len(projects)
-    if avg_legacy == 0:
-        return None
-    return round(avg_xcsg / avg_legacy, 2)
-
-
 def compute_trend_data(complete_projects: list) -> list:
-    """Per-project metrics in chronological order for trend charts."""
     return [compute_project_metrics(d) for d in complete_projects]
 
 
 def compute_scaling_gates(complete_projects: list, all_projects: list) -> list:
     """Evaluate all 6 scaling gates."""
-    # Gate 1: Multi-engagement — ≥2 categories
+    # Gate 1: Multi-engagement
     categories = set(d.get("category_name", "") for d in complete_projects)
     gate1_pass = len(categories) >= 2
     gate1_detail = f"{len(categories)} categor{'ies' if len(categories) != 1 else 'y'} completed"
@@ -371,25 +338,22 @@ def compute_scaling_gates(complete_projects: list, all_projects: list) -> list:
         gate2_pass = False
         gate2_detail = "No complete projects yet"
 
-    # Gate 3: Client-invisible quality — ≥1 project with 0 revision rounds
+    # Gate 3: Client-invisible quality
     zero_revision = sum(1 for d in complete_projects if d["xcsg_revision_rounds"] == "0")
     gate3_pass = zero_revision >= 1
     gate3_detail = f"{zero_revision} project{'s' if zero_revision != 1 else ''} with 0 revisions"
 
-    # Gate 4: Transferability — placeholder (requires non-pioneer data)
+    # Gate 4: Transferability (placeholder)
     gate4_pass = False
     gate4_detail = "Requires non-pioneer data \u2014 deferred to CP3"
 
-    # Gate 5: Flywheel validation — placeholder
+    # Gate 5: Flywheel validation (placeholder)
     gate5_pass = False
     gate5_detail = "Requires registry-integrated AI delivery data"
 
     # Gate 6: Compounding — D2 reuse rate ≥40%
-    d2_values = [d.get("d2_knowledge_reuse", "") for d in complete_projects]
-    reused = sum(1 for v in d2_values if v in (
-        "Yes, directly reused and extended",
-        "Yes, provided useful starting context",
-    ))
+    d2_values = [d.get("d2_knowledge_reuse_xcsg", "") for d in complete_projects]
+    reused = sum(1 for v in d2_values if v in ("High", "Maximum"))
     reuse_rate = (reused / len(d2_values) * 100) if d2_values else 0
     gate6_pass = reuse_rate >= 40
     gate6_detail = f"D2 reuse rate: {reuse_rate:.0f}% (threshold: \u226540%)"
