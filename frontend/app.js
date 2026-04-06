@@ -101,6 +101,24 @@ const SCOPE_OPTIONS = [
   'Yes, expanded scope', 'Yes, new engagement', 'No', 'Not yet delivered'
 ];
 
+// V2 — Sectors, sub-categories, geographies
+const SECTORS = {
+  'Pharma': ['Pre-revenue biotech', 'Commercial biotech', 'Specialty pharma', 'Big pharma', 'Generic / Biosimilar'],
+  'Pharma Services': ['CRO', 'CDMO'],
+  'Medtech': ['Diagnostics', 'Digital health / Health IT', 'Devices', 'Digital therapeutics'],
+  'Financial Sponsor': ['VC', 'Small cap PE', 'Mid cap PE', 'Large cap PE', 'Hedge fund', 'Sovereign wealth / Family office'],
+};
+
+const GEOGRAPHIES = {
+  'North America': ['US', 'Canada', 'Mexico'],
+  'Western Europe': ['UK', 'Ireland', 'Germany', 'Austria', 'Switzerland', 'France', 'Italy', 'Spain', 'Portugal', 'Greece', 'Nordics', 'Benelux'],
+  'Emerging Europe': ['Poland', 'Czech Republic', 'Romania', 'Hungary', 'Turkey', 'Russia', 'Rest of CEE'],
+  'Asia Pacific': ['Japan', 'South Korea', 'China', 'Hong Kong', 'Taiwan', 'Australia', 'New Zealand', 'Singapore', 'India'],
+  'Latin America': ['Brazil', 'Argentina', 'Colombia', 'Chile', 'Rest of LatAm'],
+  'Middle East & Africa': ['UAE', 'Saudi Arabia', 'Israel', 'South Africa', 'Nigeria', 'Rest of MEA'],
+};
+const GEO_KEYS = Object.keys(GEOGRAPHIES);
+
 // Tier 2 — Expert
 const B1_OPTIONS = ['From AI draft', 'Mixed (AI structure, manual content)', 'From blank page'];
 const B2_OPTIONS = ['1-3', '4-7', '8-12', '13+'];
@@ -216,7 +234,7 @@ async function route() {
   // Title
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
-    projects: 'Projects', settings: 'Settings', activity: 'Activity Log'
+    projects: 'Projects', settings: 'Settings', norms: 'Norms v2', activity: 'Activity Log'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
 
@@ -230,6 +248,7 @@ async function route() {
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
   else if (hash === '#settings') renderSettings();
+  else if (hash === '#norms') renderNormsV2Page();
   else if (hash === '#activity') renderActivity();
   else renderPortfolio();
 }
@@ -296,11 +315,17 @@ async function renderPortfolio() {
     const vmSubtitle = lowConfCount > 0
       ? `<div class="kpi-sub">${lowConfCount} of ${metricsProjects.length} using category defaults</div>`
       : '';
-    html += `<div class="kpi-grid">
-      <div class="kpi-card accent-navy"><div class="kpi-value">${total}</div><div class="kpi-label">Total Projects</div><div class="kpi-sub">${complete} complete \u00b7 ${total - complete} pending</div></div>
-      <div class="kpi-card accent-blue"><div class="kpi-value">${round2(vm)}x</div><div class="kpi-label">Avg Value Multiplier</div>${vmSubtitle}</div>
-      <div class="kpi-card accent-orange"><div class="kpi-value">${round2(er)}x</div><div class="kpi-label">Avg Effort Ratio</div></div>
-      <div class="kpi-card accent-green"><div class="kpi-value">${Math.round(fh * 100)}%</div><div class="kpi-label">Flywheel Health</div></div>
+    const aiRate = summary.ai_adoption_rate != null ? Math.round(summary.ai_adoption_rate * 100) : '—';
+    const srLev = summary.senior_leverage || '—';
+    const scopePred = summary.scope_predictability || '—';
+    html += `<div class="kpi-grid" style="grid-template-columns:repeat(7,1fr)">
+      <div class="kpi-card"><div class="kpi-value">${total}</div><div class="kpi-label">Total Projects</div><div class="kpi-sub">${complete} complete \u00b7 ${total - complete} pending</div></div>
+      <div class="kpi-card"><div class="kpi-value">${round2(vm)}x</div><div class="kpi-label">Avg Value Multiplier</div>${vmSubtitle}</div>
+      <div class="kpi-card"><div class="kpi-value">${round2(er)}x</div><div class="kpi-label">Avg Effort Ratio</div></div>
+      <div class="kpi-card"><div class="kpi-value">${Math.round(fh * 100)}%</div><div class="kpi-label">Flywheel Health</div></div>
+      <div class="kpi-card"><div class="kpi-value">${typeof aiRate === 'number' ? aiRate + '%' : aiRate}</div><div class="kpi-label">AI Adoption Rate</div></div>
+      <div class="kpi-card"><div class="kpi-value">${typeof srLev === 'number' ? round2(srLev) + 'x' : srLev}</div><div class="kpi-label">Senior Leverage</div></div>
+      <div class="kpi-card"><div class="kpi-value">${typeof scopePred === 'number' ? round2(scopePred) : scopePred}</div><div class="kpi-label">Scope Predictability</div><div class="kpi-sub">lower = better</div></div>
     </div>`;
 
     // Filters bar
@@ -314,6 +339,7 @@ async function renderPortfolio() {
       <select id="portfolioClientFilter" class="filter-select"><option value="">All Clients</option>${clients.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
       <select id="portfolioPioneerFilter" class="filter-select"><option value="">All Pioneers</option>${pioneers.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
       <select id="portfolioStatusFilter" class="filter-select"><option value="">All Status</option><option value="complete">Complete</option><option value="expert_pending">Expert Pending</option></select>
+      <select id="portfolioComplexityFilter" class="filter-select"><option value="">All Complexity</option>${[1,2,3,4,5,6,7].map(i=>`<option value="${i}">${i}</option>`).join('')}</select>
       <button class="filter-reset" id="portfolioFilterReset" style="display:none">Clear filters</button>
     </div>`;
 
@@ -332,7 +358,7 @@ async function renderPortfolio() {
         const statusBadge = statusVal === 'complete'
           ? '<span class="badge badge-green">Complete</span>'
           : '<span class="badge badge-orange">Expert Pending</span>';
-        html += `<tr data-cat="${esc(d.category_name)}" data-client="${esc(d.client_name || '')}" data-pioneer="${esc(d.pioneer_name)}" data-status="${statusVal}">
+        html += `<tr data-cat="${esc(d.category_name)}" data-client="${esc(d.client_name || '')}" data-pioneer="${esc(d.pioneer_name)}" data-status="${statusVal}" data-complexity="${d.complexity || ''}">
           <td>${esc(d.project_name)}${confFlag}</td><td>${esc(d.category_name)}</td>
           <td>${esc(d.client_name || '\u2014')}</td><td>${esc(d.pioneer_name)}</td>
           <td>${statusBadge}</td>
@@ -415,13 +441,13 @@ async function renderPortfolio() {
       }
     }
 
-    ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter'].forEach(id => {
+    ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter', 'portfolioComplexityFilter'].forEach(id => {
       document.getElementById(id)?.addEventListener('change', applyPortfolioFilters);
     });
 
     // Clear filters
     document.getElementById('portfolioFilterReset')?.addEventListener('click', () => {
-      ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter'].forEach(id => {
+      ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter', 'portfolioComplexityFilter'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
       });
@@ -511,17 +537,22 @@ function renderTrendChart(data) {
 function renderNewProject(prefill = null) {
   const mc = document.getElementById('mainContent');
   const isEdit = !!prefill;
-
   const todayStr = new Date().toISOString().slice(0, 10);
-
-  // Determine legacy field styling for edit mode
   const legacyClass = isEdit ? '' : 'legacy-auto';
   const legacyOverridden = isEdit && prefill?.legacy_overridden;
-
-  // Get category name for source labels
   const catName = prefill ? (state.categories.find(c => c.id == prefill.category_id)?.name || '') : '';
 
-  // Legacy source label text
+  // Pre-fill v2 fields
+  const pfComplexity = prefill?.complexity || '';
+  const pfSector = prefill?.client_sector || '';
+  const pfSubCat = prefill?.client_sub_category || '';
+  let pfGeos = [];
+  try { pfGeos = prefill?.geographies ? JSON.parse(prefill.geographies) : []; } catch {}
+  let pfCountries = [];
+  try { pfCountries = prefill?.countries_served ? JSON.parse(prefill.countries_served) : []; } catch {}
+  const pfRevisionIntensity = prefill?.xcsg_revision_intensity || '';
+  const pfScopeExpansion = prefill?.xcsg_scope_expansion || '';
+
   function legacySourceText(field) {
     if (isEdit) {
       return legacyOverridden ? '<span class="legacy-source overridden">(overridden)</span>' : '<span class="legacy-source">(from category defaults)</span>';
@@ -529,19 +560,36 @@ function renderNewProject(prefill = null) {
     return catName ? `<span class="legacy-source" data-legacy-source>(from ${esc(catName)} defaults)</span>` : '<span class="legacy-source" data-legacy-source>(from defaults)</span>';
   }
 
-  // Legacy banner
   const legacyBannerHTML = isEdit ? '' : `
     <div class="legacy-banner" id="legacyBanner">
       <svg class="legacy-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
-        <circle cx="12" cy="12" r="10"/>
-        <line x1="12" y1="16" x2="12" y2="12"/>
-        <line x1="12" y1="8" x2="12.01" y2="8"/>
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
       </svg>
-      <div>
-        <strong>Category defaults loaded.</strong>
-        Adjust these values to match this specific project's legacy context. Overriding improves metric accuracy.
-      </div>
+      <div><strong>Category defaults loaded.</strong> Adjust these values to match this specific project's legacy context. Overriding improves metric accuracy.</div>
     </div>`;
+
+  // Build geo checkboxes HTML
+  function geoCheckboxesHTML() {
+    let html = '<div class="geo-section" id="geoSection">';
+    html += '<div class="geo-section-title">Geographies</div>';
+    for (const geo of GEO_KEYS) {
+      const checked = pfGeos.includes(geo) ? 'checked' : '';
+      html += `<div class="geo-section" style="margin-bottom:8px">`;
+      html += `<label style="font-size:13px;font-weight:500;color:var(--gray-700);cursor:pointer;display:flex;align-items:center;gap:6px"><input type="checkbox" class="geo-region-check" value="${esc(geo)}" ${checked} style="accent-color:var(--navy)">${esc(geo)}</label>`;
+      html += `<div class="geo-grid" data-region="${esc(geo)}">`;
+      for (const country of GEOGRAPHIES[geo]) {
+        const cChecked = pfCountries.includes(country) ? 'checked' : '';
+        html += `<label><input type="checkbox" class="country-check" value="${esc(country)}" ${cChecked}>${esc(country)}</label>`;
+      }
+      html += '</div></div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // Sub-category options
+  const subCatOptions = SECTORS[pfSector] || [];
+  const subCatHTML = '<option value="">— Select Sub-Category —</option>' + subCatOptions.map(v => `<option value="${esc(v)}"${v === pfSubCat ? ' selected' : ''}>${esc(v)}</option>`).join('');
 
   mc.innerHTML = `
     <div class="card">
@@ -570,20 +618,44 @@ function renderNewProject(prefill = null) {
           </div>
         </fieldset>
 
+        <fieldset><legend>Project Context</legend>
+          <div class="slider-group">
+            <label>Complexity <span class="slider-value-badge" id="complexityBadge">${pfComplexity || '—'}</span></label>
+            <div class="slider-labels"><span>1 \u2014 Straightforward</span><span>7 \u2014 Highly complex</span></div>
+            <input type="range" class="xcsg-slider" id="fComplexity" min="1" max="7" step="1" value="${pfComplexity || 4}">
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Client Sector <span class="required">*</span></label>
+              <select id="fSector" required><option value="">— Select Sector —</option>${Object.keys(SECTORS).map(s => `<option value="${esc(s)}"${s === pfSector ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select>
+            </div>
+            <div class="form-group"><label>Client Sub-Category <span class="required">*</span></label>
+              <select id="fSubCategory" required>${subCatHTML}</select>
+            </div>
+          </div>
+          ${geoCheckboxesHTML()}
+        </fieldset>
+
         <fieldset><legend>xCSG Performance</legend>
           <div class="form-row">
             <div class="form-group"><label>Calendar Days <span class="required">*</span></label><select id="fXDays" required>${optionsHTML(CALENDAR_DAYS, prefill?.xcsg_calendar_days)}</select></div>
             <div class="form-group"><label>Team Size <span class="required">*</span></label><select id="fXTeam" required>${optionsHTML(TEAM_SIZES, prefill?.xcsg_team_size)}</select></div>
           </div>
-          <div class="form-row">
-            <div class="form-group"><label>Revision Rounds <span class="required">*</span></label><select id="fXRevisions" required>${optionsHTML(REVISION_ROUNDS, prefill?.xcsg_revision_rounds)}</select></div>
-            <div class="form-group"><label>Scope Expansion</label><select id="fScope">${optionsHTML(SCOPE_OPTIONS, prefill?.xcsg_scope_expansion)}</select></div>
+          <div class="slider-group">
+            <label>Revision Intensity <span class="slider-value-badge" id="revisionIntensityBadge">${pfRevisionIntensity || '—'}</span></label>
+            <div class="slider-labels"><span>Minimal</span><span>Exhaustive</span></div>
+            <input type="range" class="xcsg-slider" id="fRevisionIntensity" min="1" max="7" step="1" value="${pfRevisionIntensity || 3}">
+          </div>
+          <div class="slider-group">
+            <label>Scope Expansion <span class="slider-value-badge" id="scopeExpansionBadge">${pfScopeExpansion || '—'}</span></label>
+            <div class="slider-labels"><span>Stayed on scope</span><span>Blew past scope</span></div>
+            <input type="range" class="xcsg-slider" id="fScopeExpansion" min="1" max="7" step="1" value="${pfScopeExpansion || 3}">
           </div>
         </fieldset>
 
         <fieldset><legend>Legacy Baseline</legend>
+          <div id="legacyNormInfo"></div>
           ${legacyBannerHTML}
-          <div id="legacyNoNorms" class="legacy-no-norms" style="display:none">No defaults available for this category. Enter values manually.</div>
+          <div id="legacyNoNorms" class="legacy-no-norms" style="display:none">No defaults available. Enter values manually or set project context above.</div>
           <div class="form-row">
             <div class="form-group"><label>Calendar Days ${legacySourceText('days')}</label><select id="fLDays" class="${legacyClass}">${optionsHTML(CALENDAR_DAYS, prefill?.legacy_calendar_days)}</select></div>
             <div class="form-group"><label>Team Size ${legacySourceText('team')}</label><select id="fLTeam" class="${legacyClass}">${optionsHTML(TEAM_SIZES, prefill?.legacy_team_size)}</select></div>
@@ -601,8 +673,83 @@ function renderNewProject(prefill = null) {
       </form>
     </div>`;
 
-  // Track whether legacy values have been manually changed
+  // Slider live value updates
+  const complexitySlider = document.getElementById('fComplexity');
+  if (complexitySlider) {
+    complexitySlider.addEventListener('input', () => {
+      document.getElementById('complexityBadge').textContent = complexitySlider.value;
+      tryAutoLookup();
+    });
+  }
+  ['fRevisionIntensity', 'fScopeExpansion'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => {
+      const badgeId = id === 'fRevisionIntensity' ? 'revisionIntensityBadge' : 'scopeExpansionBadge';
+      document.getElementById(badgeId).textContent = el.value;
+    });
+  });
+
+  // Sector → Sub-category cascade
+  document.getElementById('fSector')?.addEventListener('change', function () {
+ const subs = SECTORS[this.value] || [];
+    document.getElementById('fSubCategory').innerHTML = '<option value="">— Select Sub-Category —</option>' + subs.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    tryAutoLookup();
+  });
+  document.getElementById('fSubCategory')?.addEventListener('change', () => tryAutoLookup());
+  document.getElementById('fCategory')?.addEventListener('change', () => tryAutoLookup());
+
+  // Geo region check → toggle countries visibility
+  document.querySelectorAll('.geo-region-check').forEach(cb => {
+    cb.addEventListener('change', function () {
+      const grid = document.querySelector(`.geo-grid[data-region="${this.value}"]`);
+      if (grid) grid.style.display = this.checked ? '' : 'none';
+      tryAutoLookup();
+    });
+    // Initialize visibility
+    const grid = document.querySelector(`.geo-grid[data-region="${cb.value}"]`);
+    if (grid) grid.style.display = cb.checked ? '' : 'none';
+  });
+
+  // V2 Norm lookup
   let legacyManuallyChanged = false;
+  async function tryAutoLookup() {
+    if (isEdit) return;
+    const catId = document.getElementById('fCategory')?.value;
+    const complexity = document.getElementById('fComplexity')?.value;
+    const subCat = document.getElementById('fSubCategory')?.value;
+    const geoRegions = [];
+    document.querySelectorAll('.geo-region-check:checked').forEach(cb => geoRegions.push(cb.value));
+
+    if (!catId || !complexity || !subCat || geoRegions.length === 0) return;
+
+    try {
+      const params = new URLSearchParams({ category_id: catId, complexity, client_sub_category: subCat, geographies: JSON.stringify(geoRegions) });
+      const norm = await apiCall('GET', `/norms/v2/lookup?${params}`);
+      if (norm && norm.sample_size > 0) {
+        const n = norm.sample_size;
+        let confClass, confText;
+        if (n >= 20) { confClass = 'confidence-high'; confText = `Based on ${n} projects`; }
+        else if (n >= 5) { confClass = 'confidence-med'; confText = `Based on ${n} projects \u2014 limited data`; }
+        else { confClass = 'confidence-low'; confText = 'Limited data \u2014 generic baseline'; }
+        const infoEl = document.getElementById('legacyNormInfo');
+        if (infoEl) infoEl.innerHTML = `<div style="margin-bottom:16px"><span class="confidence-badge ${confClass}">${confText}</span></div>`;
+
+        const banner = document.getElementById('legacyBanner');
+        const noNorms = document.getElementById('legacyNoNorms');
+        if (banner) banner.style.display = '';
+        if (noNorms) noNorms.style.display = 'none';
+
+        ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) { el.classList.remove('legacy-overridden'); el.classList.add('legacy-auto'); }
+        });
+        if (norm.avg_calendar_days) document.getElementById('fLDays').value = norm.avg_calendar_days;
+        if (norm.avg_team_size) document.getElementById('fLTeam').value = norm.avg_team_size;
+        if (norm.avg_revision_intensity) document.getElementById('fLRevisions').value = norm.avg_revision_intensity;
+        legacyManuallyChanged = false;
+      }
+    } catch {}
+  }
 
   // Legacy field override tracking (new project only)
   if (!isEdit) {
@@ -610,75 +757,49 @@ function renderNewProject(prefill = null) {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener('change', function () {
-          this.classList.remove('legacy-auto');
-          this.classList.add('legacy-overridden');
+          this.classList.remove('legacy-auto'); this.classList.add('legacy-overridden');
           legacyManuallyChanged = true;
-          // Update the source label
           const sourceSpan = this.closest('.form-group')?.querySelector('.legacy-source');
-          if (sourceSpan) {
-            sourceSpan.textContent = '(overridden)';
-            sourceSpan.classList.add('overridden');
-          }
+          if (sourceSpan) { sourceSpan.textContent = '(overridden)'; sourceSpan.classList.add('overridden'); }
         });
       }
     });
   }
 
-  // Auto-populate legacy norms on category change
+  // Fallback: old category-based norm load (when no v2 lookup params)
   document.getElementById('fCategory').addEventListener('change', async function () {
     if (isEdit) return;
     const catId = this.value;
     if (!catId) return;
-
-    const selectedCat = state.categories.find(c => c.id == catId);
-    const catDisplayName = selectedCat ? selectedCat.name : 'category';
-
-    try {
-      const norm = await apiCall('GET', `/norms/${catId}`);
-      if (norm) {
-        // Show banner, hide no-norms message
-        const banner = document.getElementById('legacyBanner');
-        const noNorms = document.getElementById('legacyNoNorms');
-        if (banner) banner.style.display = '';
-        if (noNorms) noNorms.style.display = 'none';
-
-        // Set values and reset styling
-        ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
-          const el = document.getElementById(id);
-          if (el) {
-            el.classList.remove('legacy-overridden');
-            el.classList.add('legacy-auto');
-          }
-        });
-        document.getElementById('fLDays').value = norm.typical_calendar_days || '';
-        document.getElementById('fLTeam').value = norm.typical_team_size || '';
-        document.getElementById('fLRevisions').value = norm.typical_revision_rounds || '';
-        legacyManuallyChanged = false;
-
-        // Update source labels
-        document.querySelectorAll('[data-legacy-source]').forEach(span => {
-          span.textContent = `(from ${catDisplayName} defaults)`;
-          span.classList.remove('overridden');
-        });
-      }
-    } catch {
-      // No norms for this category
-      const banner = document.getElementById('legacyBanner');
-      const noNorms = document.getElementById('legacyNoNorms');
-      if (banner) banner.style.display = 'none';
-      if (noNorms) noNorms.style.display = '';
-
-      // Clear legacy fields
-      ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          el.value = '';
-          el.classList.remove('legacy-auto', 'legacy-overridden');
+    // Try v2 lookup first; if not all params set, fall back to v1
+    const complexity = document.getElementById('fComplexity')?.value;
+    const subCat = document.getElementById('fSubCategory')?.value;
+    const geoRegions = [];
+    document.querySelectorAll('.geo-region-check:checked').forEach(cb => geoRegions.push(cb.value));
+    if (!complexity || !subCat || geoRegions.length === 0) {
+      // Fallback to v1 norms
+      const selectedCat = state.categories.find(c => c.id == catId);
+      const catDisplayName = selectedCat ? selectedCat.name : 'category';
+      try {
+        const norm = await apiCall('GET', `/norms/${catId}`);
+        if (norm) {
+          const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
+          if (banner) banner.style.display = ''; if (noNorms) noNorms.style.display = 'none';
+          ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) { el.classList.remove('legacy-overridden'); el.classList.add('legacy-auto'); }
+          });
+          document.getElementById('fLDays').value = norm.typical_calendar_days || '';
+          document.getElementById('fLTeam').value = norm.typical_team_size || '';
+          document.getElementById('fLRevisions').value = norm.typical_revision_rounds || '';
+          legacyManuallyChanged = false;
+          document.querySelectorAll('[data-legacy-source]').forEach(span => { span.textContent = `(from ${catDisplayName} defaults)`; span.classList.remove('overridden'); });
         }
-      });
-      document.querySelectorAll('[data-legacy-source]').forEach(span => {
-        span.textContent = '';
-      });
+      } catch {
+        const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
+        if (banner) banner.style.display = 'none'; if (noNorms) noNorms.style.display = '';
+        ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; el.classList.remove('legacy-auto', 'legacy-overridden'); } });
+      }
     }
   });
 
@@ -687,13 +808,14 @@ function renderNewProject(prefill = null) {
     e.preventDefault();
     const dateStart = document.getElementById('fDateStart').value;
     const dateEnd = document.getElementById('fDateEnd').value;
-    if (dateStart && dateEnd && dateStart > dateEnd) {
-      showToast('Start date must be before delivery date', 'error');
-      return;
-    }
-    const btn = document.getElementById('projectSubmit');
-    btn.disabled = true;
-    btn.textContent = 'Saving\u2026';
+    if (dateStart && dateEnd && dateStart > dateEnd) { showToast('Start date must be before delivery date', 'error'); return; }
+    const btn = document.getElementById('projectSubmit'); btn.disabled = true; btn.textContent = 'Saving\u2026';
+
+    const geoRegions = [];
+    document.querySelectorAll('.geo-region-check:checked').forEach(cb => geoRegions.push(cb.value));
+    const countries = [];
+    document.querySelectorAll('.country-check:checked').forEach(cb => countries.push(cb.value));
+
     const payload = {
       project_name: document.getElementById('fName').value.trim(),
       category_id: parseInt(document.getElementById('fCategory').value),
@@ -703,10 +825,15 @@ function renderNewProject(prefill = null) {
       description: document.getElementById('fDesc').value.trim() || null,
       date_started: dateStart || null,
       date_delivered: dateEnd || null,
+      complexity: parseFloat(document.getElementById('fComplexity').value),
+      client_sector: document.getElementById('fSector').value || null,
+      client_sub_category: document.getElementById('fSubCategory').value || null,
+      geographies: JSON.stringify(geoRegions),
+      countries_served: JSON.stringify(countries),
       xcsg_calendar_days: document.getElementById('fXDays').value,
       xcsg_team_size: document.getElementById('fXTeam').value,
-      xcsg_revision_rounds: document.getElementById('fXRevisions').value,
-      xcsg_scope_expansion: document.getElementById('fScope').value || null,
+      xcsg_revision_intensity: parseFloat(document.getElementById('fRevisionIntensity').value),
+      xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
       legacy_calendar_days: document.getElementById('fLDays').value || null,
       legacy_team_size: document.getElementById('fLTeam').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
@@ -714,35 +841,15 @@ function renderNewProject(prefill = null) {
     try {
       if (isEdit) {
         await apiCall('PUT', `/projects/${prefill.id}`, payload);
-        showToast('Project updated');
-        window.location.hash = '#projects';
+        showToast('Project updated'); window.location.hash = '#projects';
       } else {
         const result = await apiCall('POST', '/projects', payload);
-
-        // Info toast if legacy values weren't overridden
-        if (!legacyManuallyChanged) {
-          showToast('Tip: Legacy baseline uses category defaults. Edit the project to set project-specific values for more accurate metrics.', 'info');
-        }
-
+        if (!legacyManuallyChanged) showToast('Tip: Legacy baseline uses defaults. Edit project to set project-specific values for more accurate metrics.', 'info');
         const expertUrl = `${window.location.origin}${window.location.pathname}#expert/${result.expert_token}`;
-        showModal(`
-          <h3>Project Created</h3>
-          <p>Share this link with the expert to complete their assessment:</p>
-          <div class="expert-link-box">
-            <input type="text" value="${expertUrl}" readonly id="expertLinkInput" style="flex:1">
-            <button class="btn btn-primary" onclick="copyToClipboard(document.getElementById('expertLinkInput').value)">Copy</button>
-          </div>
-          <div class="form-actions" style="margin-top:20px">
-            <button class="btn btn-secondary" onclick="hideModal();window.location.hash='#projects'">Done</button>
-          </div>
-        `);
+        showModal(`<h3>Project Created</h3><p>Share this link with the expert:</p><div class="expert-link-box"><input type="text" value="${expertUrl}" readonly id="expertLinkInput" style="flex:1"><button class="btn btn-primary" onclick="copyToClipboard(document.getElementById('expertLinkInput').value)">Copy</button></div><div class="form-actions" style="margin-top:20px"><button class="btn btn-secondary" onclick="hideModal();window.location.hash='#projects'">Done</button></div>`);
       }
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = isEdit ? 'Save Changes' : 'Create Project';
-    }
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = isEdit ? 'Save Changes' : 'Create Project'; }
   });
 }
 
@@ -942,6 +1049,15 @@ async function renderEditProject(id) {
     const p = await apiCall('GET', `/projects/${id}`);
     renderNewProject(p);
 
+    // Complete Project button
+    if (p.status === 'expert_pending' && p.expert_response) {
+      const btnBar = document.createElement('div');
+      btnBar.style.cssText = 'display:flex;gap:12px;align-items:center;margin-top:20px;';
+      btnBar.innerHTML = '<button class="btn btn-primary" id="completeProjectBtn" style="background:var(--success)">\u2705 Complete Project</button>';
+      mc.querySelector('.form-actions')?.after(btnBar);
+      btnBar.querySelector('#completeProjectBtn').addEventListener('click', () => showCompletionModal(id, p));
+    }
+
     // If expert response exists, show rich read-only assessment below form
     if (p.expert_response) {
       const er = p.expert_response;
@@ -955,6 +1071,75 @@ async function renderEditProject(id) {
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load project: ${esc(err.message)}</div>`;
   }
+}
+
+function showCompletionModal(projectId, project) {
+  const p = project;
+  const overlay = document.getElementById('globalModal');
+  const card = document.getElementById('globalModalCard');
+  card.className = 'modal-card wide-modal';
+  card.innerHTML = `
+    <div class="completion-modal">
+      <h3>Complete Project</h3>
+      <p class="modal-subtitle">Compare xCSG vs legacy performance for <strong>${esc(p.project_name)}</strong></p>
+      <div class="completion-sides">
+        <div class="completion-side xcsg-side">
+          <h4>\uD83E\uDD16 xCSG Performance</h4>
+          <div class="completion-slider"><label>Revision Intensity <span class="slider-value-badge" id="compXRI">${p.xcsg_revision_intensity || 3}</span></label><div class="slider-labels"><span>Minimal</span><span>Exhaustive</span></div><input type="range" class="xcsg-slider" id="compXcsgRI" min="1" max="7" step="1" value="${p.xcsg_revision_intensity || 3}"></div>
+          <div class="completion-slider"><label>Scope Expansion <span class="slider-value-badge" id="compXSE">${p.xcsg_scope_expansion || 3}</span></label><div class="slider-labels"><span>Stayed on scope</span><span>Blew past scope</span></div><input type="range" class="xcsg-slider" id="compXcsgSE" min="1" max="7" step="1" value="${p.xcsg_scope_expansion || 3}"></div>
+          <div class="completion-slider"><label>Senior Involvement <span class="slider-value-badge" id="compXSI">3</span></label><div class="slider-labels"><span>Junior-led</span><span>Senior-led</span></div><input type="range" class="xcsg-slider" id="compXcsgSI" min="1" max="7" step="1" value="3"></div>
+          <div class="completion-slider"><label>AI Usage <span class="slider-value-badge" id="compXAI">3</span></label><div class="slider-labels"><span>None</span><span>Fully machine-first</span></div><input type="range" class="xcsg-slider" id="compXcsgAI" min="1" max="7" step="1" value="3"></div>
+        </div>
+        <div class="completion-side legacy-side">
+          <h4>\uD83D\uDCBC Legacy Performance</h4>
+          <div class="completion-slider"><label>Revision Intensity <span class="slider-value-badge" id="compLRI">3</span></label><div class="slider-labels"><span>Minimal</span><span>Exhaustive</span></div><input type="range" class="xcsg-slider" id="compLegacyRI" min="1" max="7" step="1" value="3"></div>
+          <div class="completion-slider"><label>Scope Expansion <span class="slider-value-badge" id="compLSE">3</span></label><div class="slider-labels"><span>Stayed on scope</span><span>Blew past scope</span></div><input type="range" class="xcsg-slider" id="compLegacySE" min="1" max="7" step="1" value="3"></div>
+          <div class="completion-slider"><label>Senior Involvement <span class="slider-value-badge" id="compLSI">3</span></label><div class="slider-labels"><span>Junior-led</span><span>Senior-led</span></div><input type="range" class="xcsg-slider" id="compLegacySI" min="1" max="7" step="1" value="3"></div>
+          <div class="completion-slider"><label>AI Usage <span class="slider-value-badge" id="compLAI">1</span></label><div class="slider-labels"><span>None</span><span>Fully machine-first</span></div><input type="range" class="xcsg-slider" id="compLegacyAI" min="1" max="7" step="1" value="1"></div>
+        </div>
+      </div>
+      <div class="form-actions" style="margin-top:20px">
+        <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+        <button class="btn btn-primary" id="submitCompletion" style="background:var(--success)">Complete Project</button>
+      </div>
+      <div id="completionResult"></div>
+    </div>`;
+  overlay.classList.add('active');
+
+  // Wire slider badges
+  const sliderBadgeMap = [
+    ['compXcsgRI','compXRI'], ['compXcsgSE','compXSE'], ['compXcsgSI','compXSI'], ['compXcsgAI','compXAI'],
+    ['compLegacyRI','compLRI'], ['compLegacySE','compLSE'], ['compLegacySI','compLSI'], ['compLegacyAI','compLAI'],
+  ];
+  sliderBadgeMap.forEach(([sliderId, badgeId]) => {
+    const s = document.getElementById(sliderId);
+    if (s) s.addEventListener('input', () => { document.getElementById(badgeId).textContent = s.value; });
+  });
+
+  document.getElementById('submitCompletion').addEventListener('click', async () => {
+    const btn = document.getElementById('submitCompletion'); btn.disabled = true; btn.textContent = 'Saving\u2026';
+    try {
+      const result = await apiCall('POST', `/projects/${projectId}/complete`, {
+        xcsg_revision_intensity: parseFloat(document.getElementById('compXcsgRI').value),
+        xcsg_scope_expansion: parseFloat(document.getElementById('compXcsgSE').value),
+        xcsg_senior_involvement: parseFloat(document.getElementById('compXcsgSI').value),
+        xcsg_ai_usage: parseFloat(document.getElementById('compXcsgAI').value),
+        legacy_revision_intensity: parseFloat(document.getElementById('compLegacyRI').value),
+        legacy_scope_expansion: parseFloat(document.getElementById('compLegacySE').value),
+        legacy_senior_involvement: parseFloat(document.getElementById('compLegacySI').value),
+        legacy_ai_usage: parseFloat(document.getElementById('compLegacyAI').value),
+      });
+      const mfs = result.machine_first_score != null ? Math.round(result.machine_first_score) : '—';
+      document.getElementById('completionResult').innerHTML = `
+        <div class="completion-score-banner">
+          <div class="score-label">Machine-First Score</div>
+          <div class="score-value">${mfs}${typeof mfs === 'number' ? '/100' : ''}</div>
+          <div class="score-desc">Project completed successfully</div>
+        </div>`;
+      btn.textContent = 'Done';
+      btn.onclick = () => { hideModal(); window.location.hash = `#edit/${projectId}`; };
+    } catch (err) { showToast(err.message, 'error'); btn.disabled = false; btn.textContent = 'Complete Project'; }
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1372,6 +1557,163 @@ async function saveNorm(categoryId) {
     if (notConfBadge) notConfBadge.remove();
   } catch (err) {
     showToast(err.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NORMS V2 PAGE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function renderNormsV2Page() {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Loading norms v2\u2026</div>';
+  try {
+    const [normsData, cats] = await Promise.all([apiCall('GET', '/norms/v2'), apiCall('GET', '/categories')]);
+    const isAdmin = state.user && state.user.role === 'admin';
+
+    // Group norms by category
+    const grouped = {};
+    for (const n of (normsData.norms || normsData || [])) {
+      const catId = n.category_id;
+      if (!grouped[catId]) grouped[catId] = [];
+      grouped[catId].push(n);
+    }
+
+    let html = `<div class="norms-v2-header"><h1>Norms v2</h1>`;
+    if (isAdmin) html += '<button class="btn btn-primary" id="recalcNormsBtn">Recalculate All Norms</button>';
+    html += '</div>';
+
+    // Show categories, even those without norms
+    for (const cat of cats) {
+      const norms = grouped[cat.id] || [];
+      html += `<div class="norms-v2-category">`;
+      html += `<div class="norms-v2-category-header" onclick="this.classList.toggle('collapsed');this.nextElementSibling.classList.toggle('collapsed')">
+        <span>${esc(cat.name)} <span style="font-weight:400;color:var(--gray-400);font-size:12px">(${norms.length} norms)</span></span>
+        <span class="collapse-icon">\u25BC</span>
+      </div>`;
+      html += `<div class="norms-v2-category-body">`;
+      if (norms.length === 0) {
+        html += '<div style="padding:16px 20px;color:var(--gray-400);font-size:13px">No norms configured for this category.</div>';
+      }
+      for (const n of norms) {
+        const sampleSize = n.sample_size || 0;
+        const sampleClass = sampleSize >= 20 ? 'badge-green' : sampleSize >= 5 ? 'badge-orange' : 'badge-red';
+        html += `<div class="norms-v2-row" id="normv2-${n.id}" onclick="toggleNormEdit(${n.id})">
+          <div><strong>C${n.complexity}</strong> <span class="badge badge-navy" style="font-size:10px">${esc(n.client_sector || '?')}</span> <span class="badge badge-gray" style="font-size:10px">${esc(n.client_sub_category || '?')}</span></div>
+          <div>${n.avg_calendar_days != null ? n.avg_calendar_days : '—'}</div>
+          <div>${n.avg_team_size != null ? n.avg_team_size : '—'}</div>
+          <div>${n.avg_revision_intensity != null ? round2(n.avg_revision_intensity) : '—'}</div>
+          <div>${n.avg_scope_expansion != null ? round2(n.avg_scope_expansion) : '—'}</div>
+          <div>${n.avg_senior_involvement != null ? round2(n.avg_senior_involvement) : '—'}</div>
+          <div><span class="badge ${sampleClass}">n=${sampleSize}</span></div>
+        </div>
+        <div id="normv2-edit-${n.id}" style="display:none"></div>
+      `;
+      }
+      html += '</div></div>';
+    }
+
+    mc.innerHTML = html;
+
+    // Recalculate button
+    document.getElementById('recalcNormsBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('recalcNormsBtn'); btn.disabled = true; btn.textContent = 'Recalculating\u2026';
+      try {
+        const result = await apiCall('POST', '/norms/v2/recalculate');
+        showToast(`Recalculation complete: ${result.norms_updated || 0} norms updated`, 'success');
+        renderNormsV2Page();
+      } catch (err) { showToast(err.message, 'error'); btn.disabled = false; btn.textContent = 'Recalculate All Norms'; }
+    });
+  } catch (err) {
+    mc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
+  }
+}
+
+let activeNormEdit = null;
+async function toggleNormEdit(normId) {
+  // Close previous
+  if (activeNormEdit && activeNormEdit !== normId) {
+    const prev = document.getElementById(`normv2-edit-${activeNormEdit}`);
+    if (prev) { prev.style.display = 'none'; prev.innerHTML = ''; }
+    const prevRow = document.getElementById(`normv2-${activeNormEdit}`);
+    if (prevRow) prevRow.style.background = '';
+  }
+  const panel = document.getElementById(`normv2-edit-${normId}`);
+  const row = document.getElementById(`normv2-${normId}`);
+  if (!panel) return;
+
+  if (panel.style.display === 'none') {
+    activeNormEdit = normId;
+    row.style.background = 'var(--blue-pale)';
+    panel.style.display = '';
+    try {
+      const norm = await apiCall('GET', `/norms/v2/${normId}`);
+      panel.innerHTML = `
+        <div class="norms-v2-edit-panel">
+          <div class="edit-grid">
+            <div><label>Avg Calendar Days</label><input type="number" step="0.1" id="editN2Calendar" value="${norm.avg_calendar_days || ''}"></div>
+            <div><label>Avg Team Size</label><input type="number" step="0.1" id="editN2Team" value="${norm.avg_team_size || ''}"></div>
+            <div><label>Avg Revision Intensity</label><input type="number" step="0.1" id="editN2RI" value="${norm.avg_revision_intensity || ''}"></div>
+            <div><label>Avg Scope Expansion</label><input type="number" step="0.1" id="editN2SE" value="${norm.avg_scope_expansion || ''}"></div>
+            <div><label>Avg Senior Involvement</label><input type="number" step="0.1" id="editN2SI" value="${norm.avg_senior_involvement || ''}"></div>
+            <div><label>Avg AI Usage</label><input type="number" step="0.1" id="editN2AI" value="${norm.avg_ai_usage || ''}"></div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="saveNormV2(${normId})">Save</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadNormHistory(${normId})">History</button>
+            <button class="btn btn-sm" style="background:transparent;border:1px solid var(--gray-300)" onclick="toggleNormEdit(${normId})">Close</button>
+          </div>
+          <div id="normHistory-${normId}"></div>
+        </div>`;
+    } catch (err) {
+      panel.innerHTML = `<div style="color:var(--error);font-size:13px;padding:12px">Failed: ${esc(err.message)}</div>`;
+    }
+  } else {
+    activeNormEdit = null;
+    row.style.background = '';
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+  }
+}
+
+async function saveNormV2(normId) {
+  const payload = {
+    avg_calendar_days: document.getElementById('editN2Calendar')?.value ? parseFloat(document.getElementById('editN2Calendar').value) : null,
+    avg_team_size: document.getElementById('editN2Team')?.value ? parseFloat(document.getElementById('editN2Team').value) : null,
+    avg_revision_intensity: document.getElementById('editN2RI')?.value ? parseFloat(document.getElementById('editN2RI').value) : null,
+    avg_scope_expansion: document.getElementById('editN2SE')?.value ? parseFloat(document.getElementById('editN2SE').value) : null,
+    avg_senior_involvement: document.getElementById('editN2SI')?.value ? parseFloat(document.getElementById('editN2SI').value) : null,
+    avg_ai_usage: document.getElementById('editN2AI')?.value ? parseFloat(document.getElementById('editN2AI').value) : null,
+  };
+  try {
+    await apiCall('PUT', `/norms/v2/${normId}`, payload);
+    showToast('Norm updated');
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function loadNormHistory(normId) {
+  const container = document.getElementById(`normHistory-${normId}`);
+  if (!container) return;
+  container.innerHTML = '<div class="loading" style="padding:12px">Loading history\u2026</div>';
+  try {
+    const history = await apiCall('GET', `/norms/v2/${normId}/history`);
+    if (!history || history.length === 0) {
+      container.innerHTML = '<div style="font-size:13px;color:var(--gray-400);padding:8px">No edit history.</div>';
+      return;
+    }
+    let html = '<div class="norms-v2-history"><h4>Edit History</h4>';
+    for (const h of history) {
+      html += `<div class="history-entry">
+        <span class="history-field">${esc(h.field_changed)}</span>
+        <span class="history-arrow">\u2192</span>
+        ${esc(h.old_value)} <span class="history-arrow">\u2192</span> ${esc(h.new_value)}
+        <br><small style="color:var(--gray-400)">${esc(h.changed_by || '')} \u00b7 ${formatDateTime(h.changed_at)}</small>
+      </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div style="color:var(--error);font-size:13px">Failed: ${esc(err.message)}</div>`;
   }
 }
 
