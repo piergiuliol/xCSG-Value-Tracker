@@ -56,6 +56,16 @@ Phase 0 was committed (d4dfbb5) but left broken imports — server can't start.
 - [x] 2b-5: Bump frontend cache buster and verify dashboard renders
 - [x] 2b-6: Commit
 
+## Backend bugfix follow-up (April 7) ⬜
+
+- [x] B-1: Inspect dashboard metrics, project metrics enrichment, and database joins against the current DB state
+- [x] B-2: Reproduce the broken E2E project metrics case and compare its stored project/expert response data with a working QA project
+- [x] B-3: Make metrics parsing tolerant of raw numeric values like `10`, not just bucket labels like `6-10`
+- [x] B-4: Add a `completed_count` field alias to dashboard metrics for compatibility with the dashboard client
+- [x] B-5: Remove column-name collisions in `list_complete_projects` so project IDs stay stable when joining expert responses
+- [x] B-6: Re-run targeted Python smoke checks for `list_projects`, `get_expert_response`, `compute_project_metrics`, and `get_dashboard_metrics`
+- [x] B-7: Commit
+
 ## Cleanup follow-up (April 7) ⬜
 
 - [x] C-1: Inspect current frontend/backend references for legacy norms v2 UI/routes
@@ -81,3 +91,8 @@ Phase 0 was committed (d4dfbb5) but left broken imports — server can't start.
 - Checked `backend/app.py` and found no remaining `/api/norms/v2` routes to remove.
 - Re-ran syntax checks with `node -c frontend/app.js` and `python3 -m py_compile backend/app.py`.
 - Did not squash the recent commit history because the branch has a dirty working tree (`data/tracker.db`, `test-results/qa-phase2-dashboard.png`) and preserving the current known-good state was the safer call.
+- Investigated the April 7 backend data bugs. Root cause for the new-submission metrics issue was that `metrics.py` only understood bucket labels like `6-10`, while the E2E-created project stored a raw value (`10`) for `xcsg_calendar_days`, which zeroed out person-day math. I made the parsers accept raw numeric strings, range strings, and `+` buckets.
+- Added a `completed_count` alias in dashboard metrics so clients expecting that field no longer see a missing/null completed-project count.
+- Fixed a subtle `list_complete_projects()` join bug where `er.*` overwrote `p.id` with `expert_responses.id`. The joined query now aliases expert-response identifiers explicitly and keeps project IDs stable.
+- Added `SELECT DISTINCT` to `list_projects()` as a low-risk guard against accidental duplicate rows during future query expansion.
+- Verified with a Python smoke script that `list_projects()` returns unique project rows, `get_expert_response()` finds the new submission, `compute_project_metrics()` now returns concrete metrics for the E2E test project, and dashboard metrics include `completed_count`.

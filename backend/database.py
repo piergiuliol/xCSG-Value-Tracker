@@ -497,7 +497,7 @@ def list_projects(
 ) -> list:
     conn = get_connection()
     try:
-        query = """SELECT p.*, pc.name as category_name
+        query = """SELECT DISTINCT p.*, pc.name as category_name
                    FROM projects p
                    JOIN project_categories pc ON p.category_id = pc.id
                    WHERE 1=1"""
@@ -735,7 +735,33 @@ def list_complete_projects() -> list:
     conn = get_connection()
     try:
         rows = conn.execute(
-            """SELECT p.*, pc.name as category_name, er.*
+            """SELECT p.*, pc.name as category_name,
+                      er.id AS expert_response_id,
+                      er.project_id AS expert_response_project_id,
+                      er.b1_starting_point_xcsg,
+                      er.b1_starting_point_legacy,
+                      er.b2_research_sources_xcsg,
+                      er.b2_research_sources_legacy,
+                      er.b3_assembly_ratio_xcsg,
+                      er.b3_assembly_ratio_legacy,
+                      er.b4_hypothesis_first_xcsg,
+                      er.b4_hypothesis_first_legacy,
+                      er.c1_specialization,
+                      er.c2_directness,
+                      er.c3_judgment_pct,
+                      er.c4_senior_hours,
+                      er.c5_junior_hours,
+                      er.d1_proprietary_data_xcsg,
+                      er.d1_proprietary_data_legacy,
+                      er.d2_knowledge_reuse_xcsg,
+                      er.d2_knowledge_reuse_legacy,
+                      er.d3_moat_test_xcsg,
+                      er.d3_moat_test_legacy,
+                      er.f1_feasibility_xcsg,
+                      er.f1_feasibility_legacy,
+                      er.f2_productization_xcsg,
+                      er.f2_productization_legacy,
+                      er.submitted_at
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                JOIN expert_responses er ON p.id = er.project_id

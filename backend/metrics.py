@@ -6,6 +6,7 @@ responses stored in expert_responses.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 # ── Project delivery mappings ────────────────────────────────────────────────
@@ -154,22 +155,45 @@ def round2(value: float) -> float:
     return round(value, 2)
 
 
-def parse_days(value: Optional[str]) -> Optional[float]:
-    if not value:
+def _normalize_numeric_bucket(value: object) -> Optional[str]:
+    if value is None:
         return None
-    return DAYS_MIDPOINTS.get(value)
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_bucket_midpoint(value: object, mapping: dict[str, float]) -> Optional[float]:
+    text = _normalize_numeric_bucket(value)
+    if text is None:
+        return None
+    if text in mapping:
+        return mapping[text]
+    if text.endswith("+"):
+        try:
+            return float(text[:-1])
+        except ValueError:
+            return None
+    if "-" in text:
+        parts = text.split("-", 1)
+        try:
+            return round2((float(parts[0]) + float(parts[1])) / 2)
+        except ValueError:
+            return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return float(text)
+    return None
+
+
+def parse_days(value: Optional[str]) -> Optional[float]:
+    return _parse_bucket_midpoint(value, DAYS_MIDPOINTS)
 
 
 def parse_team_size(value: Optional[str]) -> Optional[float]:
-    if not value:
-        return None
-    return TEAM_MIDPOINTS.get(value)
+    return _parse_bucket_midpoint(value, TEAM_MIDPOINTS)
 
 
 def parse_revisions(value: Optional[str]) -> Optional[float]:
-    if not value:
-        return None
-    return REVISION_NUMBERS.get(value)
+    return _parse_bucket_midpoint(value, REVISION_NUMBERS)
 
 
 def average(values: list[Optional[float]]) -> Optional[float]:
@@ -408,6 +432,7 @@ def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[
 
     return {
         "total_projects": total_count,
+        "completed_count": completed_count,
         "projects_completed": completed_count,
         "complete_projects": completed_count,
         "pending_projects": max(total_count - completed_count, 0),
