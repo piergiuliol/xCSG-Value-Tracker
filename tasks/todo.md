@@ -56,6 +56,16 @@ Phase 0 was committed (d4dfbb5) but left broken imports — server can't start.
 - [x] 2b-5: Bump frontend cache buster and verify dashboard renders
 - [x] 2b-6: Commit
 
+## Cleanup follow-up (April 7) ⬜
+
+- [x] C-1: Inspect current frontend/backend references for legacy norms v2 UI/routes
+- [x] C-2: Rename sidebar/topbar "Norms v2" label back to "Norms"
+- [x] C-3: Archive `docs/SPEC-legacy-norms-v2.md` into `docs/archive/`
+- [x] C-4: Check `backend/app.py` for leftover `/api/norms/v2` routes
+- [x] C-5: Run syntax checks for frontend and backend
+- [x] C-6: Assess whether commit squashing is safe without risking working state
+- [x] C-7: Commit cleanup changes
+
 ## Review
 
 - Replaced the old placeholder metric engine with Phase 2 computed per-project and portfolio metrics.
@@ -66,3 +76,8 @@ Phase 0 was committed (d4dfbb5) but left broken imports — server can't start.
 - Replaced placeholder checkpoint content with real portfolio averages, flywheel leg scores, scaling gates, and a completed-project score table.
 - Added the requested empty assessment message and multiplier color coding on the dashboard table.
 - Verified the frontend bundle syntax with `node --check frontend/app.js`; runtime API verification is still auth-gated from this shell.
+- Renamed the remaining visible "Norms v2" UI labels back to "Norms" in the sidebar and top bar.
+- Archived the stale legacy norms v2 spec into `docs/archive/`.
+- Checked `backend/app.py` and found no remaining `/api/norms/v2` routes to remove.
+- Re-ran syntax checks with `node -c frontend/app.js` and `python3 -m py_compile backend/app.py`.
+- Did not squash the recent commit history because the branch has a dirty working tree (`data/tracker.db`, `test-results/qa-phase2-dashboard.png`) and preserving the current known-good state was the safer call.

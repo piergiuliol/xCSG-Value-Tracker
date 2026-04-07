@@ -235,7 +235,7 @@ async function route() {
   // Title
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
-    projects: 'Projects', settings: 'Settings', norms: 'Norms v2', activity: 'Activity Log'
+    projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
 
@@ -1773,7 +1773,7 @@ async function renderNormsV2Page() {
       grouped[catId].push(n);
     }
 
-    let html = `<div class="norms-v2-header"><h1>Norms v2</h1>`;
+    let html = `<div class="norms-v2-header"><h1>Norms</h1>`;
     if (isAdmin) html += '<button class="btn btn-primary" id="recalcNormsBtn">Recalculate All Norms</button>';
     html += '</div>';
 
