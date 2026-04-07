@@ -275,15 +275,17 @@ async function renderPortfolio() {
   mc.innerHTML = '<div class="loading">Loading portfolio\u2026</div>';
 
   try {
-    const [summary, metricsProjects, gates, allProjects] = await Promise.all([
-      apiCall('GET', '/metrics/summary'),
-      apiCall('GET', '/metrics/projects'),
-      apiCall('GET', '/metrics/scaling-gates'),
+    const [dashboard, allProjects] = await Promise.all([
+      apiCall('GET', '/dashboard/metrics'),
       apiCall('GET', '/projects'),
     ]);
 
-    const complete = summary.complete_projects || 0;
-    const total = summary.total_projects || 0;
+    const total = dashboard.total_projects || allProjects.length || 0;
+    const complete = dashboard.complete_projects || dashboard.projects_completed || 0;
+    const completedProjects = allProjects
+      .filter(p => p.status === 'complete' && p.metrics)
+      .map(p => ({ ...p.metrics, ...p, id: p.id }));
+    const hasAssessmentData = completedProjects.length > 0;
 
     if (total === 0) {
       mc.innerHTML = `
@@ -295,25 +297,31 @@ async function renderPortfolio() {
       return;
     }
 
-    // Build lookup for legacy_overridden from allProjects
     const overriddenMap = {};
-    for (const p of allProjects) {
-      overriddenMap[p.id] = !!p.legacy_overridden;
-    }
+    for (const p of allProjects) overriddenMap[p.id] = !!p.legacy_overridden;
+    const lowConfCount = completedProjects.filter(m => !overriddenMap[m.id]).length;
 
-    const lowConfCount = metricsProjects.filter(m => !overriddenMap[m.id]).length;
-
-    // Detect newly unlocked checkpoints for celebration animation
     let prevComplete = 0;
     try { prevComplete = parseInt(localStorage.getItem('xcsg_prev_complete') || '0'); } catch {}
     const justUnlockedIds = CHECKPOINTS.filter(cp => complete >= cp.threshold && prevComplete < cp.threshold).map(cp => cp.id);
     try { localStorage.setItem('xcsg_prev_complete', String(complete)); } catch {}
 
-    // ── Header ──
     const nextCP = CHECKPOINTS.find(cp => complete < cp.threshold);
     const nextCallout = nextCP
       ? `Next unlock: Checkpoint ${nextCP.id} (${nextCP.name}) \u2014 ${nextCP.threshold - complete} more project${nextCP.threshold - complete !== 1 ? 's' : ''} needed`
       : 'All checkpoints unlocked \u2713';
+
+    const multiplierTone = (value) => {
+      if (value > 2) return 'var(--success-text)';
+      if (value >= 1) return 'var(--warning-text)';
+      return 'var(--error)';
+    };
+    const fmtRatio = (value) => value == null ? '\u2014' : `${round2(value)}x`;
+    const fmtScore = (value) => value == null ? '\u2014' : round2(value);
+    const renderAssessmentEmpty = () => `
+      <div class="empty-state" style="margin-top:0">
+        <p>No assessment data yet \u2014 share expert links to start collecting responses</p>
+      </div>`;
 
     let html = '';
     html += `<div class="dashboard-header">
@@ -324,15 +332,16 @@ async function renderPortfolio() {
       <button class="btn-export" onclick="exportExcel()">Export to Excel</button>
     </div>`;
 
-    // ── Checkpoint Cards ──
+    if (!hasAssessmentData) {
+      html += renderAssessmentEmpty();
+    }
+
     for (const cp of CHECKPOINTS) {
       const unlocked = complete >= cp.threshold;
       const cls = unlocked ? 'unlocked' : 'locked';
       const celebrate = unlocked && justUnlockedIds.includes(cp.id);
 
       html += `<div class="checkpoint-card ${cls}${celebrate ? ' just-unlocked' : ''}" data-cp="${cp.id}">`;
-
-      // Card header
       html += `<div class="checkpoint-card-header"${unlocked ? ` onclick="toggleCheckpointCard(${cp.id})"` : ''}>`;
       html += `<div class="checkpoint-card-title">`;
       html += `<span class="cp-number">${cp.id}</span>`;
@@ -341,89 +350,83 @@ async function renderPortfolio() {
       html += `</div>`;
       if (unlocked) html += `<span class="checkpoint-card-toggle">\u25BC</span>`;
       html += `</div>`;
-
-      // Card body
       html += `<div class="checkpoint-card-body">`;
 
       if (!unlocked) {
-        // ═══ Locked Card ═══
-        html += `<div class="checkpoint-lock-content">`;
-        html += `<div class="checkpoint-lock-icon">\uD83D\uDD12</div>`;
-        html += `<div class="checkpoint-lock-text">Unlock at ${cp.threshold} completed projects</div>`;
-        html += `<div class="checkpoint-lock-desc">${cp.desc}</div>`;
-        html += `<div class="checkpoint-lock-progress">`;
         const pct = Math.min(100, Math.round((complete / cp.threshold) * 100));
-        html += `<div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>`;
-        html += `<div class="progress-label">${complete} of ${cp.threshold} projects</div>`;
-        html += `</div></div>`;
+        html += `<div class="checkpoint-lock-content">
+          <div class="checkpoint-lock-icon">\uD83D\uDD12</div>
+          <div class="checkpoint-lock-text">Unlock at ${cp.threshold} completed projects</div>
+          <div class="checkpoint-lock-desc">${cp.desc}</div>
+          <div class="checkpoint-lock-progress">
+            <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div class="progress-label">${complete} of ${cp.threshold} projects</div>
+          </div>
+        </div>`;
 
       } else if (cp.id === 1) {
-        // ═══ CHECKPOINT 1: First Light ═══
-        const vm = summary.average_value_multiplier || 0;
-        const er = summary.average_effort_ratio || 0;
-        const fh = summary.flywheel_health || 0;
         const vmSubtitle = lowConfCount > 0
-          ? `<div class="kpi-sub">${lowConfCount} of ${metricsProjects.length} using category defaults</div>`
+          ? `<div class="kpi-sub">${lowConfCount} of ${completedProjects.length} using category defaults</div>`
           : '';
 
         html += `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
-          <div class="kpi-card"><div class="kpi-value">${round2(vm)}x</div><div class="kpi-label">Avg Value Multiplier</div>${vmSubtitle}</div>
-          <div class="kpi-card"><div class="kpi-value">${round2(er)}x</div><div class="kpi-label">Avg Effort Ratio</div></div>
-          <div class="kpi-card"><div class="kpi-value">${Math.round(fh * 100)}%</div><div class="kpi-label">Flywheel Health</div></div>
-          <div class="kpi-card"><div class="kpi-value">${total}</div><div class="kpi-label">Total Projects</div><div class="kpi-sub">${complete} complete \u00b7 ${total - complete} pending</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_value_multiplier)}</div><div class="kpi-label">Avg Value Multiplier</div>${vmSubtitle}</div>
+          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_effort_ratio)}</div><div class="kpi-label">Avg Effort Ratio</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_quality_ratio)}</div><div class="kpi-label">Avg Quality Ratio</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.overall_xcsg_avg)}</div><div class="kpi-label">Avg xCSG Score</div><div class="kpi-sub">${complete} complete \u00b7 ${Math.max(total - complete, 0)} pending</div></div>
         </div>`;
 
-        // Filters
-        const cats = [...new Set(allProjects.map(p => p.category_name).filter(Boolean))].sort();
-        const clients = [...new Set(allProjects.map(p => p.client_name).filter(Boolean))].sort();
-        const pioneers = [...new Set(allProjects.map(p => p.pioneer_name).filter(Boolean))].sort();
+        const cats = [...new Set(completedProjects.map(p => p.category_name).filter(Boolean))].sort();
+        const clients = [...new Set(completedProjects.map(p => p.client_name).filter(Boolean))].sort();
+        const pioneers = [...new Set(completedProjects.map(p => p.pioneer_name).filter(Boolean))].sort();
 
         html += `<div class="portfolio-filters">
           <span class="filters-label">Filter by</span>
           <select id="portfolioCatFilter" class="filter-select"><option value="">All Categories</option>${cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
           <select id="portfolioClientFilter" class="filter-select"><option value="">All Clients</option>${clients.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
           <select id="portfolioPioneerFilter" class="filter-select"><option value="">All Pioneers</option>${pioneers.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
-          <select id="portfolioStatusFilter" class="filter-select"><option value="">All Status</option><option value="complete">Complete</option><option value="expert_pending">Expert Pending</option></select>
-          <select id="portfolioComplexityFilter" class="filter-select"><option value="">All Complexity</option>${[1,2,3,4,5,6,7].map(i=>`<option value="${i}">${i}</option>`).join('')}</select>
           <button class="filter-reset" id="portfolioFilterReset" style="display:none">Clear filters</button>
         </div>`;
 
-        // Scorecard table
-        if (metricsProjects.length > 0) {
+        if (hasAssessmentData) {
           html += `<table class="data-table" id="scorecardTable" style="margin-top:8px"><thead><tr>
-            <th>Project</th><th>Category</th><th>Client</th><th>Pioneer</th><th>Status</th><th class="text-right">Effort Ratio</th><th class="text-right">Value Multiplier</th>
+            <th>Project</th><th>Category</th><th>Client</th><th>Pioneer</th><th class="text-right">Value Multiplier</th><th class="text-right">Effort Ratio</th><th class="text-right">xCSG Score</th><th class="text-right">Quality Ratio</th><th class="text-right">Machine / Senior / Proprietary</th>
           </tr></thead><tbody>`;
-          for (const d of metricsProjects) {
+          for (const d of completedProjects) {
             const isLowConf = !overriddenMap[d.id];
             const confFlag = isLowConf ? CONFIDENCE_FLAG_SVG : '';
-            const proj = allProjects.find(p => p.id === d.id);
-            const statusVal = proj ? proj.status : 'complete';
-            const statusBadge = statusVal === 'complete'
-              ? '<span class="badge badge-green">Complete</span>'
-              : '<span class="badge badge-orange">Expert Pending</span>';
-            html += `<tr data-cat="${esc(d.category_name)}" data-client="${esc(d.client_name || '')}" data-pioneer="${esc(d.pioneer_name)}" data-status="${statusVal}" data-complexity="${d.complexity || ''}">
-              <td>${esc(d.project_name)}${confFlag}</td><td>${esc(d.category_name)}</td>
-              <td>${esc(d.client_name || '\u2014')}</td><td>${esc(d.pioneer_name)}</td>
-              <td>${statusBadge}</td>
-              <td class="text-right"><strong>${round2(d.effort_ratio)}x</strong></td>
-              <td class="text-right vm-cell${isLowConf ? ' low-confidence' : ''}">${round2(d.value_multiplier)}x</td>
+            html += `<tr data-cat="${esc(d.category_name || '')}" data-client="${esc(d.client_name || '')}" data-pioneer="${esc(d.pioneer_name || '')}">
+              <td>${esc(d.project_name)}${confFlag}</td>
+              <td>${esc(d.category_name || '\u2014')}</td>
+              <td>${esc(d.client_name || '\u2014')}</td>
+              <td>${esc(d.pioneer_name || '\u2014')}</td>
+              <td class="text-right vm-cell${isLowConf ? ' low-confidence' : ''}" style="color:${multiplierTone(d.value_multiplier || 0)}">${fmtRatio(d.value_multiplier)}</td>
+              <td class="text-right"><strong>${fmtRatio(d.effort_ratio)}</strong></td>
+              <td class="text-right">${fmtScore(d.overall_xcsg_score)}</td>
+              <td class="text-right">${fmtRatio(d.quality_ratio)}</td>
+              <td class="text-right">${fmtScore(d.machine_first_score)} / ${fmtScore(d.senior_led_score)} / ${fmtScore(d.proprietary_knowledge_score)}</td>
             </tr>`;
           }
           html += '</tbody></table>';
         }
 
       } else if (cp.id === 2) {
-        // ═══ CHECKPOINT 2: Pattern Detection ═══
-        if (metricsProjects.length >= 3) {
+        html += `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_value_multiplier)}</div><div class="kpi-label">Portfolio Avg Value</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_effort_ratio)}</div><div class="kpi-label">Portfolio Avg Effort</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_quality_ratio)}</div><div class="kpi-label">Portfolio Avg Quality</div></div>
+          <div class="kpi-card"><div class="kpi-value">${Math.round((dashboard.flywheel_health || 0) * 20)}%</div><div class="kpi-label">Flywheel Health</div></div>
+        </div>`;
+
+        if (completedProjects.length >= 3) {
           html += `<div class="chart-grid" style="margin-top:0">
             <div class="card"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Effort Comparison</h3><canvas id="effortChart"></canvas></div>
             <div class="card"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Quality Comparison</h3><canvas id="qualityChart"></canvas></div>
           </div>`;
         }
 
-        // Category average multipliers
         const catMap = {};
-        for (const d of metricsProjects) {
+        for (const d of completedProjects) {
           const c = d.category_name || 'Other';
           if (!catMap[c]) catMap[c] = { vm: [], er: [] };
           catMap[c].vm.push(d.value_multiplier);
@@ -431,94 +434,65 @@ async function renderPortfolio() {
         }
         const catNames = Object.keys(catMap).sort();
         if (catNames.length > 0) {
-          html += `<div style="margin-top:20px"><h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Average Multipliers by Category</h3>`;
-          html += `<div class="cp-category-averages">`;
+          html += `<div style="margin-top:20px"><h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Average Multipliers by Category</h3><div class="cp-category-averages">`;
           for (const c of catNames) {
-            const avg = arr => arr.length ? round2(arr.reduce((a,b) => a+b, 0) / arr.length) : 0;
-            html += `<div class="cp-category-item">
-              <div class="cp-category-name">${esc(c)}</div>
-              <div class="cp-category-value">${avg(catMap[c].vm)}x</div>
-              <div class="cp-category-sub">value mult \u00b7 ${avg(catMap[c].er)}x effort</div>
-            </div>`;
+            const avg = arr => arr.length ? round2(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+            html += `<div class="cp-category-item"><div class="cp-category-name">${esc(c)}</div><div class="cp-category-value">${avg(catMap[c].vm)}x</div><div class="cp-category-sub">value mult \u00b7 ${avg(catMap[c].er)}x effort</div></div>`;
           }
           html += `</div></div>`;
         }
-
-        // Category comparison chart (when 2+ categories)
         if (catNames.length >= 2) {
           html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Category Comparison</h3><canvas id="categoryChart"></canvas></div>`;
         }
 
       } else if (cp.id === 3) {
-        // ═══ CHECKPOINT 3: Proof of Concept ═══
-        // Flywheel gauges
+        const scoreToPct = (value) => Math.round(((value || 0) / 5) * 100);
         html += `<div style="margin-bottom:24px"><h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Flywheel Leg Scores</h3>
           <div class="flywheel-gauges">
-            <div class="gauge"><div class="gauge-label">Machine-First</div><div class="gauge-track"><div class="gauge-fill" style="width:${Math.round((summary.machine_first_avg || 0) * 100)}%;background:var(--blue)"></div></div><div class="gauge-value">${Math.round((summary.machine_first_avg || 0) * 100)}%</div></div>
-            <div class="gauge"><div class="gauge-label">Senior-Led</div><div class="gauge-track"><div class="gauge-fill" style="width:${Math.round((summary.senior_led_avg || 0) * 100)}%;background:var(--navy)"></div></div><div class="gauge-value">${Math.round((summary.senior_led_avg || 0) * 100)}%</div></div>
-            <div class="gauge"><div class="gauge-label">Proprietary Knowledge</div><div class="gauge-track"><div class="gauge-fill" style="width:${Math.round((summary.proprietary_knowledge_avg || 0) * 100)}%;background:var(--orange)"></div></div><div class="gauge-value">${Math.round((summary.proprietary_knowledge_avg || 0) * 100)}%</div></div>
+            <div class="gauge"><div class="gauge-label">Machine-First</div><div class="gauge-track"><div class="gauge-fill" style="width:${scoreToPct(dashboard.machine_first_avg)}%;background:var(--blue)"></div></div><div class="gauge-value">${fmtScore(dashboard.machine_first_avg)}</div></div>
+            <div class="gauge"><div class="gauge-label">Senior-Led</div><div class="gauge-track"><div class="gauge-fill" style="width:${scoreToPct(dashboard.senior_led_avg)}%;background:var(--navy)"></div></div><div class="gauge-value">${fmtScore(dashboard.senior_led_avg)}</div></div>
+            <div class="gauge"><div class="gauge-label">Proprietary Knowledge</div><div class="gauge-track"><div class="gauge-fill" style="width:${scoreToPct(dashboard.proprietary_knowledge_avg)}%;background:var(--orange)"></div></div><div class="gauge-value">${fmtScore(dashboard.proprietary_knowledge_avg)}</div></div>
           </div>
         </div>`;
 
-        // Trend chart
-        if (metricsProjects.length >= 3) {
+        if (completedProjects.length >= 3) {
           html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Value Multiplier Trend</h3><canvas id="trendChart"></canvas></div>`;
-        }
-
-        // Scatter plot
-        if (metricsProjects.length >= 3) {
           html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Effort vs. Value</h3><canvas id="scatterChart"></canvas></div>`;
         }
 
       } else if (cp.id === 4) {
-        // ═══ CHECKPOINT 4: At Scale ═══
-        // Scaling gates
-        if (gates) {
-          html += `<h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Scaling Gates</h3>`;
-          html += `<div class="gates-grid">`;
-          for (const g of (gates.gates || [])) {
-            const badge = g.status === 'pass' ? 'badge-green' : 'badge-orange';
-            html += `<div class="gate-item"><span class="badge ${badge}">${g.status === 'pass' ? '\u2713 Pass' : '\u23F3 Pending'}</span> ${esc(g.name)}</div>`;
-          }
-          html += `<div class="gate-summary">${gates.passed_count}/${gates.total_count} gates passed</div></div>`;
+        html += `<h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Scaling Gates</h3><div class="gates-grid">`;
+        for (const g of (dashboard.scaling_gates || [])) {
+          const passed = g.status === 'pass';
+          html += `<div class="gate-item"><span class="badge ${passed ? 'badge-green' : 'badge-orange'}">${passed ? '\u2713 Pass' : '\u23F3 Pending'}</span> ${esc(g.name)}<div style="font-size:12px;color:var(--gray-500);margin-top:6px">${esc(g.detail || g.description || '')}</div></div>`;
         }
+        html += `<div class="gate-summary">${dashboard.scaling_gates_passed || 0}/${dashboard.scaling_gates_total || 0} gates passed</div></div>`;
 
-        // Margin improvement chart
-        if (metricsProjects.length >= 3) {
+        if (completedProjects.length >= 3) {
           html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Margin Improvement Over Time</h3><canvas id="marginChart"></canvas></div>`;
         }
 
-        // Full KPI summary
-        const aiRate = summary.ai_adoption_rate != null ? Math.round(summary.ai_adoption_rate * 100) : '\u2014';
-        const srLev = summary.senior_leverage || '\u2014';
-        const scopePred = summary.scope_predictability || '\u2014';
         html += `<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-top:20px">
-          <div class="kpi-card"><div class="kpi-value">${typeof aiRate === 'number' ? aiRate + '%' : aiRate}</div><div class="kpi-label">AI Adoption Rate</div></div>
-          <div class="kpi-card"><div class="kpi-value">${typeof srLev === 'number' ? round2(srLev) + 'x' : srLev}</div><div class="kpi-label">Senior Leverage</div></div>
-          <div class="kpi-card"><div class="kpi-value">${typeof scopePred === 'number' ? round2(scopePred) : scopePred}</div><div class="kpi-label">Scope Predictability</div><div class="kpi-sub">lower = better</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.machine_first_avg)}</div><div class="kpi-label">Machine-First Avg</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.senior_led_avg)}</div><div class="kpi-label">Senior-Led Avg</div></div>
+          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.proprietary_knowledge_avg)}</div><div class="kpi-label">Knowledge Avg</div></div>
         </div>`;
       }
 
-      html += `</div></div>`; // close body + card
+      html += `</div></div>`;
     }
 
     mc.innerHTML = html;
 
-    // ── Wire filters ──
     function applyPortfolioFilters() {
       const catF = document.getElementById('portfolioCatFilter')?.value || '';
       const clientF = document.getElementById('portfolioClientFilter')?.value || '';
       const pioneerF = document.getElementById('portfolioPioneerFilter')?.value || '';
-      const statusF = document.getElementById('portfolioStatusFilter')?.value || '';
       const resetBtn = document.getElementById('portfolioFilterReset');
-      if (resetBtn) resetBtn.style.display = (catF || clientF || pioneerF || statusF) ? '' : 'none';
+      if (resetBtn) resetBtn.style.display = (catF || clientF || pioneerF) ? '' : 'none';
       let visibleCount = 0;
       document.querySelectorAll('#scorecardTable tbody tr:not(.filter-empty-row)').forEach(tr => {
-        const show =
-          (!catF || tr.dataset.cat === catF) &&
-          (!clientF || tr.dataset.client === clientF) &&
-          (!pioneerF || tr.dataset.pioneer === pioneerF) &&
-          (!statusF || tr.dataset.status === statusF);
+        const show = (!catF || tr.dataset.cat === catF) && (!clientF || tr.dataset.client === clientF) && (!pioneerF || tr.dataset.pioneer === pioneerF);
         tr.style.display = show ? '' : 'none';
         if (show) visibleCount++;
       });
@@ -527,7 +501,7 @@ async function renderPortfolio() {
         if (!emptyRow) {
           emptyRow = document.createElement('tr');
           emptyRow.className = 'filter-empty-row';
-          emptyRow.innerHTML = '<td colspan="7" style="text-align:center;padding:32px;color:var(--gray-400)">No projects match the selected filters.</td>';
+          emptyRow.innerHTML = '<td colspan="9" style="text-align:center;padding:32px;color:var(--gray-400)">No projects match the selected filters.</td>';
           document.querySelector('#scorecardTable tbody')?.appendChild(emptyRow);
         }
         emptyRow.style.display = '';
@@ -536,31 +510,30 @@ async function renderPortfolio() {
       }
     }
 
-    ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter', 'portfolioComplexityFilter'].forEach(id => {
+    ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter'].forEach(id => {
       document.getElementById(id)?.addEventListener('change', applyPortfolioFilters);
     });
     document.getElementById('portfolioFilterReset')?.addEventListener('click', () => {
-      ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter', 'portfolioStatusFilter', 'portfolioComplexityFilter'].forEach(id => {
+      ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
       });
       applyPortfolioFilters();
     });
 
-    // ── Render charts after DOM update ──
     setTimeout(() => {
-      if (complete >= CHECKPOINTS[1].threshold && metricsProjects.length >= 3) {
-        renderEffortChart(metricsProjects);
-        renderQualityChart(metricsProjects);
-        const catNames = [...new Set(metricsProjects.map(d => d.category_name))].filter(Boolean);
-        if (catNames.length >= 2) renderCategoryChart(metricsProjects);
+      if (complete >= CHECKPOINTS[1].threshold && completedProjects.length >= 3) {
+        renderEffortChart(completedProjects);
+        renderQualityChart(completedProjects);
+        const catNames = [...new Set(completedProjects.map(d => d.category_name))].filter(Boolean);
+        if (catNames.length >= 2) renderCategoryChart(completedProjects);
       }
-      if (complete >= CHECKPOINTS[2].threshold && metricsProjects.length >= 3) {
-        renderTrendChart(metricsProjects);
-        renderScatterPlot(metricsProjects);
+      if (complete >= CHECKPOINTS[2].threshold && completedProjects.length >= 3) {
+        renderTrendChart(completedProjects);
+        renderScatterPlot(completedProjects);
       }
-      if (complete >= CHECKPOINTS[3].threshold && metricsProjects.length >= 3) {
-        renderMarginChart(metricsProjects);
+      if (complete >= CHECKPOINTS[3].threshold && completedProjects.length >= 3) {
+        renderMarginChart(completedProjects);
       }
     }, 100);
 

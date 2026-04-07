@@ -47,9 +47,22 @@ Phase 0 was committed (d4dfbb5) but left broken imports — server can't start.
 - [x] 2-6: Run targeted backend checks
 - [x] 2-7: Commit
 
+## Phase 2b — Dashboard wiring ⬜
+
+- [x] 2b-1: Read Phase 2 spec and current frontend dashboard implementation
+- [x] 2b-2: Replace placeholder portfolio metric endpoints with `/dashboard/metrics` + `/projects`
+- [x] 2b-3: Update checkpoint cards to use real unlocked/locked content and empty states
+- [x] 2b-4: Update project table with per-project multiplier, effort ratio, xCSG score, and multiplier color states
+- [x] 2b-5: Bump frontend cache buster and verify dashboard renders
+- [x] 2b-6: Commit
+
 ## Review
 
 - Replaced the old placeholder metric engine with Phase 2 computed per-project and portfolio metrics.
 - Added `GET /api/dashboard/metrics` and `GET /api/projects/{id}/metrics`.
 - Updated `GET /api/projects` to attach computed metrics when an expert response exists.
 - Verified backend imports and metric helpers with `python3 -m py_compile` and a small database-backed smoke script.
+- Rewired the dashboard to use `/api/dashboard/metrics` plus project-level `metrics` from `/api/projects`.
+- Replaced placeholder checkpoint content with real portfolio averages, flywheel leg scores, scaling gates, and a completed-project score table.
+- Added the requested empty assessment message and multiplier color coding on the dashboard table.
+- Verified the frontend bundle syntax with `node --check frontend/app.js`; runtime API verification is still auth-gated from this shell.
