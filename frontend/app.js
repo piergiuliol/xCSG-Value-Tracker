@@ -1516,8 +1516,8 @@ async function renderExpert(token) {
         }
         html += '</div>';
       }
+      html += '</div>';  // close accordion-section
     }
-    html += '</div>';
 
     // Submit area
     html += '<div class="accordion-submit-area">';
