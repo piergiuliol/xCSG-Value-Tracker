@@ -37,5 +37,19 @@ Phase 0 was committed (d4dfbb5) but left broken imports — server can't start.
 - [ ] 1c-2: Test with Playwright
 - [ ] 1c-3: Commit
 
-## Phase 2-4: Later phases
-(Not in scope for this task)
+## Phase 2: Computed Metrics & Dashboard Backend ⬜
+
+- [x] 2-1: Read Phase 2 spec and current backend metric/data flow
+- [x] 2-2: Rebuild backend/metrics.py around pure per-project + portfolio metric helpers
+- [x] 2-3: Add /api/dashboard/metrics endpoint
+- [x] 2-4: Add /api/projects/{id}/metrics endpoint
+- [x] 2-5: Update /api/projects to include computed metrics for each project
+- [x] 2-6: Run targeted backend checks
+- [x] 2-7: Commit
+
+## Review
+
+- Replaced the old placeholder metric engine with Phase 2 computed per-project and portfolio metrics.
+- Added `GET /api/dashboard/metrics` and `GET /api/projects/{id}/metrics`.
+- Updated `GET /api/projects` to attach computed metrics when an expert response exists.
+- Verified backend imports and metric helpers with `python3 -m py_compile` and a small database-backed smoke script.

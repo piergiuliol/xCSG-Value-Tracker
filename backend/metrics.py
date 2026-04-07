@@ -1,13 +1,14 @@
 """
-metrics.py — All metric computations for xCSG Value Tracker
-Realigned to Phase 1 spec (April 2026).
+metrics.py — Computed metrics for xCSG Value Tracker.
 
-Scoring: all categorical fields use a 1–5 ordinal scale.
-The option value maps to its position (1 = lowest, 5 = highest).
+Phase 2 metrics are derived from project delivery data plus expert assessment
+responses stored in expert_responses.
 """
-from typing import List, Optional
+from __future__ import annotations
 
-# ── Midpoint mappings ──────────────────────────────────────────────────────────
+from typing import Optional
+
+# ── Project delivery mappings ────────────────────────────────────────────────
 
 DAYS_MIDPOINTS = {
     "1": 1.0,
@@ -32,338 +33,407 @@ REVISION_NUMBERS = {
     "3+": 3.5,
 }
 
+# ── Expert assessment option-to-score mapping (canonical labels from app.py) ─
 
-# ── Phase 1 scoring maps (1–5 ordinal) ───────────────────────────────────────
-# Each option maps to 1–5 based on position in the progression.
-# These MUST match the HTML <option> values exactly.
-
-# B — Machine-First Operations
-B1_SCORES = {
-    "Raw request": 1,
-    "Light brief": 2,
-    "Structured brief": 3,
-    "Hypothesis": 4,
-    "Full hypothesis deck": 5,
+OPTION_SCORES = {
+    "b1_starting_point": {
+        "Raw request": 1,
+        "Light brief": 2,
+        "Structured brief": 3,
+        "Hypothesis": 4,
+        "Full hypothesis deck": 5,
+    },
+    "b2_research_sources": {
+        "General web": 1,
+        "Industry databases": 2,
+        "Proprietary database": 3,
+        "Internal knowledge base": 4,
+        "Synthesized firm knowledge": 5,
+    },
+    "b3_assembly_ratio": {
+        ">80% manual": 1,
+        "60-80%": 2,
+        "40-60%": 3,
+        "20-40%": 4,
+        "<20% manual": 5,
+    },
+    "b4_hypothesis_first": {
+        "Exploratory": 1,
+        "Mostly exploratory": 2,
+        "Balanced": 3,
+        "Mostly hypothesis-led": 4,
+        "Fully hypothesis-led": 5,
+    },
+    "c1_specialization": {
+        "Generalist": 1,
+        "Mixed": 2,
+        "Specialist": 3,
+        "Deep specialist": 4,
+        "World-class expert": 5,
+    },
+    "c2_directness": {
+        "Delegated": 1,
+        "Partially delegated": 2,
+        "Shared": 3,
+        "Hands-on": 4,
+        "Personally leading": 5,
+    },
+    "c3_judgment_pct": {
+        "<20%": 1,
+        "20-40%": 2,
+        "40-60%": 3,
+        "60-80%": 4,
+        ">80%": 5,
+    },
+    "d1_proprietary_data": {
+        "None": 1,
+        "Public data": 2,
+        "Some proprietary": 3,
+        "Mostly proprietary": 4,
+        "Fully proprietary": 5,
+    },
+    "d2_knowledge_reuse": {
+        "One-time": 1,
+        "Some reuse": 2,
+        "Moderate": 3,
+        "High": 4,
+        "Maximum": 5,
+    },
+    "d3_moat_test": {
+        "Easily replicable": 1,
+        "Somewhat": 2,
+        "Moderately unique": 3,
+        "Highly unique": 4,
+        "Impossible to replicate": 5,
+    },
+    "f1_feasibility": {
+        "Not assessed": 1,
+        "Basic": 2,
+        "Standard": 3,
+        "Comprehensive": 4,
+        "Exceeds requirements": 5,
+    },
+    "f2_productization": {
+        "None": 1,
+        "Identified": 2,
+        "Designed": 3,
+        "Implemented": 4,
+        "Scaled": 5,
+    },
 }
 
-B2_SCORES = {
-    "General web": 1,
-    "Industry databases": 2,
-    "Proprietary database": 3,
-    "Internal knowledge base": 4,
-    "Synthesized firm knowledge": 5,
-}
+MACHINE_FIRST_FIELDS = [
+    ("b1_starting_point_xcsg", OPTION_SCORES["b1_starting_point"]),
+    ("b2_research_sources_xcsg", OPTION_SCORES["b2_research_sources"]),
+    ("b3_assembly_ratio_xcsg", OPTION_SCORES["b3_assembly_ratio"]),
+    ("b4_hypothesis_first_xcsg", OPTION_SCORES["b4_hypothesis_first"]),
+]
 
-B3_SCORES = {
-    ">80% manual": 1,
-    "60-80%": 2,
-    "40-60%": 3,
-    "20-40%": 4,
-    "<20% manual": 5,
-}
+SENIOR_LED_FIELDS = [
+    ("c1_specialization", OPTION_SCORES["c1_specialization"]),
+    ("c2_directness", OPTION_SCORES["c2_directness"]),
+    ("c3_judgment_pct", OPTION_SCORES["c3_judgment_pct"]),
+]
 
-B4_SCORES = {
-    "Exploratory": 1,
-    "Mostly exploratory": 2,
-    "Balanced": 3,
-    "Mostly hypothesis-led": 4,
-    "Fully hypothesis-led": 5,
-}
+PROPRIETARY_KNOWLEDGE_FIELDS = [
+    ("d1_proprietary_data_xcsg", OPTION_SCORES["d1_proprietary_data"]),
+    ("d2_knowledge_reuse_xcsg", OPTION_SCORES["d2_knowledge_reuse"]),
+    ("d3_moat_test_xcsg", OPTION_SCORES["d3_moat_test"]),
+]
 
-# C — Senior-Led Model (xcsg only)
-C1_SCORES = {
-    "Generalist": 1,
-    "Mixed": 2,
-    "Specialist": 3,
-    "Deep specialist": 4,
-    "World-class expert": 5,
-}
-
-C2_SCORES = {
-    "Delegated": 1,
-    "Partially delegated": 2,
-    "Shared": 3,
-    "Hands-on": 4,
-    "Personally leading": 5,
-}
-
-C3_SCORES = {
-    "<20%": 1,
-    "20-40%": 2,
-    "40-60%": 3,
-    "60-80%": 4,
-    ">80%": 5,
-}
-
-# D — Proprietary Knowledge
-D1_SCORES = {
-    "None": 1,
-    "Public data": 2,
-    "Some proprietary": 3,
-    "Mostly proprietary": 4,
-    "Fully proprietary": 5,
-}
-
-D2_SCORES = {
-    "One-time": 1,
-    "Some reuse": 2,
-    "Moderate": 3,
-    "High": 4,
-    "Maximum": 5,
-}
-
-D3_SCORES = {
-    "Easily replicable": 1,
-    "Somewhat": 2,
-    "Moderately unique": 3,
-    "Highly unique": 4,
-    "Impossible to replicate": 5,
-}
-
-# F — Value Creation
-F1_SCORES = {
-    "Not assessed": 1,
-    "Basic": 2,
-    "Standard": 3,
-    "Comprehensive": 4,
-    "Exceeds requirements": 5,
-}
-
-F2_SCORES = {
-    "None": 1,
-    "Identified": 2,
-    "Designed": 3,
-    "Implemented": 4,
-    "Scaled": 5,
-}
+VALUE_CREATION_FIELDS = [
+    ("f1_feasibility_xcsg", OPTION_SCORES["f1_feasibility"]),
+    ("f2_productization_xcsg", OPTION_SCORES["f2_productization"]),
+]
 
 
-# ── Per-project computation ──────────────────────────────────────────────────
-
-def compute_person_days(calendar_days: str, team_size: str) -> float:
-    days = DAYS_MIDPOINTS.get(calendar_days, 8.0)
-    team = TEAM_MIDPOINTS.get(team_size, 2.0)
-    return round(days * team, 2)
+# ── Generic helpers ──────────────────────────────────────────────────────────
 
 
-def compute_effort_ratio(legacy_pd: float, xcsg_pd: float) -> float:
-    if xcsg_pd == 0:
-        return 0.0
-    return round(legacy_pd / xcsg_pd, 2)
+def round2(value: float) -> float:
+    return round(value, 2)
 
 
-def compute_quality_ratio(legacy_revisions: str, xcsg_revisions: str) -> float:
-    legacy_r = REVISION_NUMBERS.get(legacy_revisions, 1.0)
-    xcsg_r = REVISION_NUMBERS.get(xcsg_revisions, 0.5)
-    denominator = xcsg_r if xcsg_r > 0 else 0.5
-    return round(legacy_r / denominator, 2)
-
-
-def compute_value_multiplier(effort_ratio: float, quality_ratio: float) -> float:
-    return round(effort_ratio * quality_ratio, 2)
-
-
-def _avg_score(data: dict, fields: list, score_maps: list) -> Optional[float]:
-    """Average of mapped scores for a set of fields. Returns None if no values found."""
-    scores = []
-    for field, score_map in zip(fields, score_maps):
-        val = data.get(field)
-        if val and val in score_map:
-            scores.append(score_map[val])
-    if not scores:
+def parse_days(value: Optional[str]) -> Optional[float]:
+    if not value:
         return None
-    return round(sum(scores) / len(scores), 2)
+    return DAYS_MIDPOINTS.get(value)
+
+
+def parse_team_size(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    return TEAM_MIDPOINTS.get(value)
+
+
+def parse_revisions(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    return REVISION_NUMBERS.get(value)
+
+
+def average(values: list[Optional[float]]) -> Optional[float]:
+    present = [float(v) for v in values if v is not None]
+    if not present:
+        return None
+    return round2(sum(present) / len(present))
+
+
+def safe_divide(numerator: Optional[float], denominator: Optional[float]) -> Optional[float]:
+    if numerator is None or denominator in (None, 0):
+        return None
+    return round2(numerator / denominator)
+
+
+def score_value(value: Optional[str], mapping: dict[str, int]) -> Optional[float]:
+    if not value:
+        return None
+    score = mapping.get(value)
+    return float(score) if score is not None else None
+
+
+def average_scored_fields(data: dict, field_mappings: list[tuple[str, dict[str, int]]]) -> Optional[float]:
+    return average([score_value(data.get(field), mapping) for field, mapping in field_mappings])
+
+
+# ── Per-project metrics ──────────────────────────────────────────────────────
+
+
+def compute_person_days(calendar_days: Optional[str], team_size: Optional[str]) -> Optional[float]:
+    days = parse_days(calendar_days)
+    team = parse_team_size(team_size)
+    if days is None or team is None:
+        return None
+    return round2(days * team)
 
 
 def compute_machine_first_score(data: dict) -> Optional[float]:
-    """Machine-First = avg(B1_xcsg, B2_xcsg, B3_xcsg, B4_xcsg) on 1–5 scale."""
-    return _avg_score(data,
-        ["b1_starting_point_xcsg", "b2_research_sources_xcsg",
-         "b3_assembly_ratio_xcsg", "b4_hypothesis_first_xcsg"],
-        [B1_SCORES, B2_SCORES, B3_SCORES, B4_SCORES],
-    )
+    return average_scored_fields(data, MACHINE_FIRST_FIELDS)
 
 
 def compute_senior_led_score(data: dict) -> Optional[float]:
-    """Senior-Led = avg(C1, C2, C3) on 1–5 scale."""
-    return _avg_score(data,
-        ["c1_specialization", "c2_directness", "c3_judgment_pct"],
-        [C1_SCORES, C2_SCORES, C3_SCORES],
-    )
+    return average_scored_fields(data, SENIOR_LED_FIELDS)
 
 
 def compute_proprietary_knowledge_score(data: dict) -> Optional[float]:
-    """Proprietary Knowledge = avg(D1_xcsg, D2_xcsg, D3_xcsg) on 1–5 scale."""
-    return _avg_score(data,
-        ["d1_proprietary_data_xcsg", "d2_knowledge_reuse_xcsg", "d3_moat_test_xcsg"],
-        [D1_SCORES, D2_SCORES, D3_SCORES],
-    )
+    return average_scored_fields(data, PROPRIETARY_KNOWLEDGE_FIELDS)
 
 
-def compute_project_metrics(d: dict) -> dict:
-    """Compute all metrics for a single complete project."""
-    xcsg_pd = compute_person_days(d["xcsg_calendar_days"], d["xcsg_team_size"])
-    legacy_pd = compute_person_days(
-        d.get("legacy_calendar_days", "6-10"),
-        d.get("legacy_team_size", "2"),
-    )
-    effort_ratio = compute_effort_ratio(legacy_pd, xcsg_pd)
-    quality_ratio = compute_quality_ratio(
-        d.get("legacy_revision_rounds", "1"),
-        d["xcsg_revision_rounds"],
-    )
-    value_multiplier = compute_value_multiplier(effort_ratio, quality_ratio)
+def compute_value_creation_score(data: dict) -> Optional[float]:
+    return average_scored_fields(data, VALUE_CREATION_FIELDS)
 
-    machine_first = compute_machine_first_score(d)
-    senior_led = compute_senior_led_score(d)
-    proprietary = compute_proprietary_knowledge_score(d)
+
+def compute_overall_xcsg_score(data: dict) -> Optional[float]:
+    return average([
+        compute_machine_first_score(data),
+        compute_senior_led_score(data),
+        compute_proprietary_knowledge_score(data),
+        compute_value_creation_score(data),
+    ])
+
+
+def compute_project_metrics(data: dict) -> dict:
+    xcsg_person_days = compute_person_days(data.get("xcsg_calendar_days"), data.get("xcsg_team_size"))
+    legacy_person_days = compute_person_days(data.get("legacy_calendar_days"), data.get("legacy_team_size"))
+
+    xcsg_revisions = parse_revisions(data.get("xcsg_revision_rounds"))
+    legacy_revisions = parse_revisions(data.get("legacy_revision_rounds"))
+
+    effort_ratio = safe_divide(legacy_person_days, xcsg_person_days)
+    quality_ratio = safe_divide(legacy_revisions, xcsg_revisions)
+    value_multiplier = (
+        round2(effort_ratio * quality_ratio)
+        if effort_ratio is not None and quality_ratio is not None
+        else None
+    )
+
+    machine_first_score = compute_machine_first_score(data)
+    senior_led_score = compute_senior_led_score(data)
+    proprietary_knowledge_score = compute_proprietary_knowledge_score(data)
+    value_creation_score = compute_value_creation_score(data)
+    overall_xcsg_score = compute_overall_xcsg_score(data)
+
+    senior_hours = data.get("c4_senior_hours")
+    senior_days = round2(float(senior_hours) / 8.0) if senior_hours is not None else None
 
     return {
-        "id": d["id"],
-        "project_name": d.get("project_name", ""),
-        "category_name": d.get("category_name", ""),
-        "pioneer_name": d["pioneer_name"],
-        "client_name": d.get("client_name"),
-        "xcsg_person_days": xcsg_pd,
-        "legacy_person_days": legacy_pd,
+        "id": data.get("id"),
+        "project_id": data.get("id"),
+        "project_name": data.get("project_name", ""),
+        "category_name": data.get("category_name", ""),
+        "pioneer_name": data.get("pioneer_name", ""),
+        "client_name": data.get("client_name"),
+        "created_at": data.get("created_at", ""),
+        "has_expert_response": any(
+            data.get(field) is not None for field, _ in MACHINE_FIRST_FIELDS + SENIOR_LED_FIELDS + PROPRIETARY_KNOWLEDGE_FIELDS + VALUE_CREATION_FIELDS
+        ),
+        "xcsg_person_days": xcsg_person_days,
+        "legacy_person_days": legacy_person_days,
         "effort_ratio": effort_ratio,
-        "xcsg_revisions": REVISION_NUMBERS.get(d["xcsg_revision_rounds"], 0.0),
-        "legacy_revisions": REVISION_NUMBERS.get(d.get("legacy_revision_rounds", "1"), 1.0),
+        "xcsg_revisions": xcsg_revisions,
+        "legacy_revisions": legacy_revisions,
         "quality_ratio": quality_ratio,
         "value_multiplier": value_multiplier,
-        "machine_first_score": machine_first,
-        "senior_led_score": senior_led,
-        "proprietary_knowledge_score": proprietary,
-        "legacy_overridden": bool(d.get("legacy_overridden", 0)),
-        "created_at": d.get("created_at", ""),
+        "machine_first_score": machine_first_score,
+        "senior_led_score": senior_led_score,
+        "proprietary_knowledge_score": proprietary_knowledge_score,
+        "value_creation_score": value_creation_score,
+        "overall_xcsg_score": overall_xcsg_score,
+        "xcsg_senior_hours": float(senior_hours) if senior_hours is not None else None,
+        "xcsg_senior_days": senior_days,
+        "xcsg_junior_hours": float(data.get("c5_junior_hours")) if data.get("c5_junior_hours") is not None else None,
+        "legacy_overridden": bool(data.get("legacy_overridden", 0)),
     }
 
 
-def determine_checkpoint(complete_count: int) -> int:
-    if complete_count >= 20:
+# ── Portfolio metrics ────────────────────────────────────────────────────────
+
+
+def determine_checkpoint(completed_projects: int) -> int:
+    if completed_projects >= 20:
         return 4
-    elif complete_count >= 8:
+    if completed_projects >= 10:
         return 3
-    elif complete_count >= 3:
+    if completed_projects >= 5:
         return 2
-    else:
-        return 1
+    return 1
 
 
-def projects_to_next_checkpoint(complete_count: int) -> int:
-    if complete_count >= 20:
+def projects_to_next_checkpoint(completed_projects: int) -> int:
+    if completed_projects >= 20:
         return 0
-    elif complete_count >= 8:
-        return 20 - complete_count
-    elif complete_count >= 3:
-        return 8 - complete_count
-    else:
-        return 3 - complete_count
+    if completed_projects >= 10:
+        return 20 - completed_projects
+    if completed_projects >= 5:
+        return 10 - completed_projects
+    return 5 - completed_projects
+
+
+def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
+    metrics_list = [compute_project_metrics(project) for project in complete_projects]
+    completed_count = len(metrics_list)
+
+    multipliers = [m["value_multiplier"] for m in metrics_list if m["value_multiplier"] is not None]
+    high_multiplier_rate = (
+        (sum(1 for value in multipliers if value > 2.0) / len(multipliers))
+        if multipliers else None
+    )
+
+    machine_first_avg = average([m["machine_first_score"] for m in metrics_list])
+    senior_led_avg = average([m["senior_led_score"] for m in metrics_list])
+    knowledge_avg = average([m["proprietary_knowledge_score"] for m in metrics_list])
+    avg_effort_ratio = average([m["effort_ratio"] for m in metrics_list])
+
+    senior_leverage_checks = [
+        m for m in metrics_list
+        if m["senior_led_score"] is not None and m["xcsg_senior_days"] is not None and m["legacy_person_days"] is not None
+    ]
+    senior_time_ok = (
+        all((m["xcsg_senior_days"] or 0) <= (m["legacy_person_days"] or 0) for m in senior_leverage_checks)
+        if senior_leverage_checks else None
+    )
+
+    return [
+        {
+            "id": 1,
+            "name": "Value consistency",
+            "description": "≥80% of completed projects exceed 2× value multiplier",
+            "status": "pass" if high_multiplier_rate is not None and high_multiplier_rate >= 0.8 else "pending",
+            "detail": (
+                f"{round(high_multiplier_rate * 100)}% of projects >2× multiplier"
+                if high_multiplier_rate is not None else "Not enough completed projects"
+            ),
+        },
+        {
+            "id": 2,
+            "name": "Machine-first maturity",
+            "description": "Average B1-B4 score ≥ 3.5",
+            "status": "pass" if machine_first_avg is not None and machine_first_avg >= 3.5 else "pending",
+            "detail": f"Average machine-first score: {machine_first_avg}" if machine_first_avg is not None else "No machine-first scores yet",
+        },
+        {
+            "id": 3,
+            "name": "Senior leverage",
+            "description": "Average C1-C3 score ≥ 3.5 and senior time ≤ legacy effort",
+            "status": "pass" if senior_led_avg is not None and senior_led_avg >= 3.5 and senior_time_ok is True else "pending",
+            "detail": (
+                f"Average senior-led score: {senior_led_avg}, senior time within legacy effort"
+                if senior_led_avg is not None and senior_time_ok is True
+                else f"Average senior-led score: {senior_led_avg}, senior time check: {senior_time_ok}"
+                if senior_led_avg is not None else "No senior-led scores yet"
+            ),
+        },
+        {
+            "id": 4,
+            "name": "Knowledge flywheel",
+            "description": "Average D1-D3 score ≥ 3.0",
+            "status": "pass" if knowledge_avg is not None and knowledge_avg >= 3.0 else "pending",
+            "detail": f"Average proprietary knowledge score: {knowledge_avg}" if knowledge_avg is not None else "No proprietary knowledge scores yet",
+        },
+        {
+            "id": 5,
+            "name": "Margin improvement",
+            "description": "Average effort ratio is positive (>1.0)",
+            "status": "pass" if avg_effort_ratio is not None and avg_effort_ratio > 1.0 else "pending",
+            "detail": f"Average effort ratio: {avg_effort_ratio}×" if avg_effort_ratio is not None else "No effort ratios yet",
+        },
+    ]
+
+
+def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[dict]) -> dict:
+    metrics_list = [compute_project_metrics(project) for project in complete_projects]
+    completed_count = len(metrics_list)
+    total_count = len(all_projects)
+
+    average_value_multiplier = average([m["value_multiplier"] for m in metrics_list]) or 0.0
+    average_effort_ratio = average([m["effort_ratio"] for m in metrics_list]) or 0.0
+    average_quality_ratio = average([m["quality_ratio"] for m in metrics_list]) or 0.0
+    machine_first_avg = average([m["machine_first_score"] for m in metrics_list]) or 0.0
+    senior_led_avg = average([m["senior_led_score"] for m in metrics_list]) or 0.0
+    proprietary_knowledge_avg = average([m["proprietary_knowledge_score"] for m in metrics_list]) or 0.0
+    value_creation_avg = average([m["value_creation_score"] for m in metrics_list]) or 0.0
+    overall_xcsg_avg = average([m["overall_xcsg_score"] for m in metrics_list]) or 0.0
+
+    flywheel_components: list[Optional[float]] = []
+    for metric in metrics_list:
+        flywheel_components.extend([
+            metric["machine_first_score"],
+            metric["senior_led_score"],
+            metric["proprietary_knowledge_score"],
+        ])
+    flywheel_health = average(flywheel_components) or 0.0
+
+    scaling_gates = compute_scaling_gates(complete_projects)
+    passed_gates = sum(1 for gate in scaling_gates if gate["status"] == "pass")
+
+    return {
+        "total_projects": total_count,
+        "projects_completed": completed_count,
+        "complete_projects": completed_count,
+        "pending_projects": max(total_count - completed_count, 0),
+        "average_value_multiplier": average_value_multiplier,
+        "average_effort_ratio": average_effort_ratio,
+        "average_quality_ratio": average_quality_ratio,
+        "flywheel_health": flywheel_health,
+        "machine_first_avg": machine_first_avg,
+        "senior_led_avg": senior_led_avg,
+        "proprietary_knowledge_avg": proprietary_knowledge_avg,
+        "value_creation_avg": value_creation_avg,
+        "overall_xcsg_avg": overall_xcsg_avg,
+        "checkpoint": determine_checkpoint(completed_count),
+        "projects_to_next_checkpoint": projects_to_next_checkpoint(completed_count),
+        "scaling_gates": scaling_gates,
+        "scaling_gates_passed": passed_gates,
+        "scaling_gates_total": len(scaling_gates),
+    }
+
+
+# ── Backward-compatible wrappers ─────────────────────────────────────────────
 
 
 def compute_summary(complete_projects: list, total_projects: list) -> dict:
-    """Compute aggregate summary metrics."""
-    total = len(total_projects)
-    complete = len(complete_projects)
-    pending = total - complete
-
-    if not complete_projects:
-        return {
-            "total_projects": total,
-            "complete_projects": complete,
-            "pending_projects": pending,
-            "average_value_multiplier": 0.0,
-            "average_effort_ratio": 0.0,
-            "average_quality_ratio": 0.0,
-            "flywheel_health": 0.0,
-            "machine_first_avg": 0.0,
-            "senior_led_avg": 0.0,
-            "proprietary_knowledge_avg": 0.0,
-            "checkpoint": determine_checkpoint(complete),
-            "projects_to_next_checkpoint": projects_to_next_checkpoint(complete),
-        }
-
-    metrics_list = [compute_project_metrics(d) for d in complete_projects]
-
-    avg_value_mult = round(sum(m["value_multiplier"] for m in metrics_list) / len(metrics_list), 2)
-    avg_effort = round(sum(m["effort_ratio"] for m in metrics_list) / len(metrics_list), 2)
-    avg_quality = round(sum(m["quality_ratio"] for m in metrics_list) / len(metrics_list), 2)
-
-    mf_scores = [m["machine_first_score"] for m in metrics_list if m["machine_first_score"] is not None]
-    sl_scores = [m["senior_led_score"] for m in metrics_list if m["senior_led_score"] is not None]
-    pk_scores = [m["proprietary_knowledge_score"] for m in metrics_list if m["proprietary_knowledge_score"] is not None]
-
-    mf_avg = round(sum(mf_scores) / len(mf_scores), 2) if mf_scores else 0.0
-    sl_avg = round(sum(sl_scores) / len(sl_scores), 2) if sl_scores else 0.0
-    pk_avg = round(sum(pk_scores) / len(pk_scores), 2) if pk_scores else 0.0
-
-    # Flywheel health = average of the three leg scores (only those computed)
-    leg_avgs = [v for v in [mf_avg, sl_avg, pk_avg] if v > 0]
-    flywheel = round(sum(leg_avgs) / len(leg_avgs), 2) if leg_avgs else 0.0
-
-    return {
-        "total_projects": total,
-        "complete_projects": complete,
-        "pending_projects": pending,
-        "average_value_multiplier": avg_value_mult,
-        "average_effort_ratio": avg_effort,
-        "average_quality_ratio": avg_quality,
-        "flywheel_health": flywheel,
-        "machine_first_avg": mf_avg,
-        "senior_led_avg": sl_avg,
-        "proprietary_knowledge_avg": pk_avg,
-        "checkpoint": determine_checkpoint(complete),
-        "projects_to_next_checkpoint": projects_to_next_checkpoint(complete),
-    }
+    return compute_dashboard_metrics(complete_projects, total_projects)
 
 
 def compute_trend_data(complete_projects: list) -> list:
-    return [compute_project_metrics(d) for d in complete_projects]
-
-
-def compute_scaling_gates(complete_projects: list, all_projects: list) -> list:
-    """Evaluate all 6 scaling gates."""
-    # Gate 1: Multi-engagement
-    categories = set(d.get("category_name", "") for d in complete_projects)
-    gate1_pass = len(categories) >= 2
-    gate1_detail = f"{len(categories)} categor{'ies' if len(categories) != 1 else 'y'} completed"
-
-    # Gate 2: Time reduction — avg effort ratio > 1.3
-    if complete_projects:
-        metrics_list = [compute_project_metrics(d) for d in complete_projects]
-        avg_effort = sum(m["effort_ratio"] for m in metrics_list) / len(metrics_list)
-        gate2_pass = avg_effort > 1.3
-        gate2_detail = f"Avg effort ratio {avg_effort:.1f}\u00d7 (threshold: >1.3\u00d7)"
-    else:
-        gate2_pass = False
-        gate2_detail = "No complete projects yet"
-
-    # Gate 3: Client-invisible quality
-    zero_revision = sum(1 for d in complete_projects if d["xcsg_revision_rounds"] == "0")
-    gate3_pass = zero_revision >= 1
-    gate3_detail = f"{zero_revision} project{'s' if zero_revision != 1 else ''} with 0 revisions"
-
-    # Gate 4: Transferability (placeholder)
-    gate4_pass = False
-    gate4_detail = "Requires non-pioneer data \u2014 deferred to CP3"
-
-    # Gate 5: Flywheel validation (placeholder)
-    gate5_pass = False
-    gate5_detail = "Requires registry-integrated AI delivery data"
-
-    # Gate 6: Compounding — D2 reuse rate ≥40%
-    d2_values = [d.get("d2_knowledge_reuse_xcsg", "") for d in complete_projects]
-    reused = sum(1 for v in d2_values if v in ("High", "Maximum"))
-    reuse_rate = (reused / len(d2_values) * 100) if d2_values else 0
-    gate6_pass = reuse_rate >= 40
-    gate6_detail = f"D2 reuse rate: {reuse_rate:.0f}% (threshold: \u226540%)"
-
-    gates = [
-        {"id": 1, "name": "Multi-engagement", "description": "\u22652 categories completed", "status": "pass" if gate1_pass else "pending", "detail": gate1_detail},
-        {"id": 2, "name": "Time Reduction", "description": "Average effort ratio > 1.3\u00d7", "status": "pass" if gate2_pass else "pending", "detail": gate2_detail},
-        {"id": 3, "name": "Client-Invisible Quality", "description": "\u22651 project with 0 revision rounds", "status": "pass" if gate3_pass else "pending", "detail": gate3_detail},
-        {"id": 4, "name": "Transferability", "description": "Requires non-pioneer data", "status": "pass" if gate4_pass else "pending", "detail": gate4_detail},
-        {"id": 5, "name": "Flywheel Validation", "description": "Requires registry-integrated AI delivery", "status": "pass" if gate5_pass else "pending", "detail": gate5_detail},
-        {"id": 6, "name": "Compounding", "description": "D2 reuse rate \u226540%", "status": "pass" if gate6_pass else "pending", "detail": gate6_detail},
-    ]
-    return gates
+    return [compute_project_metrics(project) for project in complete_projects]

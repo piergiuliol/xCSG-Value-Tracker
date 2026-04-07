@@ -363,12 +363,25 @@ async def list_projects(
     client: Optional[str] = Query(None),
     current_user: dict = Depends(auth.get_current_user),
 ):
-    return db.list_projects(
+    projects = db.list_projects(
         status_filter=status_filter,
         category_id=category_id,
         pioneer=pioneer,
         client=client,
     )
+
+    enriched_projects = []
+    for project in projects:
+        result = dict(project)
+        expert_response = db.get_expert_response(project["id"])
+        result["metrics"] = None
+        if expert_response:
+            merged = dict(project)
+            merged.update({k: v for k, v in dict(expert_response).items() if k != "id"})
+            result["metrics"] = mtx.compute_project_metrics(merged)
+        enriched_projects.append(result)
+
+    return enriched_projects
 
 
 @app.post("/api/projects", status_code=201)
@@ -416,11 +429,11 @@ async def get_project(
     er = db.get_expert_response(project_id)
     if er:
         result["expert_response"] = dict(er)
-    if row["status"] == "complete":
         merged = dict(row)
-        if er:
-            merged.update({k: v for k, v in dict(er).items() if k != "id"})
+        merged.update({k: v for k, v in dict(er).items() if k != "id"})
         result["metrics"] = mtx.compute_project_metrics(merged)
+    else:
+        result["metrics"] = None
     return result
 
 
@@ -576,6 +589,30 @@ async def update_norm(
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
+@app.get("/api/dashboard/metrics")
+async def dashboard_metrics(current_user: dict = Depends(auth.get_current_user)):
+    complete = db.list_complete_projects()
+    all_projects = db.list_projects()
+    return mtx.compute_dashboard_metrics(complete, all_projects)
+
+
+@app.get("/api/projects/{project_id}/metrics")
+async def project_metrics(
+    project_id: int,
+    current_user: dict = Depends(auth.get_current_user),
+):
+    row = db.get_project(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    expert_response = db.get_expert_response(project_id)
+    merged = dict(row)
+    if expert_response:
+        merged.update({k: v for k, v in dict(expert_response).items() if k != "id"})
+
+    return mtx.compute_project_metrics(merged)
+
+
 @app.get("/api/metrics/summary", response_model=MetricsSummary)
 async def metrics_summary(current_user: dict = Depends(auth.get_current_user)):
     complete = db.list_complete_projects()
@@ -601,8 +638,7 @@ async def metrics_trends(current_user: dict = Depends(auth.get_current_user)):
 @app.get("/api/metrics/scaling-gates", response_model=ScalingGates)
 async def metrics_scaling_gates(current_user: dict = Depends(auth.get_current_user)):
     complete = db.list_complete_projects()
-    all_p = db.list_projects()
-    gates = mtx.compute_scaling_gates(complete, all_p)
+    gates = mtx.compute_scaling_gates(complete)
     from backend.models import ScalingGate
     passed = sum(1 for g in gates if g["status"] == "pass")
     return ScalingGates(
