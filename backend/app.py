@@ -255,7 +255,7 @@ async def list_projects(
 @app.post("/api/projects", status_code=201)
 async def create_project(
     body: ProjectCreate,
-    current_user: dict = Depends(auth.get_current_user),
+    current_user: dict = Depends(auth.get_current_user_analyst),
 ):
     cat = db.get_category(body.category_id)
     if not cat:
@@ -309,7 +309,7 @@ async def get_project(
 async def update_project(
     project_id: int,
     body: ProjectUpdate,
-    current_user: dict = Depends(auth.get_current_user),
+    current_user: dict = Depends(auth.get_current_user_analyst),
 ):
     row = db.get_project(project_id)
     if not row:
@@ -346,7 +346,7 @@ async def delete_project(
 async def patch_deliverable(
     project_id: int,
     body: ProjectUpdate,
-    current_user: dict = Depends(auth.get_current_user),
+    current_user: dict = Depends(auth.get_current_user_analyst),
 ):
     row = db.get_project(project_id)
     if not row:

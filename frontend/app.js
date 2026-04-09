@@ -151,6 +151,8 @@ function formatDateTime(d) {
 }
 
 function round2(n) { return Math.round(n * 100) / 100; }
+function canWrite() { return state.user && state.user.role !== 'viewer'; }
+function isAdmin() { return state.user && state.user.role === 'admin'; }
 
 function optionsHTML(arr, selected) {
   return '<option value="">\u2014 Select \u2014</option>' +
@@ -231,6 +233,10 @@ async function route() {
 
   await Promise.all([loadCategories(), loadSchema()]);
 
+  // Hide write-only UI for viewers
+  const navNew = document.getElementById('navNew');
+  if (navNew) navNew.style.display = canWrite() ? '' : 'none';
+
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const routeName = hash.slice(1).split('/')[0];
   const navEl = document.querySelector(`.nav-item[data-route="${routeName}"]`);
@@ -246,7 +252,7 @@ async function route() {
   if (mc) { mc.classList.remove('view-fade-in'); void mc.offsetWidth; mc.classList.add('view-fade-in'); }
 
   if (hash === '#portfolio') renderPortfolio();
-  else if (hash === '#new') renderNewProject();
+  else if (hash === '#new') { if (canWrite()) renderNewProject(); else { document.getElementById('mainContent').innerHTML = '<div class="error-state">You do not have permission to create projects.</div>'; } }
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
   else if (hash === '#settings') renderSettings();
@@ -316,7 +322,7 @@ async function renderPortfolio() {
     _projectsCache = allProjects;
 
     if (!allProjects.length) {
-      mc.innerHTML = `<div class="empty-state"><h2>Welcome to the xCSG Value Tracker</h2><p>Start by creating your first project to begin measuring xCSG performance.</p><a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a></div>`;
+      mc.innerHTML = `<div class="empty-state"><h2>Welcome to the xCSG Value Tracker</h2><p>Start by creating your first project to begin measuring xCSG performance.</p>${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a>' : ''}</div>`;
       return;
     }
 
@@ -703,10 +709,10 @@ async function renderNewProject(existing) {
       </fieldset>
 
       <div style="display:flex;gap:12px;margin-top:24px;align-items:center">
-        <button type="submit" class="btn btn-primary" id="fSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>
+        ${canWrite() ? `<button type="submit" class="btn btn-primary" id="fSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>` : ''}
         ${isEdit ? '<button type="button" class="btn btn-secondary" onclick="window.location.hash=\'#projects\'">Back to Projects</button>' : ''}
         ${isEdit && p.expert_token ? `<button type="button" class="btn btn-secondary" onclick="showExpertLink('${esc(p.expert_token)}')">Expert Link</button>` : ''}
-        ${isEdit && state.user && state.user.role === 'admin' ? `<button type="button" class="btn btn-danger" onclick="confirmDelete(${p.id}, '${esc(p.project_name)}')">Delete</button>` : ''}
+        ${isEdit && isAdmin() ? `<button type="button" class="btn btn-danger" onclick="confirmDelete(${p.id}, '${esc(p.project_name)}')">Delete</button>` : ''}
       </div>
     </form>`;
 
@@ -862,7 +868,7 @@ async function renderProjects() {
           <option value="">All Pioneers</option>
           ${pioneers.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}
         </select>
-        <a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>
+        ${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>' : ''}
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
         <th>Project</th><th>Category</th><th>Working Days</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
@@ -880,8 +886,8 @@ async function renderProjects() {
       const expertBtn = p.status !== 'complete' && p.expert_token
         ? `<button class="btn-icon" title="Copy expert link" onclick="event.stopPropagation();copyToClipboard('${window.location.origin}${window.location.pathname}#expert/${p.expert_token}')">${linkSvg}</button>`
         : '';
-      const isAdmin = state.user && state.user.role === 'admin';
-      const deleteBtn = isAdmin
+      const _isAdmin = isAdmin();
+      const deleteBtn = _isAdmin
         ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${p.id},'${esc(p.project_name)}')">${trashSvg}</button>`
         : '';
       html += `<tr class="clickable-row" data-status="${p.status}" data-cat="${esc(p.category_name)}" data-pioneer="${esc(p.pioneer_name)}" onclick="window.location.hash='#edit/${p.id}'">
@@ -1558,17 +1564,17 @@ async function renderCategoriesTab() {
   try {
     const cats = await apiCall('GET', '/categories');
     state.categories = cats;
-    const isAdmin = state.user && state.user.role === 'admin';
+    const _isAdmin = isAdmin();
 
     let html = '<div class="card">';
-    if (isAdmin) {
+    if (_isAdmin) {
       html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;gap:12px;align-items:center">
         <input type="text" id="newCatName" placeholder="Category name" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
         <input type="text" id="newCatDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
         <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
       </div>`;
     }
-    html += `<table class="data-table"><thead><tr><th>Name</th><th>Description</th><th>Projects</th>${isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
+    html += `<table class="data-table"><thead><tr><th>Name</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
     for (const c of cats) {
       const count = c.project_count || 0;
       const deleteDisabled = count > 0;
@@ -1576,13 +1582,13 @@ async function renderCategoriesTab() {
         <td><strong>${esc(c.name)}</strong></td>
         <td>${esc(c.description || '\u2014')}</td>
         <td>${count}</td>
-        ${isAdmin ? `<td class="actions-cell">
+        ${_isAdmin ? `<td class="actions-cell">
           <button class="btn-icon" title="Edit" onclick="editCategory(${c.id},'${esc(c.name)}','${esc(c.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deleteCategory(" + c.id + ",'" + esc(c.name) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
         </td>` : ''}
       </tr>`;
     }
-    html += '</tbody></table></div>';
+    html += `</tbody></table></div>`;
     sc.innerHTML = html;
   } catch (err) {
     sc.innerHTML = `<div class="error-state">Failed to load categories: ${esc(err.message)}</div>`;

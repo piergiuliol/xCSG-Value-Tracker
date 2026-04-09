@@ -333,6 +333,7 @@ def seed_data() -> None:
     SEED_USERS = [
         ("admin", "admin@alira.health", "AliraAdmin2026!", "admin"),
         ("pmo", "pmo@alira.health", "AliraPMO2026!", "analyst"),
+        ("viewer", "viewer@alira.health", "AliraView2026!", "viewer"),
     ]
 
     conn = get_connection()

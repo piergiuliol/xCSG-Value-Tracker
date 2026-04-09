@@ -36,7 +36,9 @@ docker-compose up --build   # port 8765
 ```
 
 ### Login credentials (dev seed)
-- admin / AliraAdmin2026!
+- admin / AliraAdmin2026! (admin — full access)
+- pmo / AliraPMO2026! (analyst — create/edit projects, no delete, no user/category management)
+- viewer / AliraView2026! (viewer — read-only, no create/edit/delete)
 
 ## Architecture
 
