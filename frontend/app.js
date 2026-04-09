@@ -1542,10 +1542,16 @@ function _expertToggleAccordion(sectionKey) {
 
 async function renderSettings() {
   const mc = document.getElementById('mainContent');
+  const tabs = [
+    { id: 'tabCategories', label: 'Categories', key: 'categories' },
+    { id: 'tabNorms', label: 'Legacy Norms', key: 'norms' },
+    { id: 'tabPassword', label: 'Change Password', key: 'password' },
+  ];
+  if (isAdmin()) tabs.splice(2, 0, { id: 'tabUsers', label: 'Users', key: 'users' });
+
   mc.innerHTML = `
     <div class="settings-tabs">
-      <button class="settings-tab active" id="tabCategories" onclick="switchSettingsTab('categories')">Categories</button>
-      <button class="settings-tab" id="tabNorms" onclick="switchSettingsTab('norms')">Legacy Norms</button>
+      ${tabs.map((t, i) => `<button class="settings-tab ${i === 0 ? 'active' : ''}" id="${t.id}" onclick="switchSettingsTab('${t.key}')">${t.label}</button>`).join('')}
     </div>
     <div id="settingsContent"><div class="loading">Loading\u2026</div></div>`;
   renderCategoriesTab();
@@ -1553,8 +1559,12 @@ async function renderSettings() {
 
 function switchSettingsTab(tab) {
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  document.getElementById(tab === 'categories' ? 'tabCategories' : 'tabNorms').classList.add('active');
+  const tabMap = { categories: 'tabCategories', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword' };
+  const el = document.getElementById(tabMap[tab]);
+  if (el) el.classList.add('active');
   if (tab === 'categories') renderCategoriesTab();
+  else if (tab === 'users') renderUsersTab();
+  else if (tab === 'password') renderPasswordTab();
   else renderNormsTab();
 }
 
@@ -1730,6 +1740,129 @@ async function renderNormsTab() {
   } catch (err) {
     sc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
   }
+}
+
+async function renderUsersTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = '<div class="loading">Loading users\u2026</div>';
+  try {
+    const users = await apiCall('GET', '/users');
+    let html = '<div class="card">';
+    html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200)">
+      <h3 style="margin:0 0 12px;font-size:16px;color:var(--navy)">Add User</h3>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="newUsername" placeholder="Username" style="padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;width:140px">
+        <input type="email" id="newEmail" placeholder="Email" style="padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;width:200px">
+        <input type="password" id="newPassword" placeholder="Password (min 8 chars)" style="padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;width:180px">
+        <select id="newRole" style="padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px">
+          <option value="viewer">Viewer</option>
+          <option value="analyst">Analyst</option>
+          <option value="admin">Admin</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="addUser()">Add</button>
+      </div>
+    </div>`;
+    html += '<table class="data-table"><thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Actions</th></tr></thead><tbody>';
+    const myId = state.user ? state.user.id : null;
+    for (const u of users) {
+      const isSelf = u.id === myId;
+      html += '<tr>'
+        + '<td><strong>' + esc(u.username) + '</strong>' + (isSelf ? ' <span class="badge badge-info" style="font-size:10px">you</span>' : '') + '</td>'
+        + '<td>' + esc(u.email || '\u2014') + '</td>'
+        + '<td><select class="role-select" data-uid="' + u.id + '" onchange="changeUserRole(' + u.id + ', this.value)"' + (isSelf ? ' disabled title="Cannot change your own role"' : '') + '>'
+        + ['admin', 'analyst', 'viewer'].map(r => '<option value="' + r + '"' + (r === u.role ? ' selected' : '') + '>' + r + '</option>').join('')
+        + '</select></td>'
+        + '<td>' + (u.created_at ? new Date(u.created_at).toLocaleDateString() : '\u2014') + '</td>'
+        + '<td>'
+        + '<button class="btn btn-sm btn-secondary" onclick="resetUserPassword(' + u.id + ', \'' + esc(u.username) + '\')">Reset Password</button> '
+        + (isSelf ? '' : '<button class="btn btn-sm btn-danger" onclick="confirmDeleteUser(' + u.id + ', \'' + esc(u.username) + '\')">Delete</button>')
+        + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    sc.innerHTML = html;
+  } catch (err) {
+    sc.innerHTML = '<div class="error-state">Failed to load users: ' + esc(err.message) + '</div>';
+  }
+}
+
+async function addUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const email = document.getElementById('newEmail').value.trim();
+  const password = document.getElementById('newPassword').value;
+  const role = document.getElementById('newRole').value;
+  if (!username || !email || !password) { showToast('All fields required', 'error'); return; }
+  if (password.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
+  try {
+    await apiCall('POST', '/auth/register', { username, email, password, role });
+    showToast('User created');
+    renderUsersTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function changeUserRole(userId, newRole) {
+  try {
+    await apiCall('PUT', '/users/' + userId, { role: newRole });
+    showToast('Role updated');
+  } catch (err) { showToast(err.message, 'error'); renderUsersTab(); }
+}
+
+function confirmDeleteUser(userId, username) {
+  showModal('<h3>Delete User</h3><p>Are you sure you want to delete <strong>' + esc(username) + '</strong>?</p>'
+    + '<div class="form-actions"><button class="btn btn-danger" onclick="doDeleteUser(' + userId + ')">Delete</button>'
+    + '<button class="btn btn-secondary" onclick="hideModal()">Cancel</button></div>');
+}
+
+async function doDeleteUser(userId) {
+  hideModal();
+  try {
+    await apiCall('DELETE', '/users/' + userId);
+    showToast('User deleted');
+    renderUsersTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function resetUserPassword(userId, username) {
+  showModal('<h3>Reset Password</h3><p>Set a new password for <strong>' + esc(username) + '</strong>:</p>'
+    + '<input type="password" id="resetPwInput" placeholder="New password (min 8 chars)" style="width:100%;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);margin:12px 0">'
+    + '<div class="form-actions"><button class="btn btn-primary" onclick="doResetPassword(' + userId + ')">Reset</button>'
+    + '<button class="btn btn-secondary" onclick="hideModal()">Cancel</button></div>');
+}
+
+async function doResetPassword(userId) {
+  const pw = document.getElementById('resetPwInput').value;
+  if (pw.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
+  hideModal();
+  try {
+    await apiCall('PUT', '/users/' + userId, { password: pw });
+    showToast('Password reset');
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function renderPasswordTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = '<div class="card" style="max-width:480px">'
+    + '<div style="padding:24px"><h3 style="margin:0 0 16px;color:var(--navy)">Change Your Password</h3>'
+    + '<div class="form-group"><label>Current Password</label><input type="password" id="pwCurrent" placeholder="Enter current password"></div>'
+    + '<div class="form-group" style="margin-top:12px"><label>New Password</label><input type="password" id="pwNew" placeholder="Min 8 characters"></div>'
+    + '<div class="form-group" style="margin-top:12px"><label>Confirm New Password</label><input type="password" id="pwConfirm" placeholder="Re-enter new password"></div>'
+    + '<button class="btn btn-primary" style="margin-top:16px" onclick="doChangePassword()">Change Password</button>'
+    + '</div></div>';
+}
+
+async function doChangePassword() {
+  const current = document.getElementById('pwCurrent').value;
+  const newPw = document.getElementById('pwNew').value;
+  const confirm = document.getElementById('pwConfirm').value;
+  if (!current || !newPw) { showToast('All fields required', 'error'); return; }
+  if (newPw.length < 8) { showToast('New password must be at least 8 characters', 'error'); return; }
+  if (newPw !== confirm) { showToast('Passwords do not match', 'error'); return; }
+  try {
+    await apiCall('PUT', '/auth/password', { current_password: current, new_password: newPw });
+    showToast('Password changed successfully');
+    document.getElementById('pwCurrent').value = '';
+    document.getElementById('pwNew').value = '';
+    document.getElementById('pwConfirm').value = '';
+  } catch (err) { showToast(err.message, 'error'); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

@@ -417,6 +417,42 @@ def create_user(username: str, email: str, password_hash: str, role: str) -> int
         conn.close()
 
 
+def list_users() -> list:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, username, email, role, created_at FROM users ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_user(user_id: int, data: dict) -> bool:
+    conn = get_connection()
+    try:
+        fields = {k: v for k, v in data.items() if v is not None}
+        if not fields:
+            return False
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [user_id]
+        conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_user(user_id: int) -> bool:
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 # ── Project Categories ───────────────────────────────────────────────────────
 
 def list_categories() -> list:

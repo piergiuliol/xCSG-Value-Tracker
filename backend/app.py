@@ -145,6 +145,61 @@ async def register(body: RegisterRequest, current_user: dict = Depends(auth.get_
     return {"id": user_id, "username": body.username, "role": body.role}
 
 
+@app.get("/api/users")
+async def list_users(current_user: dict = Depends(auth.get_current_user_admin)):
+    return db.list_users()
+
+
+@app.put("/api/users/{user_id}")
+async def update_user_endpoint(
+    user_id: int,
+    body: dict,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    allowed = {}
+    if "role" in body and body["role"] in ("admin", "analyst", "viewer"):
+        allowed["role"] = body["role"]
+    if "email" in body:
+        allowed["email"] = body["email"]
+    if "password" in body and body["password"]:
+        allowed["password_hash"] = auth.hash_password(body["password"])
+    db.update_user(user_id, allowed)
+    return {"ok": True}
+
+
+@app.delete("/api/users/{user_id}", status_code=204)
+async def delete_user_endpoint(
+    user_id: int,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    if int(current_user["sub"]) == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db.delete_user(user_id)
+
+
+@app.put("/api/auth/password")
+async def change_own_password(
+    body: dict,
+    current_user: dict = Depends(auth.get_current_user),
+):
+    user = db.get_user_by_id(int(current_user["sub"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not auth.verify_password(body.get("current_password", ""), user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    new_pw = body.get("new_password", "")
+    if len(new_pw) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    db.update_user(int(current_user["sub"]), {"password_hash": auth.hash_password(new_pw)})
+    return {"ok": True}
+
+
 # ── Project Categories ───────────────────────────────────────────────────────
 
 @app.get("/api/categories")
