@@ -53,14 +53,20 @@ def init_db() -> None:
                 date_started TEXT,
                 date_delivered TEXT,
                 status TEXT DEFAULT 'expert_pending',
-                xcsg_calendar_days TEXT NOT NULL,
+                xcsg_calendar_days TEXT,
+                working_days INTEGER,
                 xcsg_team_size TEXT NOT NULL,
                 xcsg_revision_rounds TEXT NOT NULL,
+                revision_depth TEXT,
                 xcsg_scope_expansion TEXT,
+                engagement_revenue REAL,
                 legacy_calendar_days TEXT,
                 legacy_team_size TEXT,
                 legacy_revision_rounds TEXT,
                 legacy_overridden INTEGER DEFAULT 0,
+                engagement_stage TEXT,
+                client_contact_email TEXT,
+                client_pulse TEXT DEFAULT 'Not yet received',
                 expert_token TEXT UNIQUE NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -71,33 +77,41 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS expert_responses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id INTEGER UNIQUE NOT NULL,
-                -- B: Machine-First Operations (4 questions × 2 columns)
-                b1_starting_point_xcsg TEXT,
-                b1_starting_point_legacy TEXT,
-                b2_research_sources_xcsg TEXT,
-                b2_research_sources_legacy TEXT,
-                b3_assembly_ratio_xcsg TEXT,
-                b3_assembly_ratio_legacy TEXT,
-                b4_hypothesis_first_xcsg TEXT,
-                b4_hypothesis_first_legacy TEXT,
-                -- C: Senior-Led Model (xcsg only)
+                b1_starting_point TEXT,
+                b2_research_sources TEXT,
+                b3_assembly_ratio TEXT,
+                b4_hypothesis_first TEXT,
+                b5_ai_survival TEXT,
+                b6_data_analysis_split TEXT,
                 c1_specialization TEXT,
                 c2_directness TEXT,
                 c3_judgment_pct TEXT,
-                c4_senior_hours REAL,
-                c5_junior_hours REAL,
-                -- D: Proprietary Knowledge (3 questions × 2 columns)
-                d1_proprietary_data_xcsg TEXT,
-                d1_proprietary_data_legacy TEXT,
-                d2_knowledge_reuse_xcsg TEXT,
-                d2_knowledge_reuse_legacy TEXT,
-                d3_moat_test_xcsg TEXT,
-                d3_moat_test_legacy TEXT,
-                -- F: Value Creation (2 questions × 2 columns)
-                f1_feasibility_xcsg TEXT,
-                f1_feasibility_legacy TEXT,
-                f2_productization_xcsg TEXT,
-                f2_productization_legacy TEXT,
+                c6_self_assessment TEXT,
+                c7_analytical_depth TEXT,
+                c8_decision_readiness TEXT,
+                d1_proprietary_data TEXT,
+                d2_knowledge_reuse TEXT,
+                d3_moat_test TEXT,
+                e1_client_decision TEXT,
+                f1_feasibility TEXT,
+                f2_productization TEXT,
+                g1_reuse_intent TEXT,
+                l1_legacy_working_days INTEGER,
+                l2_legacy_team_size TEXT,
+                l3_legacy_revision_depth TEXT,
+                l4_legacy_scope_expansion TEXT,
+                l5_legacy_client_reaction TEXT,
+                l6_legacy_b2_sources TEXT,
+                l7_legacy_c1_specialization TEXT,
+                l8_legacy_c2_directness TEXT,
+                l9_legacy_c3_judgment TEXT,
+                l10_legacy_d1_proprietary TEXT,
+                l11_legacy_d2_reuse TEXT,
+                l12_legacy_d3_moat TEXT,
+                l13_legacy_c7_depth TEXT,
+                l14_legacy_c8_decision TEXT,
+                l15_legacy_e1_decision TEXT,
+                l16_legacy_b6_data TEXT,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
@@ -134,8 +148,88 @@ def init_db() -> None:
 
     # Migrate expert_responses from old 12-field schema to new 23-field schema
     _migrate_expert_responses()
+    migrate()
+    migrate_v2()
 
     seed_data()
+
+
+def migrate() -> None:
+    conn = get_connection()
+    try:
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        for statement in [
+            "ALTER TABLE projects ADD COLUMN engagement_stage TEXT",
+            "ALTER TABLE projects ADD COLUMN client_contact_email TEXT",
+            "ALTER TABLE projects ADD COLUMN client_pulse TEXT DEFAULT 'Not yet received'",
+        ]:
+            col = statement.split()[5]
+            if col not in project_columns:
+                conn.execute(statement)
+        conn.execute("UPDATE projects SET client_pulse = 'Not yet received' WHERE client_pulse IS NULL OR TRIM(client_pulse) = ''")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_v2() -> None:
+    conn = get_connection()
+    try:
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        for statement in [
+            "ALTER TABLE projects ADD COLUMN working_days INTEGER",
+            "ALTER TABLE projects ADD COLUMN engagement_revenue REAL",
+            "ALTER TABLE projects ADD COLUMN revision_depth TEXT",
+        ]:
+            col = statement.split()[5]
+            if col not in project_columns:
+                conn.execute(statement)
+
+        expert_columns = {row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
+        expert_statements = [
+            "ALTER TABLE expert_responses ADD COLUMN b1_starting_point TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN b2_research_sources TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN b3_assembly_ratio TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN b4_hypothesis_first TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN b5_ai_survival TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN b6_data_analysis_split TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN c1_specialization TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN c2_directness TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN c3_judgment_pct TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN c6_self_assessment TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN c7_analytical_depth TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN c8_decision_readiness TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN d1_proprietary_data TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN d2_knowledge_reuse TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN d3_moat_test TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN e1_client_decision TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN f1_feasibility TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN f2_productization TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN g1_reuse_intent TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l1_legacy_working_days INTEGER",
+            "ALTER TABLE expert_responses ADD COLUMN l2_legacy_team_size TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l3_legacy_revision_depth TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l4_legacy_scope_expansion TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l5_legacy_client_reaction TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l6_legacy_b2_sources TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l7_legacy_c1_specialization TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l8_legacy_c2_directness TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l9_legacy_c3_judgment TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l10_legacy_d1_proprietary TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l11_legacy_d2_reuse TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l12_legacy_d3_moat TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l13_legacy_c7_depth TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l14_legacy_c8_decision TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l15_legacy_e1_decision TEXT",
+            "ALTER TABLE expert_responses ADD COLUMN l16_legacy_b6_data TEXT",
+        ]
+        for statement in expert_statements:
+            col = statement.split()[5]
+            if col not in expert_columns:
+                conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _drop_v2_tables() -> None:
@@ -162,76 +256,75 @@ def _drop_v2_tables() -> None:
 
 
 def _migrate_expert_responses() -> None:
-    """Migrate expert_responses from old 12-field schema to new 23-field schema.
-
-    Preserves id and project_id so the project–response link stays valid.
-    Old response data is lost (columns renamed/removed); projects with null
-    new fields are reset to 'expert_pending' so experts can re-submit.
-    """
+    """Migrate expert_responses from pre-v2 schema to the current response model."""
     conn = get_connection()
     try:
-        # Check if table exists at all
         table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='expert_responses'"
         ).fetchone()
         if not table:
-            return  # Fresh install — will be created by CREATE TABLE IF NOT EXISTS
+            return
 
         columns = [row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()]
+        if "b1_starting_point" in columns:
+            return
 
-        # Already on new schema?
-        if "b1_starting_point_xcsg" in columns:
-            return  # Nothing to do
-
-        # Rebuild table: rename old, create new, copy ids, drop old
         conn.execute("ALTER TABLE expert_responses RENAME TO _expert_responses_old")
         conn.execute("""CREATE TABLE expert_responses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER UNIQUE NOT NULL,
-            b1_starting_point_xcsg TEXT,
-            b1_starting_point_legacy TEXT,
-            b2_research_sources_xcsg TEXT,
-            b2_research_sources_legacy TEXT,
-            b3_assembly_ratio_xcsg TEXT,
-            b3_assembly_ratio_legacy TEXT,
-            b4_hypothesis_first_xcsg TEXT,
-            b4_hypothesis_first_legacy TEXT,
+            b1_starting_point TEXT,
+            b2_research_sources TEXT,
+            b3_assembly_ratio TEXT,
+            b4_hypothesis_first TEXT,
+            b5_ai_survival TEXT,
+            b6_data_analysis_split TEXT,
             c1_specialization TEXT,
             c2_directness TEXT,
             c3_judgment_pct TEXT,
-            c4_senior_hours REAL,
-            c5_junior_hours REAL,
-            d1_proprietary_data_xcsg TEXT,
-            d1_proprietary_data_legacy TEXT,
-            d2_knowledge_reuse_xcsg TEXT,
-            d2_knowledge_reuse_legacy TEXT,
-            d3_moat_test_xcsg TEXT,
-            d3_moat_test_legacy TEXT,
-            f1_feasibility_xcsg TEXT,
-            f1_feasibility_legacy TEXT,
-            f2_productization_xcsg TEXT,
-            f2_productization_legacy TEXT,
+            c6_self_assessment TEXT,
+            c7_analytical_depth TEXT,
+            c8_decision_readiness TEXT,
+            d1_proprietary_data TEXT,
+            d2_knowledge_reuse TEXT,
+            d3_moat_test TEXT,
+            e1_client_decision TEXT,
+            f1_feasibility TEXT,
+            f2_productization TEXT,
+            g1_reuse_intent TEXT,
+            l1_legacy_working_days INTEGER,
+            l2_legacy_team_size TEXT,
+            l3_legacy_revision_depth TEXT,
+            l4_legacy_scope_expansion TEXT,
+            l5_legacy_client_reaction TEXT,
+            l6_legacy_b2_sources TEXT,
+            l7_legacy_c1_specialization TEXT,
+            l8_legacy_c2_directness TEXT,
+            l9_legacy_c3_judgment TEXT,
+            l10_legacy_d1_proprietary TEXT,
+            l11_legacy_d2_reuse TEXT,
+            l12_legacy_d3_moat TEXT,
+            l13_legacy_c7_depth TEXT,
+            l14_legacy_c8_decision TEXT,
+            l15_legacy_e1_decision TEXT,
+            l16_legacy_b6_data TEXT,
             submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
         )""")
-        # Preserve id + project_id links; response data is now null
         conn.execute(
             "INSERT INTO expert_responses (id, project_id, submitted_at) "
             "SELECT id, project_id, submitted_at FROM _expert_responses_old"
         )
         conn.execute("DROP TABLE _expert_responses_old")
-
-        # Reset projects with null responses back to expert_pending
         conn.execute(
             """UPDATE projects SET status = 'expert_pending', updated_at = CURRENT_TIMESTAMP
                WHERE id IN (
-                   SELECT project_id FROM expert_responses WHERE b1_starting_point_xcsg IS NULL
+                   SELECT project_id FROM expert_responses WHERE b1_starting_point IS NULL
                )"""
         )
         conn.commit()
     finally:
         conn.close()
-
 
 def seed_data() -> None:
     """Create seed users, categories, and legacy norms."""
@@ -263,16 +356,19 @@ def seed_data() -> None:
                         (new_hash, row["id"]),
                     )
 
-        # Seed categories
+        # Seed categories (V2 spec — 11 project categories)
         SEED_CATEGORIES = [
             ("CDD", "Commercial due diligence"),
-            ("Competitive Landscape", "Competitive analysis and market mapping"),
-            ("Financial Model", "Financial modelling and projections"),
-            ("Market Access", "Market access and reimbursement strategy"),
-            ("Proposal", "Client proposal or pitch document"),
-            ("Call Prep Brief", "KOL or expert interview preparation"),
-            ("Presentation", "Slide deck or presentation"),
-            ("KOL Mapping", "Key opinion leader identification and mapping"),
+            ("Strategic Planning", "Strategic planning and advisory"),
+            ("Portfolio Management & Opportunity Assessment", "Portfolio strategy and opportunity evaluation"),
+            ("Pricing & Reimbursement", "Pricing strategy and reimbursement planning"),
+            ("Market Access Strategy", "Market access and reimbursement strategy"),
+            ("New Product Strategy", "New product planning and launch strategy"),
+            ("Strategic Surveillance & Competitive Intelligence", "Competitive intelligence and market monitoring"),
+            ("Evidence Generation & HEOR", "Health economics and outcomes research"),
+            ("Transaction Advisory", "M&A due diligence and transaction support"),
+            ("Market Research", "Primary and secondary market research"),
+            ("Regulatory Strategy", "Regulatory affairs and submission strategy"),
         ]
         for name, desc in SEED_CATEGORIES:
             conn.execute(
@@ -282,30 +378,7 @@ def seed_data() -> None:
 
         conn.commit()
 
-        # Seed legacy norms keyed by category_id
-        SEED_NORMS = [
-            ("CDD", "11-20", "3", "2", "Full commercial due diligence"),
-            ("Competitive Landscape", "11-20", "3", "2", "Competitive analysis and market mapping"),
-            ("Financial Model", "6-10", "2", "1", "Financial modelling and projections"),
-            ("Market Access", "11-20", "3", "2", "Market access and reimbursement strategy"),
-            ("Proposal", "4-5", "2", "1", "Client proposal or pitch document"),
-            ("Call Prep Brief", "2-3", "1", "1", "KOL or expert interview preparation"),
-            ("Presentation", "4-5", "2", "2", "Slide deck or presentation"),
-            ("KOL Mapping", "11-20", "3", "2", "Key opinion leader identification and mapping"),
-        ]
-        for cat_name, days, team, revisions, notes in SEED_NORMS:
-            cat = conn.execute(
-                "SELECT id FROM project_categories WHERE name = ?", (cat_name,)
-            ).fetchone()
-            if cat:
-                conn.execute(
-                    """INSERT OR IGNORE INTO legacy_norms
-                       (category_id, typical_calendar_days, typical_team_size, typical_revision_rounds, notes)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (cat["id"], days, team, revisions, notes),
-                )
-
-        conn.commit()
+        # V2: No seeded legacy norms — norms are computed from expert responses
     finally:
         conn.close()
 
@@ -444,10 +517,10 @@ def create_project(data: dict) -> int:
                (created_by, project_name, category_id, client_name,
                 pioneer_name, pioneer_email, description,
                 date_started, date_delivered,
-                xcsg_calendar_days, xcsg_team_size, xcsg_revision_rounds, xcsg_scope_expansion,
+                xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
-                legacy_overridden, expert_token)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -458,14 +531,20 @@ def create_project(data: dict) -> int:
                 data.get("description"),
                 data.get("date_started"),
                 data.get("date_delivered"),
-                data["xcsg_calendar_days"],
+                data.get("xcsg_calendar_days"),
+                data.get("working_days"),
                 data["xcsg_team_size"],
                 data["xcsg_revision_rounds"],
+                data.get("revision_depth"),
                 data.get("xcsg_scope_expansion"),
+                data.get("engagement_revenue"),
                 data["legacy_calendar_days"],
                 data["legacy_team_size"],
                 data["legacy_revision_rounds"],
                 1 if legacy_overridden else 0,
+                data.get("engagement_stage"),
+                data.get("client_contact_email"),
+                data.get("client_pulse") or "Not yet received",
                 token,
             ),
         )
@@ -589,35 +668,54 @@ def create_expert_response(project_id: int, data: dict) -> int:
         cur = conn.execute(
             """INSERT INTO expert_responses
                (project_id,
-                b1_starting_point_xcsg, b1_starting_point_legacy,
-                b2_research_sources_xcsg, b2_research_sources_legacy,
-                b3_assembly_ratio_xcsg, b3_assembly_ratio_legacy,
-                b4_hypothesis_first_xcsg, b4_hypothesis_first_legacy,
-                c1_specialization, c2_directness, c3_judgment_pct,
-                c4_senior_hours, c5_junior_hours,
-                d1_proprietary_data_xcsg, d1_proprietary_data_legacy,
-                d2_knowledge_reuse_xcsg, d2_knowledge_reuse_legacy,
-                d3_moat_test_xcsg, d3_moat_test_legacy,
-                f1_feasibility_xcsg, f1_feasibility_legacy,
-                f2_productization_xcsg, f2_productization_legacy)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                b1_starting_point, b2_research_sources, b3_assembly_ratio, b4_hypothesis_first, b5_ai_survival, b6_data_analysis_split,
+                c1_specialization, c2_directness, c3_judgment_pct, c6_self_assessment, c7_analytical_depth, c8_decision_readiness,
+                d1_proprietary_data, d2_knowledge_reuse, d3_moat_test, e1_client_decision,
+                f1_feasibility, f2_productization, g1_reuse_intent,
+                l1_legacy_working_days, l2_legacy_team_size, l3_legacy_revision_depth, l4_legacy_scope_expansion,
+                l5_legacy_client_reaction, l6_legacy_b2_sources, l7_legacy_c1_specialization, l8_legacy_c2_directness,
+                l9_legacy_c3_judgment, l10_legacy_d1_proprietary, l11_legacy_d2_reuse, l12_legacy_d3_moat,
+                l13_legacy_c7_depth, l14_legacy_c8_decision, l15_legacy_e1_decision, l16_legacy_b6_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project_id,
-                data.get("b1_starting_point_xcsg"), data.get("b1_starting_point_legacy"),
-                data.get("b2_research_sources_xcsg"), data.get("b2_research_sources_legacy"),
-                data.get("b3_assembly_ratio_xcsg"), data.get("b3_assembly_ratio_legacy"),
-                data.get("b4_hypothesis_first_xcsg"), data.get("b4_hypothesis_first_legacy"),
-                data.get("c1_specialization"), data.get("c2_directness"), data.get("c3_judgment_pct"),
-                data.get("c4_senior_hours"), data.get("c5_junior_hours"),
-                data.get("d1_proprietary_data_xcsg"), data.get("d1_proprietary_data_legacy"),
-                data.get("d2_knowledge_reuse_xcsg"), data.get("d2_knowledge_reuse_legacy"),
-                data.get("d3_moat_test_xcsg"), data.get("d3_moat_test_legacy"),
-                data.get("f1_feasibility_xcsg"), data.get("f1_feasibility_legacy"),
-                data.get("f2_productization_xcsg"), data.get("f2_productization_legacy"),
+                data.get("b1_starting_point"),
+                data.get("b2_research_sources"),
+                data.get("b3_assembly_ratio"),
+                data.get("b4_hypothesis_first"),
+                data.get("b5_ai_survival"),
+                data.get("b6_data_analysis_split"),
+                data.get("c1_specialization"),
+                data.get("c2_directness"),
+                data.get("c3_judgment_pct"),
+                data.get("c6_self_assessment"),
+                data.get("c7_analytical_depth"),
+                data.get("c8_decision_readiness"),
+                data.get("d1_proprietary_data"),
+                data.get("d2_knowledge_reuse"),
+                data.get("d3_moat_test"),
+                data.get("e1_client_decision"),
+                data.get("f1_feasibility"),
+                data.get("f2_productization"),
+                data.get("g1_reuse_intent"),
+                data.get("l1_legacy_working_days"),
+                data.get("l2_legacy_team_size"),
+                data.get("l3_legacy_revision_depth"),
+                data.get("l4_legacy_scope_expansion"),
+                data.get("l5_legacy_client_reaction"),
+                data.get("l6_legacy_b2_sources"),
+                data.get("l7_legacy_c1_specialization"),
+                data.get("l8_legacy_c2_directness"),
+                data.get("l9_legacy_c3_judgment"),
+                data.get("l10_legacy_d1_proprietary"),
+                data.get("l11_legacy_d2_reuse"),
+                data.get("l12_legacy_d3_moat"),
+                data.get("l13_legacy_c7_depth"),
+                data.get("l14_legacy_c8_decision"),
+                data.get("l15_legacy_e1_decision"),
+                data.get("l16_legacy_b6_data"),
             ),
         )
-        # Mark project as complete
         conn.execute(
             "UPDATE projects SET status = 'complete', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (project_id,),
@@ -735,33 +833,7 @@ def list_complete_projects() -> list:
     conn = get_connection()
     try:
         rows = conn.execute(
-            """SELECT p.*, pc.name as category_name,
-                      er.id AS expert_response_id,
-                      er.project_id AS expert_response_project_id,
-                      er.b1_starting_point_xcsg,
-                      er.b1_starting_point_legacy,
-                      er.b2_research_sources_xcsg,
-                      er.b2_research_sources_legacy,
-                      er.b3_assembly_ratio_xcsg,
-                      er.b3_assembly_ratio_legacy,
-                      er.b4_hypothesis_first_xcsg,
-                      er.b4_hypothesis_first_legacy,
-                      er.c1_specialization,
-                      er.c2_directness,
-                      er.c3_judgment_pct,
-                      er.c4_senior_hours,
-                      er.c5_junior_hours,
-                      er.d1_proprietary_data_xcsg,
-                      er.d1_proprietary_data_legacy,
-                      er.d2_knowledge_reuse_xcsg,
-                      er.d2_knowledge_reuse_legacy,
-                      er.d3_moat_test_xcsg,
-                      er.d3_moat_test_legacy,
-                      er.f1_feasibility_xcsg,
-                      er.f1_feasibility_legacy,
-                      er.f2_productization_xcsg,
-                      er.f2_productization_legacy,
-                      er.submitted_at
+            """SELECT p.*, pc.name as category_name, er.*
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                JOIN expert_responses er ON p.id = er.project_id
@@ -770,3 +842,48 @@ def list_complete_projects() -> list:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def update_project_client_pulse(project_id: int, client_pulse: str) -> bool:
+    return update_project(project_id, {"client_pulse": client_pulse})
+
+
+def list_norm_aggregates() -> list:
+    from backend.metrics import compute_project_metrics
+
+    completed = list_complete_projects()
+    all_projects = list_projects()
+
+    # Group completed projects by category
+    grouped = {}
+    for project in completed:
+        cat_name = project.get("category_name") or "Unknown"
+        cat_id = project.get("category_id")
+        grouped.setdefault(cat_name, {"category_id": cat_id, "items": []})
+        grouped[cat_name]["items"].append(project)
+
+    # Count total projects per category
+    total_by_cat = {}
+    for p in all_projects:
+        cat_name = p.get("category_name") or "Unknown"
+        total_by_cat[cat_name] = total_by_cat.get(cat_name, 0) + 1
+
+    def avg(vals):
+        filtered = [v for v in vals if v is not None]
+        return round(sum(filtered) / len(filtered), 2) if filtered else None
+
+    rows = []
+    for cat_name, group in sorted(grouped.items()):
+        items = group["items"]
+        metrics_list = [compute_project_metrics(item) for item in items]
+
+        rows.append({
+            "category_id": group["category_id"],
+            "category_name": cat_name,
+            "completed_surveys": len(items),
+            "total_projects": total_by_cat.get(cat_name, len(items)),
+            "avg_effort_ratio": avg([m["delivery_speed"] for m in metrics_list]),
+            "avg_quality_ratio": avg([m["output_quality"] for m in metrics_list]),
+            "avg_productivity": avg([m["productivity_ratio"] for m in metrics_list]),
+        })
+    return rows

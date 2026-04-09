@@ -58,13 +58,19 @@ class ProjectCreate(BaseModel):
     client_name: Optional[str] = None
     pioneer_name: str
     pioneer_email: Optional[EmailStr] = None
+    engagement_stage: Optional[str] = None
+    client_contact_email: Optional[EmailStr] = None
+    client_pulse: Optional[str] = "Not yet received"
     description: Optional[str] = None
     date_started: Optional[str] = None
     date_delivered: Optional[str] = None
-    xcsg_calendar_days: str
+    xcsg_calendar_days: Optional[str] = None
+    working_days: Optional[int] = None
     xcsg_team_size: str
     xcsg_revision_rounds: str
+    revision_depth: Optional[str] = None
     xcsg_scope_expansion: Optional[str] = None
+    engagement_revenue: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
@@ -89,13 +95,19 @@ class ProjectUpdate(BaseModel):
     client_name: Optional[str] = None
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
+    engagement_stage: Optional[str] = None
+    client_contact_email: Optional[EmailStr] = None
+    client_pulse: Optional[str] = None
     description: Optional[str] = None
     date_started: Optional[str] = None
     date_delivered: Optional[str] = None
     xcsg_calendar_days: Optional[str] = None
+    working_days: Optional[int] = None
     xcsg_team_size: Optional[str] = None
     xcsg_revision_rounds: Optional[str] = None
+    revision_depth: Optional[str] = None
     xcsg_scope_expansion: Optional[str] = None
+    engagement_revenue: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
@@ -117,53 +129,51 @@ class ProjectUpdate(BaseModel):
 # ── Expert ────────────────────────────────────────────────────────────────────
 
 class ExpertResponseCreate(BaseModel):
-    """Expert assessment — 23 fields matching the realigned framework (Phase 1).
-
-    B1-B4: machine-first (4 questions × 2 columns: xcsg + legacy) = 8 string fields
-    C1-C3: senior-led (3 fields, xcsg only) = 3 string fields
-    C4-C5: senior/junior hours = 2 numeric fields
-    D1-D3: proprietary knowledge (3 questions × 2 columns) = 6 string fields
-    F1-F2: value creation (2 questions × 2 columns) = 4 string fields
-
-    All string fields are 5-level categorical. See /api/expert/options for valid values.
-    """
-    # B — Machine-First Operations (4 questions × 2 columns = 8 fields)
-    b1_starting_point_xcsg: Optional[str] = None
-    b1_starting_point_legacy: Optional[str] = None
-    b2_research_sources_xcsg: Optional[str] = None
-    b2_research_sources_legacy: Optional[str] = None
-    b3_assembly_ratio_xcsg: Optional[str] = None
-    b3_assembly_ratio_legacy: Optional[str] = None
-    b4_hypothesis_first_xcsg: Optional[str] = None
-    b4_hypothesis_first_legacy: Optional[str] = None
-
-    # C — Senior-Led Model (5 fields, xCSG only)
+    b1_starting_point: Optional[str] = None
+    b2_research_sources: Optional[str] = None
+    b3_assembly_ratio: Optional[str] = None
+    b4_hypothesis_first: Optional[str] = None
+    b5_ai_survival: Optional[str] = None
+    b6_data_analysis_split: Optional[str] = None
     c1_specialization: Optional[str] = None
     c2_directness: Optional[str] = None
     c3_judgment_pct: Optional[str] = None
-    c4_senior_hours: Optional[float] = None
-    c5_junior_hours: Optional[float] = None
-
-    # D — Proprietary Knowledge (3 questions × 2 columns = 6 fields)
-    d1_proprietary_data_xcsg: Optional[str] = None
-    d1_proprietary_data_legacy: Optional[str] = None
-    d2_knowledge_reuse_xcsg: Optional[str] = None
-    d2_knowledge_reuse_legacy: Optional[str] = None
-    d3_moat_test_xcsg: Optional[str] = None
-    d3_moat_test_legacy: Optional[str] = None
-
-    # F — Value Creation (2 questions × 2 columns = 4 fields)
-    f1_feasibility_xcsg: Optional[str] = None
-    f1_feasibility_legacy: Optional[str] = None
-    f2_productization_xcsg: Optional[str] = None
-    f2_productization_legacy: Optional[str] = None
+    c6_self_assessment: Optional[str] = None
+    c7_analytical_depth: Optional[str] = None
+    c8_decision_readiness: Optional[str] = None
+    d1_proprietary_data: Optional[str] = None
+    d2_knowledge_reuse: Optional[str] = None
+    d3_moat_test: Optional[str] = None
+    e1_client_decision: Optional[str] = None
+    f1_feasibility: Optional[str] = None
+    f2_productization: Optional[str] = None
+    g1_reuse_intent: Optional[str] = None
+    l1_legacy_working_days: Optional[int] = None
+    l2_legacy_team_size: Optional[str] = None
+    l3_legacy_revision_depth: Optional[str] = None
+    l4_legacy_scope_expansion: Optional[str] = None
+    l5_legacy_client_reaction: Optional[str] = None
+    l6_legacy_b2_sources: Optional[str] = None
+    l7_legacy_c1_specialization: Optional[str] = None
+    l8_legacy_c2_directness: Optional[str] = None
+    l9_legacy_c3_judgment: Optional[str] = None
+    l10_legacy_d1_proprietary: Optional[str] = None
+    l11_legacy_d2_reuse: Optional[str] = None
+    l12_legacy_d3_moat: Optional[str] = None
+    l13_legacy_c7_depth: Optional[str] = None
+    l14_legacy_c8_decision: Optional[str] = None
+    l15_legacy_e1_decision: Optional[str] = None
+    l16_legacy_b6_data: Optional[str] = None
 
 
 class ExpertAssessmentMetrics(BaseModel):
-    """Computed flywheel leg scores from expert assessment."""
     machine_first_score: Optional[float] = None
     senior_led_score: Optional[float] = None
     proprietary_knowledge_score: Optional[float] = None
+    client_impact: Optional[float] = None
+    data_independence: Optional[float] = None
+    ai_survival_rate: Optional[float] = None
+    reuse_intent_score: Optional[float] = None
 
 
 class ExpertContextResponse(BaseModel):
@@ -176,7 +186,8 @@ class ExpertContextResponse(BaseModel):
     date_started: Optional[str]
     date_delivered: Optional[str]
     xcsg_team_size: str
-    xcsg_calendar_days: str
+    xcsg_calendar_days: Optional[str] = None
+    engagement_stage: Optional[str] = None
     already_completed: bool
 
 
@@ -197,13 +208,17 @@ class ProjectMetrics(BaseModel):
     category_name: str
     pioneer_name: str
     client_name: Optional[str]
-    xcsg_person_days: float
-    legacy_person_days: float
-    effort_ratio: float
-    xcsg_revisions: float
-    legacy_revisions: float
-    quality_ratio: float
-    value_multiplier: float
+    xcsg_person_days: Optional[float]
+    legacy_person_days: Optional[float]
+    effort_ratio: Optional[float]
+    quality_score: Optional[float]
+    legacy_quality_score: Optional[float]
+    outcome_rate_ratio: Optional[float]
+    productivity_ratio: Optional[float]
+    calendar_days: Optional[int] = None
+    ai_survival_rate: Optional[float] = None
+    reuse_intent_score: Optional[float] = None
+    client_pulse_score: Optional[float] = None
     machine_first_score: Optional[float]
     senior_led_score: Optional[float]
     proprietary_knowledge_score: Optional[float]
@@ -215,10 +230,14 @@ class MetricsSummary(BaseModel):
     total_projects: int
     complete_projects: int
     pending_projects: int
-    average_value_multiplier: float
     average_effort_ratio: float
-    average_quality_ratio: float
+    average_quality_score: float
+    average_outcome_rate_ratio: float
+    average_productivity_ratio: Optional[float] = None
     flywheel_health: float
+    reuse_intent_avg: float = 0.0
+    ai_survival_avg: float = 0.0
+    client_pulse_avg: float = 0.0
     machine_first_avg: float
     senior_led_avg: float
     proprietary_knowledge_avg: float
@@ -231,9 +250,10 @@ class TrendPoint(BaseModel):
     project_name: str
     category_name: str
     pioneer_name: str
-    value_multiplier: float
-    effort_ratio: float
-    quality_ratio: float
+    effort_ratio: Optional[float]
+    quality_score: Optional[float]
+    outcome_rate_ratio: Optional[float]
+    productivity_ratio: Optional[float]
     machine_first_score: Optional[float]
     senior_led_score: Optional[float]
     proprietary_knowledge_score: Optional[float]
@@ -248,7 +268,7 @@ class ScalingGate(BaseModel):
     id: int
     name: str
     description: str
-    status: str  # "pass" or "pending"
+    status: str
     detail: str
 
 

@@ -12,7 +12,7 @@ Usage:
 Prerequisites:
     pip install requests playwright
     playwright install chromium
-    Server must be running on port 8000 (script will start it if not)
+    Server must be running on port 8765 (script will start it if not)
 """
 
 import json
@@ -23,7 +23,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:8765"
 SCREENSHOTS_DIR = Path("test-results/screenshots")
 REPORT_PATH = Path("tasks/qa-v2-report.md")
 

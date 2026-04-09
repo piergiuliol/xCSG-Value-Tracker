@@ -3,7 +3,7 @@ const { chromium } = require('playwright');
   const browser = await chromium.launch({ headless: false, slowMo: 80 });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
-  await page.goto('http://localhost:8000/', { waitUntil: 'networkidle' });
+  await page.goto('http://localhost:8765/', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
   await page.fill('#loginUsername', 'admin');
   await page.fill('#loginPassword', 'AliraAdmin2026!');

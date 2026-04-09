@@ -11,13 +11,77 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 const API = '/api';
+const ENGAGEMENT_STAGES = ['New business (pre-mandate)', 'Active engagement', 'Post-engagement (follow-on)'];
+const TEAM_SIZES = ['1', '2', '3', '4+'];
+const REVISION_DEPTH_OPTIONS = ['No revisions needed', 'Cosmetic only', 'Moderate rework', 'Major rework'];
+const SCOPE_OPTIONS = [
+  'Yes expanded scope', 'Yes new engagement', 'No', 'Not yet delivered'
+];
+const CLIENT_PULSE_OPTIONS = ['Not yet received', 'Exceeded expectations', 'Met expectations', 'Below expectations'];
+
 const state = {
   user: null,
   token: sessionStorage.getItem('xcsg_token') || null,
-  categories: [],  // cached categories list
+  categories: [],
 };
 
-const charts = {};          // track Chart.js instances for cleanup
+const charts = {};
+let schema = null;
+
+async function loadSchema() {
+  if (!schema) {
+    try {
+      const resp = await fetch(API + '/schema');
+      if (resp.ok) schema = await resp.json();
+    } catch { /* will retry next route */ }
+  }
+}
+
+function getAssessmentFields() {
+  if (!schema) return [];
+  const sectionOrder = ['B', 'C', 'D', 'E', 'F', 'G'];
+  return sectionOrder.map(sec => {
+    const secMeta = schema.sections[sec];
+    if (!secMeta) return null;
+    const fields = Object.entries(schema.fields)
+      .filter(([k, f]) => f.section === sec)
+      .map(([key, f]) => ({
+        id: key.split('_')[0].toUpperCase(),
+        key,
+        label: f.label,
+        scores: f.scores || {},
+      }));
+    if (!fields.length) return null;
+    return { section: sec, title: secMeta.title, icon: secMeta.icon, desc: secMeta.desc, fields };
+  }).filter(Boolean);
+}
+
+function getExpertSections() {
+  return schema?.sections || {};
+}
+
+function scoreColor(s) {
+  if (s >= 0.75) return 'var(--success, #10B981)';
+  if (s >= 0.5) return 'var(--blue, #3B82F6)';
+  if (s >= 0.25) return 'var(--warning, #F59E0B)';
+  return 'var(--danger, #EF4444)';
+}
+
+function gaugeHTML(score, size) {
+  const pct = Math.round(score * 100);
+  const color = scoreColor(score);
+  const r = (size - 6) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ * (1 - score);
+  return `<svg class="score-gauge" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="#E5E7EB" stroke-width="5"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="5"
+      stroke-dasharray="${circ}" stroke-dashoffset="${offset}" stroke-linecap="round"
+      transform="rotate(-90 ${size/2} ${size/2})"/>
+    <text x="${size/2}" y="${size/2}" text-anchor="middle" dominant-baseline="central"
+      font-size="${size > 50 ? 16 : 12}" font-weight="700" fill="${color}">${pct}</text>
+  </svg>`;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    UTILITIES
@@ -88,62 +152,6 @@ function formatDateTime(d) {
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
-const CONFIDENCE_FLAG_SVG = '<span class="confidence-flag" title="Legacy baseline uses category defaults \u2014 not project-specific"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>';
-
-/* ═══════════════════════════════════════════════════════════════════════
-   DROPDOWN VALUES (must match backend/metrics.py EXACTLY)
-   ═══════════════════════════════════════════════════════════════════════ */
-
-const CALENDAR_DAYS = ['1', '2-3', '4-5', '6-10', '11-20', '20+'];
-const TEAM_SIZES = ['1', '2', '3', '4+'];
-const REVISION_ROUNDS = ['0', '1', '2', '3+'];
-const SCOPE_OPTIONS = [
-  'Yes, expanded scope', 'Yes, new engagement', 'No', 'Not yet delivered'
-];
-
-// V2 — Sectors, sub-categories, geographies
-const SECTORS = {
-  'Pharma': ['Pre-revenue biotech', 'Commercial biotech', 'Specialty pharma', 'Big pharma', 'Generic / Biosimilar'],
-  'Pharma Services': ['CRO', 'CDMO'],
-  'Medtech': ['Diagnostics', 'Digital health / Health IT', 'Devices', 'Digital therapeutics'],
-  'Financial Sponsor': ['VC', 'Small cap PE', 'Mid cap PE', 'Large cap PE', 'Hedge fund', 'Sovereign wealth / Family office'],
-};
-
-const GEOGRAPHIES = {
-  'North America': ['US', 'Canada', 'Mexico'],
-  'Western Europe': ['UK', 'Ireland', 'Germany', 'Austria', 'Switzerland', 'France', 'Italy', 'Spain', 'Portugal', 'Greece', 'Nordics', 'Benelux'],
-  'Emerging Europe': ['Poland', 'Czech Republic', 'Romania', 'Hungary', 'Turkey', 'Russia', 'Rest of CEE'],
-  'Asia Pacific': ['Japan', 'South Korea', 'China', 'Hong Kong', 'Taiwan', 'Australia', 'New Zealand', 'Singapore', 'India'],
-  'Latin America': ['Brazil', 'Argentina', 'Colombia', 'Chile', 'Rest of LatAm'],
-  'Middle East & Africa': ['UAE', 'Saudi Arabia', 'Israel', 'South Africa', 'Nigeria', 'Rest of MEA'],
-  'Global': ['Multi-regional'],
-};
-const GEO_KEYS = Object.keys(GEOGRAPHIES);
-
-// Tier 2 — Expert
-const B1_OPTIONS = ['From AI draft', 'Mixed (AI structure, manual content)', 'From blank page'];
-const B2_OPTIONS = ['1-3', '4-7', '8-12', '13+'];
-const B3_OPTIONS = ['>75% AI', '50-75%', '25-50%', '<25%'];
-const B4_OPTIONS = ['Hypothesis-first (tested a specific thesis)', 'Hybrid (hypothesis emerged during work)', 'Discovery-first (open-ended research)'];
-const C1_OPTIONS = ['Deep specialist in this TA/methodology', 'Adjacent expertise', 'Generalist'];
-const C2_OPTIONS = ['Expert authored (with AI assist)', 'Expert co-authored (shared with team)', 'Expert reviewed only'];
-const C3_OPTIONS = ['>75% judgment', '50-75%', '25-50%', '<25%'];
-const D1_OPTIONS = ['Yes', 'No'];
-const D2_OPTIONS = ['Yes, directly reused and extended', 'Yes, provided useful starting context', 'No, built from scratch'];
-// NOTE: em dashes (—) below must match backend exactly
-const D3_OPTIONS = [
-  'No \u2014 proprietary inputs decisive',
-  'Partially \u2014 they would miss key insights',
-  'Yes \u2014 all inputs publicly available'
-];
-const F1_OPTIONS = [
-  'Not feasible \u2014 scope or timeline was only possible with AI',
-  'Feasible but at 2x+ the cost and time',
-  'Feasible at similar cost \u2014 xCSG provided marginal benefit',
-  'Legacy would have been more effective'
-];
-const F2_OPTIONS = ['Yes, largely as-is', 'Yes, with moderate customization', 'No, fully bespoke'];
-
 function optionsHTML(arr, selected) {
   return '<option value="">\u2014 Select \u2014</option>' +
     arr.map(v => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(v)}</option>`).join('');
@@ -211,7 +219,6 @@ async function handleLogin(e) {
 async function route() {
   const hash = window.location.hash || '#portfolio';
 
-  // Expert route — no auth (support both #expert/ and #assess/)
   if (hash.startsWith('#expert/') || hash.startsWith('#assess/')) {
     const token = hash.slice(hash.indexOf('/') + 1);
     showScreen('expert');
@@ -219,55 +226,80 @@ async function route() {
     return;
   }
 
-  // Auth required for everything else
   if (!state.token) { showScreen('login'); return; }
   showScreen('app');
 
-  // Load categories cache
-  await loadCategories();
+  await Promise.all([loadCategories(), loadSchema()]);
 
-  // Highlight nav
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const routeName = hash.slice(1).split('/')[0];
   const navEl = document.querySelector(`.nav-item[data-route="${routeName}"]`);
   if (navEl) navEl.classList.add('active');
 
-  // Title
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
     projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
 
-  // Fade-in transition
   const mc = document.getElementById('mainContent');
   if (mc) { mc.classList.remove('view-fade-in'); void mc.offsetWidth; mc.classList.add('view-fade-in'); }
 
-  // Render
   if (hash === '#portfolio') renderPortfolio();
   else if (hash === '#new') renderNewProject();
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
   else if (hash === '#settings') renderSettings();
-  else if (hash === '#norms') renderNormsV2Page();
+  else if (hash === '#norms') renderNormsPage();
   else if (hash === '#activity') renderActivity();
   else renderPortfolio();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   PORTFOLIO (was Dashboard)
+   PORTFOLIO (Dashboard)
    ═══════════════════════════════════════════════════════════════════════ */
 
 const CHECKPOINTS = [
-  { id: 1, name: 'First Light', threshold: 1, icon: '\uD83C\uDF05', desc: 'Individual project scorecard \u2014 value multiplier, effort ratio, quality ratios, and flywheel leg scores.' },
-  { id: 2, name: 'Pattern Detection', threshold: 5, icon: '\uD83D\uDCCA', desc: 'Trend lines, category comparison charts, and average multipliers across projects.' },
-  { id: 3, name: 'Proof of Concept', threshold: 10, icon: '\uD83D\uDD2C', desc: 'Flywheel leg scores, scatter plots, and deeper performance analytics.' },
-  { id: 4, name: 'At Scale', threshold: 20, icon: '\uD83D\uDE80', desc: 'Full dashboard with margin improvement tracking and scaling gates.' },
+  { id: 1, name: 'First Light', threshold: 1, icon: '\uD83C\uDF05', desc: 'Individual project scorecard — effort ratio, quality score, productivity, and flywheel leg scores.' },
+  { id: 2, name: 'Pattern Detection', threshold: 3, icon: '\uD83D\uDCCA', desc: 'Trend lines, category comparison charts, and effort comparison bars.' },
+  { id: 3, name: 'Proof of Concept', threshold: 8, icon: '\uD83D\uDD2C', desc: 'Flywheel leg scores, scatter plots, and deeper performance analytics.' },
+  { id: 4, name: 'At Scale', threshold: 20, icon: '\uD83D\uDE80', desc: 'Full dashboard with disprove matrix, scaling gates, and per-category breakdowns.' },
 ];
 
 function toggleCheckpointCard(cpId) {
   const card = document.querySelector(`.checkpoint-card[data-cp="${cpId}"]`);
   if (card) card.classList.toggle('collapsed');
+}
+
+// Cache dashboard data for filtering
+let _dashboardCache = null;
+let _projectsCache = null;
+
+function _avg(arr) {
+  const vals = arr.filter(v => v != null);
+  return vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+}
+
+function _computeLocalMetrics(projects) {
+  const completed = projects.filter(p => p.status === 'complete' && p.metrics);
+  const m = completed.map(p => p.metrics);
+  return {
+    total_projects: projects.length,
+    complete_projects: completed.length,
+    average_effort_ratio: _avg(m.map(x => x.delivery_speed)),
+    average_quality_ratio: _avg(m.map(x => x.output_quality)),
+    average_advantage: _avg(m.map(x => x.productivity_ratio)),
+    average_outcome_rate_ratio: _avg(m.map(x => x.productivity_ratio)),
+    machine_first_avg: _avg(m.map(x => x.machine_first_score)),
+    senior_led_avg: _avg(m.map(x => x.senior_led_score)),
+    proprietary_knowledge_avg: _avg(m.map(x => x.proprietary_knowledge_score)),
+    rework_efficiency_avg: _avg(m.map(x => x.rework_efficiency)),
+    client_impact_avg: _avg(m.map(x => x.client_impact)),
+    data_independence_avg: _avg(m.map(x => x.data_independence)),
+    reuse_intent_avg: _avg(m.map(x => x.reuse_intent_score)),
+    ai_survival_avg: _avg(m.map(x => x.ai_survival_rate)),
+    client_pulse_avg: _avg(m.map(x => x.client_pulse_score)),
+  };
 }
 
 async function renderPortfolio() {
@@ -280,697 +312,209 @@ async function renderPortfolio() {
       apiCall('GET', '/projects'),
     ]);
 
-    const total = dashboard.total_projects || allProjects.length || 0;
-    const complete = dashboard.complete_projects || dashboard.projects_completed || 0;
-    const completedProjects = allProjects
-      .filter(p => p.status === 'complete' && p.metrics)
-      .map(p => ({ ...p.metrics, ...p, id: p.id }));
-    const hasAssessmentData = completedProjects.length > 0;
+    _dashboardCache = dashboard;
+    _projectsCache = allProjects;
 
-    if (total === 0) {
-      mc.innerHTML = `
-        <div class="empty-state">
-          <h2>Welcome to the xCSG Value Tracker</h2>
-          <p>Start by creating your first project to begin measuring xCSG performance.</p>
-          <a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a>
-        </div>`;
+    if (!allProjects.length) {
+      mc.innerHTML = `<div class="empty-state"><h2>Welcome to the xCSG Value Tracker</h2><p>Start by creating your first project to begin measuring xCSG performance.</p><a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a></div>`;
       return;
     }
 
-    const overriddenMap = {};
-    for (const p of allProjects) overriddenMap[p.id] = !!p.legacy_overridden;
-    const lowConfCount = completedProjects.filter(m => !overriddenMap[m.id]).length;
-
-    let prevComplete = 0;
-    try { prevComplete = parseInt(localStorage.getItem('xcsg_prev_complete') || '0'); } catch {}
-    const justUnlockedIds = CHECKPOINTS.filter(cp => complete >= cp.threshold && prevComplete < cp.threshold).map(cp => cp.id);
-    try { localStorage.setItem('xcsg_prev_complete', String(complete)); } catch {}
-
-    const nextCP = CHECKPOINTS.find(cp => complete < cp.threshold);
-    const nextCallout = nextCP
-      ? `Next unlock: Checkpoint ${nextCP.id} (${nextCP.name}) \u2014 ${nextCP.threshold - complete} more project${nextCP.threshold - complete !== 1 ? 's' : ''} needed`
-      : 'All checkpoints unlocked \u2713';
-
-    const multiplierTone = (value) => {
-      if (value > 2) return 'var(--success-text)';
-      if (value >= 1) return 'var(--warning-text)';
-      return 'var(--error)';
-    };
-    const fmtRatio = (value) => value == null ? '\u2014' : `${round2(value)}x`;
-    const fmtScore = (value) => value == null ? '\u2014' : round2(value);
-    const renderAssessmentEmpty = () => `
-      <div class="empty-state" style="margin-top:0">
-        <p>No assessment data yet \u2014 share expert links to start collecting responses</p>
-      </div>`;
-
-    let html = '';
-    html += `<div class="dashboard-header">
-      <div>
-        <h1 style="font-size:20px;font-weight:700;color:var(--navy)">Dashboard</h1>
-        <div style="font-size:13px;color:var(--gray-500);margin-top:2px">${nextCallout} \u00b7 <strong>${complete}</strong> completed</div>
-      </div>
-      <button class="btn-export" onclick="exportExcel()">Export to Excel</button>
-    </div>`;
-
-    if (!hasAssessmentData) {
-      html += renderAssessmentEmpty();
-    }
-
-    for (const cp of CHECKPOINTS) {
-      const unlocked = complete >= cp.threshold;
-      const cls = unlocked ? 'unlocked' : 'locked';
-      const celebrate = unlocked && justUnlockedIds.includes(cp.id);
-
-      html += `<div class="checkpoint-card ${cls}${celebrate ? ' just-unlocked' : ''}" data-cp="${cp.id}">`;
-      html += `<div class="checkpoint-card-header"${unlocked ? ` onclick="toggleCheckpointCard(${cp.id})"` : ''}>`;
-      html += `<div class="checkpoint-card-title">`;
-      html += `<span class="cp-number">${cp.id}</span>`;
-      html += `<span>Checkpoint ${cp.id}: ${cp.name}</span>`;
-      html += unlocked ? `<span class="cp-check">\u2713</span>` : `<span class="cp-lock">\uD83D\uDD12</span>`;
-      html += `</div>`;
-      if (unlocked) html += `<span class="checkpoint-card-toggle">\u25BC</span>`;
-      html += `</div>`;
-      html += `<div class="checkpoint-card-body">`;
-
-      if (!unlocked) {
-        const pct = Math.min(100, Math.round((complete / cp.threshold) * 100));
-        html += `<div class="checkpoint-lock-content">
-          <div class="checkpoint-lock-icon">\uD83D\uDD12</div>
-          <div class="checkpoint-lock-text">Unlock at ${cp.threshold} completed projects</div>
-          <div class="checkpoint-lock-desc">${cp.desc}</div>
-          <div class="checkpoint-lock-progress">
-            <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div class="progress-label">${complete} of ${cp.threshold} projects</div>
-          </div>
-        </div>`;
-
-      } else if (cp.id === 1) {
-        const vmSubtitle = lowConfCount > 0
-          ? `<div class="kpi-sub">${lowConfCount} of ${completedProjects.length} using category defaults</div>`
-          : '';
-
-        html += `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
-          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_value_multiplier)}</div><div class="kpi-label">Avg Value Multiplier</div>${vmSubtitle}</div>
-          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_effort_ratio)}</div><div class="kpi-label">Avg Effort Ratio</div></div>
-          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_quality_ratio)}</div><div class="kpi-label">Avg Quality Ratio</div></div>
-          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.overall_xcsg_avg)}</div><div class="kpi-label">Avg xCSG Score</div><div class="kpi-sub">${complete} complete \u00b7 ${Math.max(total - complete, 0)} pending</div></div>
-        </div>`;
-
-        const cats = [...new Set(completedProjects.map(p => p.category_name).filter(Boolean))].sort();
-        const clients = [...new Set(completedProjects.map(p => p.client_name).filter(Boolean))].sort();
-        const pioneers = [...new Set(completedProjects.map(p => p.pioneer_name).filter(Boolean))].sort();
-
-        html += `<div class="portfolio-filters">
-          <span class="filters-label">Filter by</span>
-          <select id="portfolioCatFilter" class="filter-select"><option value="">All Categories</option>${cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
-          <select id="portfolioClientFilter" class="filter-select"><option value="">All Clients</option>${clients.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
-          <select id="portfolioPioneerFilter" class="filter-select"><option value="">All Pioneers</option>${pioneers.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
-          <button class="filter-reset" id="portfolioFilterReset" style="display:none">Clear filters</button>
-        </div>`;
-
-        if (hasAssessmentData) {
-          html += `<table class="data-table" id="scorecardTable" style="margin-top:8px"><thead><tr>
-            <th>Project</th><th>Category</th><th>Client</th><th>Pioneer</th><th class="text-right">Value Multiplier</th><th class="text-right">Effort Ratio</th><th class="text-right">xCSG Score</th><th class="text-right">Quality Ratio</th><th class="text-right">Machine / Senior / Proprietary</th>
-          </tr></thead><tbody>`;
-          for (const d of completedProjects) {
-            const isLowConf = !overriddenMap[d.id];
-            const confFlag = isLowConf ? CONFIDENCE_FLAG_SVG : '';
-            html += `<tr data-cat="${esc(d.category_name || '')}" data-client="${esc(d.client_name || '')}" data-pioneer="${esc(d.pioneer_name || '')}">
-              <td>${esc(d.project_name)}${confFlag}</td>
-              <td>${esc(d.category_name || '\u2014')}</td>
-              <td>${esc(d.client_name || '\u2014')}</td>
-              <td>${esc(d.pioneer_name || '\u2014')}</td>
-              <td class="text-right vm-cell${isLowConf ? ' low-confidence' : ''}" style="color:${multiplierTone(d.value_multiplier || 0)}">${fmtRatio(d.value_multiplier)}</td>
-              <td class="text-right"><strong>${fmtRatio(d.effort_ratio)}</strong></td>
-              <td class="text-right">${fmtScore(d.overall_xcsg_score)}</td>
-              <td class="text-right">${fmtRatio(d.quality_ratio)}</td>
-              <td class="text-right">${fmtScore(d.machine_first_score)} / ${fmtScore(d.senior_led_score)} / ${fmtScore(d.proprietary_knowledge_score)}</td>
-            </tr>`;
-          }
-          html += '</tbody></table>';
-        }
-
-      } else if (cp.id === 2) {
-        html += `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
-          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_value_multiplier)}</div><div class="kpi-label">Portfolio Avg Value</div></div>
-          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_effort_ratio)}</div><div class="kpi-label">Portfolio Avg Effort</div></div>
-          <div class="kpi-card"><div class="kpi-value">${fmtRatio(dashboard.average_quality_ratio)}</div><div class="kpi-label">Portfolio Avg Quality</div></div>
-          <div class="kpi-card"><div class="kpi-value">${Math.round((dashboard.flywheel_health || 0) * 20)}%</div><div class="kpi-label">Flywheel Health</div></div>
-        </div>`;
-
-        if (completedProjects.length >= 3) {
-          html += `<div class="chart-grid" style="margin-top:0">
-            <div class="card"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Effort Comparison</h3><canvas id="effortChart"></canvas></div>
-            <div class="card"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Quality Comparison</h3><canvas id="qualityChart"></canvas></div>
-          </div>`;
-        }
-
-        const catMap = {};
-        for (const d of completedProjects) {
-          const c = d.category_name || 'Other';
-          if (!catMap[c]) catMap[c] = { vm: [], er: [] };
-          catMap[c].vm.push(d.value_multiplier);
-          catMap[c].er.push(d.effort_ratio);
-        }
-        const catNames = Object.keys(catMap).sort();
-        if (catNames.length > 0) {
-          html += `<div style="margin-top:20px"><h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Average Multipliers by Category</h3><div class="cp-category-averages">`;
-          for (const c of catNames) {
-            const avg = arr => arr.length ? round2(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
-            html += `<div class="cp-category-item"><div class="cp-category-name">${esc(c)}</div><div class="cp-category-value">${avg(catMap[c].vm)}x</div><div class="cp-category-sub">value mult \u00b7 ${avg(catMap[c].er)}x effort</div></div>`;
-          }
-          html += `</div></div>`;
-        }
-        if (catNames.length >= 2) {
-          html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Category Comparison</h3><canvas id="categoryChart"></canvas></div>`;
-        }
-
-      } else if (cp.id === 3) {
-        const scoreToPct = (value) => Math.round(((value || 0) / 5) * 100);
-        html += `<div style="margin-bottom:24px"><h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Flywheel Leg Scores</h3>
-          <div class="flywheel-gauges">
-            <div class="gauge"><div class="gauge-label">Machine-First</div><div class="gauge-track"><div class="gauge-fill" style="width:${scoreToPct(dashboard.machine_first_avg)}%;background:var(--blue)"></div></div><div class="gauge-value">${fmtScore(dashboard.machine_first_avg)}</div></div>
-            <div class="gauge"><div class="gauge-label">Senior-Led</div><div class="gauge-track"><div class="gauge-fill" style="width:${scoreToPct(dashboard.senior_led_avg)}%;background:var(--navy)"></div></div><div class="gauge-value">${fmtScore(dashboard.senior_led_avg)}</div></div>
-            <div class="gauge"><div class="gauge-label">Proprietary Knowledge</div><div class="gauge-track"><div class="gauge-fill" style="width:${scoreToPct(dashboard.proprietary_knowledge_avg)}%;background:var(--orange)"></div></div><div class="gauge-value">${fmtScore(dashboard.proprietary_knowledge_avg)}</div></div>
-          </div>
-        </div>`;
-
-        if (completedProjects.length >= 3) {
-          html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Value Multiplier Trend</h3><canvas id="trendChart"></canvas></div>`;
-          html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Effort vs. Value</h3><canvas id="scatterChart"></canvas></div>`;
-        }
-
-      } else if (cp.id === 4) {
-        html += `<h3 style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">Scaling Gates</h3><div class="gates-grid">`;
-        for (const g of (dashboard.scaling_gates || [])) {
-          const passed = g.status === 'pass';
-          html += `<div class="gate-item"><span class="badge ${passed ? 'badge-green' : 'badge-orange'}">${passed ? '\u2713 Pass' : '\u23F3 Pending'}</span> ${esc(g.name)}<div style="font-size:12px;color:var(--gray-500);margin-top:6px">${esc(g.detail || g.description || '')}</div></div>`;
-        }
-        html += `<div class="gate-summary">${dashboard.scaling_gates_passed || 0}/${dashboard.scaling_gates_total || 0} gates passed</div></div>`;
-
-        if (completedProjects.length >= 3) {
-          html += `<div class="card" style="margin-top:20px"><h3 style="padding:16px 24px;font-size:15px;font-weight:700;color:var(--navy)">Margin Improvement Over Time</h3><canvas id="marginChart"></canvas></div>`;
-        }
-
-        html += `<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-top:20px">
-          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.machine_first_avg)}</div><div class="kpi-label">Machine-First Avg</div></div>
-          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.senior_led_avg)}</div><div class="kpi-label">Senior-Led Avg</div></div>
-          <div class="kpi-card"><div class="kpi-value">${fmtScore(dashboard.proprietary_knowledge_avg)}</div><div class="kpi-label">Knowledge Avg</div></div>
-        </div>`;
-      }
-
-      html += `</div></div>`;
-    }
-
-    mc.innerHTML = html;
-
-    function applyPortfolioFilters() {
-      const catF = document.getElementById('portfolioCatFilter')?.value || '';
-      const clientF = document.getElementById('portfolioClientFilter')?.value || '';
-      const pioneerF = document.getElementById('portfolioPioneerFilter')?.value || '';
-      const resetBtn = document.getElementById('portfolioFilterReset');
-      if (resetBtn) resetBtn.style.display = (catF || clientF || pioneerF) ? '' : 'none';
-      let visibleCount = 0;
-      document.querySelectorAll('#scorecardTable tbody tr:not(.filter-empty-row)').forEach(tr => {
-        const show = (!catF || tr.dataset.cat === catF) && (!clientF || tr.dataset.client === clientF) && (!pioneerF || tr.dataset.pioneer === pioneerF);
-        tr.style.display = show ? '' : 'none';
-        if (show) visibleCount++;
-      });
-      let emptyRow = document.querySelector('#scorecardTable .filter-empty-row');
-      if (visibleCount === 0) {
-        if (!emptyRow) {
-          emptyRow = document.createElement('tr');
-          emptyRow.className = 'filter-empty-row';
-          emptyRow.innerHTML = '<td colspan="9" style="text-align:center;padding:32px;color:var(--gray-400)">No projects match the selected filters.</td>';
-          document.querySelector('#scorecardTable tbody')?.appendChild(emptyRow);
-        }
-        emptyRow.style.display = '';
-      } else if (emptyRow) {
-        emptyRow.style.display = 'none';
-      }
-    }
-
-    ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter'].forEach(id => {
-      document.getElementById(id)?.addEventListener('change', applyPortfolioFilters);
-    });
-    document.getElementById('portfolioFilterReset')?.addEventListener('click', () => {
-      ['portfolioCatFilter', 'portfolioClientFilter', 'portfolioPioneerFilter'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-      });
-      applyPortfolioFilters();
-    });
-
-    setTimeout(() => {
-      if (complete >= CHECKPOINTS[1].threshold && completedProjects.length >= 3) {
-        renderEffortChart(completedProjects);
-        renderQualityChart(completedProjects);
-        const catNames = [...new Set(completedProjects.map(d => d.category_name))].filter(Boolean);
-        if (catNames.length >= 2) renderCategoryChart(completedProjects);
-      }
-      if (complete >= CHECKPOINTS[2].threshold && completedProjects.length >= 3) {
-        renderTrendChart(completedProjects);
-        renderScatterPlot(completedProjects);
-      }
-      if (complete >= CHECKPOINTS[3].threshold && completedProjects.length >= 3) {
-        renderMarginChart(completedProjects);
-      }
-    }, 100);
-
+    _renderDashboardView(allProjects, dashboard);
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load portfolio: ${esc(err.message)}</div>`;
   }
 }
 
-function destroyChart(key) {
-  if (charts[key]) { charts[key].destroy(); delete charts[key]; }
-}
 
-function renderEffortChart(data) {
-  const canvas = document.getElementById('effortChart');
-  if (!canvas) return;
-  destroyChart('effort');
-  const labels = data.map(d => (d.project_name || d.category_name).slice(0, 15));
-  charts.effort = new Chart(canvas, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Legacy Person-Days', data: data.map(d => d.legacy_person_days), backgroundColor: '#9CA3AF' },
-        { label: 'xCSG Person-Days', data: data.map(d => d.xcsg_person_days), backgroundColor: '#121F6B' },
-      ]
-    },
-    options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
-  });
-}
-
-function renderQualityChart(data) {
-  const canvas = document.getElementById('qualityChart');
-  if (!canvas) return;
-  destroyChart('quality');
-  const labels = data.map(d => (d.project_name || d.category_name).slice(0, 15));
-  charts.quality = new Chart(canvas, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Legacy Revisions', data: data.map(d => d.legacy_revisions), backgroundColor: '#9CA3AF' },
-        { label: 'xCSG Revisions', data: data.map(d => d.xcsg_revisions), backgroundColor: '#6EC1E4' },
-      ]
-    },
-    options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
-  });
-}
-
-function renderTrendChart(data) {
-  const canvas = document.getElementById('trendChart');
-  if (!canvas) return;
-  destroyChart('trend');
-  charts.trend = new Chart(canvas, {
-    type: 'line',
-    data: {
-      labels: data.map((_, i) => `#${i + 1}`),
-      datasets: [{
-        label: 'Value Multiplier',
-        data: data.map(d => d.value_multiplier),
-        borderColor: '#121F6B',
-        backgroundColor: 'rgba(18,31,107,0.1)',
-        fill: true, tension: 0.3,
-      }]
-    },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
-  });
-}
-
-function renderCategoryChart(data) {
-  const canvas = document.getElementById('categoryChart');
-  if (!canvas) return;
-  destroyChart('category');
-  // Group by category
-  const catMap = {};
-  for (const d of data) {
-    const c = d.category_name || 'Other';
-    if (!catMap[c]) catMap[c] = [];
-    catMap[c].push(d.value_multiplier);
-  }
-  const labels = Object.keys(catMap).sort();
-  const avgValues = labels.map(c => {
-    const arr = catMap[c];
-    return round2(arr.reduce((a, b) => a + b, 0) / arr.length);
-  });
-  charts.category = new Chart(canvas, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Avg Value Multiplier',
-        data: avgValues,
-        backgroundColor: ['#121F6B', '#6EC1E4', '#FF8300', '#10B981', '#9CA3AF', '#F59E0B'],
-        borderRadius: 6,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, title: { display: true, text: 'Value Multiplier' } } }
-    }
-  });
-}
-
-function renderScatterPlot(data) {
-  const canvas = document.getElementById('scatterChart');
-  if (!canvas) return;
-  destroyChart('scatter');
-  charts.scatter = new Chart(canvas, {
-    type: 'scatter',
-    data: {
-      datasets: [{
-        label: 'Projects',
-        data: data.map(d => ({ x: d.effort_ratio, y: d.value_multiplier })),
-        backgroundColor: '#121F6B',
-        pointRadius: 6,
-        pointHoverRadius: 8,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (ctx) => {
-              const d = data[ctx.dataIndex];
-              return `${d.project_name || 'Project'}: ${round2(d.effort_ratio)}x effort, ${round2(d.value_multiplier)}x value`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: { title: { display: true, text: 'Effort Ratio' }, beginAtZero: true },
-        y: { title: { display: true, text: 'Value Multiplier' }, beginAtZero: true },
-      }
-    }
-  });
-}
-
-function renderMarginChart(data) {
-  const canvas = document.getElementById('marginChart');
-  if (!canvas) return;
-  destroyChart('margin');
-  // Cumulative average margin improvement
-  let cumSum = 0;
-  const marginData = data.map((d, i) => {
-    cumSum += d.value_multiplier;
-    return round2(cumSum / (i + 1));
-  });
-  charts.margin = new Chart(canvas, {
-    type: 'line',
-    data: {
-      labels: data.map((_, i) => `#${i + 1}`),
-      datasets: [{
-        label: 'Cumulative Avg Value Multiplier',
-        data: marginData,
-        borderColor: '#10B981',
-        backgroundColor: 'rgba(16,185,129,0.1)',
-        fill: true, tension: 0.3,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, title: { display: true, text: 'Avg Value Mult' } } }
-    }
-  });
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   NEW PROJECT
-   ═══════════════════════════════════════════════════════════════════════ */
-
-function renderNewProject(prefill = null) {
+function _renderDashboardView(allProjects, dashboard, filterCategory) {
   const mc = document.getElementById('mainContent');
-  const isEdit = !!prefill;
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const legacyClass = isEdit ? '' : 'legacy-auto';
-  const legacyOverridden = isEdit && prefill?.legacy_overridden;
-  const catName = prefill ? (state.categories.find(c => c.id == prefill.category_id)?.name || '') : '';
+
+  const filtered = filterCategory
+    ? allProjects.filter(p => (p.category_name || '') === filterCategory)
+    : allProjects;
+  const localMetrics = filterCategory ? _computeLocalMetrics(filtered) : dashboard;
+
+  const fmtRatio = value => value == null ? '\u2014' : `${round2(value)}\xd7`;
+  const fmtPct = value => value == null ? '\u2014' : `${Math.round(value * 100)}%`;
+  const metricTone = value => value == null ? 'var(--gray-400)' : value > 1.5 ? 'var(--success)' : value >= 1.0 ? 'var(--blue)' : value >= 0.8 ? 'var(--warning)' : 'var(--danger)';
+
+  const categories = [...new Set(allProjects.map(p => p.category_name).filter(Boolean))].sort();
+
   let html = '';
 
-  function legacySourceText(field) {
-    if (isEdit) {
-      return legacyOverridden ? '<span class="legacy-source overridden">(overridden)</span>' : '<span class="legacy-source">(from category defaults)</span>';
+  // ── HERO SECTION ──
+  const advantage = localMetrics.average_advantage || localMetrics.average_outcome_rate_ratio;
+  html += `<div class="hero-section">
+    <div class="hero-left">
+      <div class="hero-label">Portfolio Overview</div>
+      <div class="hero-title">${filterCategory ? esc(filterCategory) : 'All Categories'}</div>
+      <div class="hero-meta">${localMetrics.complete_projects || 0} completed of ${allProjects.length} total</div>
+    </div>
+    <div class="hero-right">
+      <div class="hero-big-number" style="color:${metricTone(advantage)}">${fmtRatio(advantage)}</div>
+      <div class="hero-big-label">xCSG Value Gain</div>
+      <div class="hero-explain">Quality per person-day: xCSG vs legacy. &gt;1\xd7 = more value per effort.</div>
+    </div>
+  </div>`;
+
+  // ── SLICER BAR ──
+  html += `<div class="slicer-bar">
+    <span class="slicer-label">\xd83d\xdd0d Filter:</span>
+    <button class="filter-chip ${!filterCategory ? 'filter-chip-active' : ''}" onclick="_sliceDashboard(null)">All</button>`;
+  for (const cat of categories) {
+    const count = allProjects.filter(p => p.category_name === cat).length;
+    const short = cat.length > 26 ? cat.slice(0, 23) + '\u2026' : cat;
+    html += `<button class="filter-chip ${filterCategory === cat ? 'filter-chip-active' : ''}" onclick="_sliceDashboard('${esc(cat)}')">${esc(short)} <span class="chip-count">${count}</span></button>`;
+  }
+  html += `</div>`;
+
+  // ── KPI GRID ──
+  const kpis = [
+    { label: 'Delivery Speed', value: localMetrics.average_effort_ratio, fmt: fmtRatio, icon: '\u26a1', tip: 'How much faster xCSG delivers vs legacy. Calculated as legacy person-days \xf7 xCSG person-days. 2\xd7 = xCSG took half the effort.' },
+    { label: 'Output Quality', value: localMetrics.average_quality_ratio, fmt: fmtRatio, icon: '\u2b50', tip: 'xCSG output quality \xf7 legacy quality. Based on analytical depth, decision readiness, and self-assessment. 1.5\xd7 = 50% better quality.' },
+    { label: 'Rework Efficiency', value: localMetrics.rework_efficiency_avg, fmt: fmtRatio, icon: '\ud83d\udd27', tip: 'xCSG revision/rework burden vs legacy. Combines revision depth, scope changes, and client reaction. Higher = smoother delivery.' },
+    { label: 'Machine-First Gain', value: localMetrics.machine_first_avg, fmt: fmtRatio, icon: '\ud83e\udd16', tip: 'xCSG knowledge synthesis breadth vs legacy. From single-source to broad systematic synthesis. Higher = more automation leverage.' },
+    { label: 'Senior-Led Gain', value: localMetrics.senior_led_avg, fmt: fmtRatio, icon: '\ud83d\udc54', tip: 'Senior expert involvement in xCSG vs legacy. Averages specialization depth, directness of authorship, and judgment time. Higher = more expert-driven.' },
+    { label: 'Knowledge Gain', value: localMetrics.proprietary_knowledge_avg, fmt: fmtRatio, icon: '\ud83c\udff0', tip: 'Proprietary knowledge advantage. Averages proprietary data use, knowledge reuse, and competitive moat vs legacy. Higher = harder to replicate.' },
+    { label: 'Client Impact', value: localMetrics.client_impact_avg, fmt: fmtRatio, icon: '\ud83d\udca5', tip: 'Did xCSG work drive client decisions more than legacy would have? Ratio of decision influence scores, capped at 10\xd7.' },
+    { label: 'Data Independence', value: localMetrics.data_independence_avg, fmt: fmtRatio, icon: '\ud83d\udcca', tip: 'How efficiently xCSG uses data vs legacy. Less time on sourcing, more on analysis. Higher = more insight per data effort.' },
+  ];
+  const signals = [
+    { label: 'Reuse Intent', value: localMetrics.reuse_intent_avg, fmt: fmtPct, icon: '\ud83d\udd04', tip: 'Expert loyalty signal. Would they choose xCSG again? 100% = all said "yes without hesitation", 50% = mixed, 0% = all said no.' },
+    { label: 'AI Survival', value: localMetrics.ai_survival_avg, fmt: fmtPct, icon: '\ud83c\udf0d', tip: 'How much of the initial AI-generated draft made it into the final deliverable unchanged. Higher = AI produced better starting material.' },
+    { label: 'Client Pulse', value: localMetrics.client_pulse_avg, fmt: fmtPct, icon: '\u2764', tip: 'How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below.' },
+  ];
+
+  html += `<div class="metrics-grid">`;
+  for (const k of kpis) {
+    html += `<div class="metric-tile" title="${k.tip}">
+      <div class="metric-tile-icon">${k.icon}</div>
+      <div class="metric-tile-value" style="color:${metricTone(k.value)}">${k.fmt(k.value)}</div>
+      <div class="metric-tile-label">${k.label}</div>
+    </div>`;
+  }
+  for (const s of signals) {
+    html += `<div class="metric-tile metric-tile-signal" title="${s.tip}">
+      <div class="metric-tile-icon">${s.icon}</div>
+      <div class="metric-tile-value" style="color:${metricTone(s.value)}">${s.fmt(s.value)}</div>
+      <div class="metric-tile-label">${s.label}</div>
+    </div>`;
+  }
+  html += `</div>`;
+
+  // ── CHART SECTIONS ──
+  html += `<div class="dashboard-section">
+    <div class="section-header">
+      <div class="section-icon">\ud83c\udf0d</div>
+      <div><h2 class="section-title">Thesis Validation</h2><p class="section-subtitle">Disprove matrix and multi-dimensional gains</p></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card"><div class="chart-card-title">Disprove Matrix</div><div class="chart-card-explain">Each dot is a project. Top-right = faster AND better quality. Bottom-left = model failing.</div><div class="chart-body" style="height:380px"><div id="chartDisprove" style="width:100%;height:100%"></div></div></div>
+      <div class="chart-card"><div class="chart-card-title">Gains Radar</div><div class="chart-card-explain">Average scores across the six flywheel dimensions. The dashed line is baseline (1\xd7). Larger area = stronger advantage.</div><div class="chart-body" style="height:380px"><div id="chartRadar" style="width:100%;height:100%"></div></div></div>
+    </div>
+  </div>`;
+
+  html += `<div class="dashboard-section">
+    <div class="section-header">
+      <div class="section-icon">\ud83d\udcc8</div>
+      <div><h2 class="section-title">Performance Trends</h2><p class="section-subtitle">How xCSG advantage evolves over time</p></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card"><div class="chart-card-title">xCSG Value Gain Over Time</div><div class="chart-card-explain">Quality per person-day (xCSG vs legacy) per project, ordered by delivery date. Rising = improving efficiency.</div><div class="chart-body" style="height:320px"><div id="chartAdvantageTrend" style="width:100%;height:100%"></div></div></div>
+      <div class="chart-card"><div class="chart-card-title">Speed, Quality &amp; Value Gain</div><div class="chart-card-explain">All three ratios over time. Value Gain (dashed) = quality per person-day vs legacy. All above 1\xd7 = xCSG outperforms.</div><div class="chart-body" style="height:320px"><div id="chartSpeedQuality" style="width:100%;height:100%"></div></div></div>
+    </div>
+  </div>`;
+
+  html += `<div class="dashboard-section">
+    <div class="section-header">
+      <div class="section-icon">\ud83d\udcca</div>
+      <div><h2 class="section-title">Breakdowns</h2><p class="section-subtitle">Performance by category, pioneer, and signal</p></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card"><div class="chart-card-title">By Category</div><div class="chart-card-explain">Average xCSG advantage by deliverable type. Longer bars = stronger performance in that category.</div><div class="chart-body" style="height:260px"><div id="chartCategory" style="width:100%;height:100%"></div></div></div>
+      <div class="chart-card"><div class="chart-card-title">By Pioneer</div><div class="chart-card-explain">Average xCSG advantage by pioneer lead. Shows which team members drive the most value.</div><div class="chart-body" style="height:260px"><div id="chartPioneer" style="width:100%;height:100%"></div></div></div>
+    </div>
+    <div class="chart-row" style="margin-top:20px">
+      <div class="chart-card"><div class="chart-card-title">Client Pulse</div><div class="chart-card-explain">How clients rated the deliverable: exceeded, met, or below expectations.</div><div class="chart-body" style="height:320px"><div id="chartPulse" style="width:100%;height:100%"></div></div></div>
+      <div class="chart-card"><div class="chart-card-title">Reuse Intent</div><div class="chart-card-explain">Would experts choose xCSG again? Enthusiastic = yes without hesitation.</div><div class="chart-body" style="height:320px"><div id="chartReuse" style="width:100%;height:100%"></div></div></div>
+    </div>
+  </div>`;
+
+  // ── SCALING GATES ──
+  if (!filterCategory && dashboard.scaling_gates && dashboard.scaling_gates.length) {
+    const passed = dashboard.scaling_gates.filter(g => g.status === 'pass').length;
+    const total = dashboard.scaling_gates.length;
+    html += `<div class="dashboard-section">
+      <div class="section-header">
+        <div class="section-icon">\ud83d\ude80</div>
+        <div><h2 class="section-title">Scaling Gates</h2><p class="section-subtitle">${passed}/${total} passed</p></div>
+        <div class="gates-progress-ring">${passed}/${total}</div>
+      </div>
+      <div class="gates-track">`;
+    for (const g of dashboard.scaling_gates) {
+      const ok = g.status === 'pass';
+      html += `<div class="gate-card ${ok ? 'gate-pass' : 'gate-pending'}">
+        <div class="gate-status">${ok ? '\u2713' : '\u2715'}</div>
+        <div class="gate-info">
+          <div class="gate-name">${esc(g.name)}</div>
+          <div class="gate-threshold">${esc(g.description || '')}</div>
+          <div class="gate-detail">${esc(g.detail)}</div>
+        </div>
+      </div>`;
     }
-    return catName ? `<span class="legacy-source" data-legacy-source>(from ${esc(catName)} defaults)</span>` : '<span class="legacy-source" data-legacy-source>(from defaults)</span>';
+    html += `</div>
+      <div class="gates-legend">
+        <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-pass">\u2713</span> Passed</span>
+        <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-fail">\u2715</span> Not yet met</span>
+      </div>
+    </div>`;
   }
 
-  const legacyBannerHTML = isEdit ? '' : `
-    <div class="legacy-banner" id="legacyBanner">
-      <svg class="legacy-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
-        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-      </svg>
-      <div><strong>Category defaults loaded.</strong> Adjust these values to match this specific project's legacy context. Overriding improves metric accuracy.</div>
-    </div>`;
-
-  // xCSG Performance section uses simple fields
-  html += `
-    <div class="card">
-      <form id="projectForm">
-        <fieldset><legend>Project Information</legend>
-          <div class="form-row full">
-            <div class="form-group"><label>Project Name <span class="required">*</span></label><input type="text" id="fName" required value="${esc(prefill?.project_name || '')}" placeholder="e.g., Pfizer EU Market Access Q2"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Category <span class="required">*</span></label><select id="fCategory" required>${categoryOptionsHTML(prefill?.category_id)}</select></div>
-            <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(prefill?.client_name || '')}"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Pioneer Name <span class="required">*</span></label><input type="text" id="fPioneer" required value="${esc(prefill?.pioneer_name || '')}"></div>
-            <div class="form-group"><label>Pioneer Email</label><input type="email" id="fEmail" value="${esc(prefill?.pioneer_email || '')}"></div>
-          </div>
-          <div class="form-row full">
-            <div class="form-group"><label>Description</label><textarea id="fDesc" rows="3" placeholder="Brief project description">${esc(prefill?.description || '')}</textarea></div>
-          </div>
-        </fieldset>
-
-        <fieldset><legend>Timeline</legend>
-          <div class="form-row">
-            <div class="form-group"><label>Date Started</label><input type="date" id="fDateStart" value="${prefill?.date_started || todayStr}"></div>
-            <div class="form-group"><label>Target Delivery Date</label><input type="date" id="fDateEnd" value="${prefill?.date_delivered || ''}"></div>
-          </div>
-        </fieldset>
-
-
-
-        <fieldset><legend>xCSG Performance</legend>
-          <div class="form-row">
-            <div class="form-group"><label>Calendar Days <span class="required">*</span></label><select id="fXDays" required>${optionsHTML(CALENDAR_DAYS, prefill?.xcsg_calendar_days)}</select></div>
-            <div class="form-group"><label>Team Size <span class="required">*</span></label><select id="fXTeam" required>${optionsHTML(TEAM_SIZES, prefill?.xcsg_team_size)}</select></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Revision Rounds <span class="required">*</span></label><select id="fRevisions" required>${optionsHTML(REVISION_ROUNDS, prefill?.xcsg_revision_rounds)}</select></div>
-            <div class="form-group"><label>Scope Expansion <span class="required">*</span></label><select id="fScopeExpansion" required>${optionsHTML(['None', 'Minor', 'Major'], prefill?.xcsg_scope_expansion)}</select></div>
-          </div>
-        </fieldset>
-
-        <fieldset><legend>Legacy Baseline</legend>
-          <div id="legacyNormInfo"></div>
-          ${legacyBannerHTML}
-          <div id="legacyNoNorms" class="legacy-no-norms" style="display:none">No defaults available. Enter values manually or set project context above.</div>
-          <div class="form-row">
-            <div class="form-group"><label>Calendar Days ${legacySourceText('days')}</label><select id="fLDays" class="${legacyClass}">${optionsHTML(CALENDAR_DAYS, prefill?.legacy_calendar_days)}</select></div>
-            <div class="form-group"><label>Team Size ${legacySourceText('team')}</label><select id="fLTeam" class="${legacyClass}">${optionsHTML(TEAM_SIZES, prefill?.legacy_team_size)}</select></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label>Revision Rounds ${legacySourceText('revisions')}</label><select id="fLRevisions" class="${legacyClass}">${optionsHTML(REVISION_ROUNDS, prefill?.legacy_revision_rounds)}</select></div>
-            <div class="form-group"></div>
-          </div>
-        </fieldset>
-
-        <div class="form-actions">
-          <button type="button" class="btn btn-secondary" onclick="window.location.hash='#projects'">Cancel</button>
-          <button type="submit" class="btn btn-primary" style="padding:14px 32px;font-size:15px" id="projectSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>
-        </div>
-      </form>
-    </div>`;
+  // ── PORTFOLIO TABLE ──
+  html += `<div class="dashboard-section">
+    <div class="section-header">
+      <div class="section-icon">\ud83d\udccb</div>
+      <div><h2 class="section-title">Portfolio</h2><p class="section-subtitle">${filtered.length} engagement${filtered.length !== 1 ? 's' : ''}</p></div>
+    </div>
+    <div class="table-wrapper">
+    <table class="data-table portfolio-table">
+      <thead><tr><th>Project</th><th>Category</th><th>Pioneer</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain</th><th class="r">Actions</th></tr></thead><tbody>`;
+  for (const row of filtered) {
+    const m = row.metrics || {};
+    html += `<tr>
+      <td><strong>${esc(row.project_name)}</strong></td>
+      <td>${esc(row.category_name)}</td>
+      <td>${esc(row.pioneer_name)}</td>
+      <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${fmtRatio(m.delivery_speed)}</td>
+      <td class="r" style="color:${metricTone(m.output_quality)};font-weight:700">${fmtRatio(m.output_quality)}</td>
+      <td class="r" style="color:${metricTone(m.productivity_ratio)};font-weight:800">${fmtRatio(m.productivity_ratio)}</td>
+      <td class="r"><a href="#edit/${row.id}" class="table-link">Open</a></td>
+    </tr>`;
+  }
+  html += `</tbody></table></div></div>`;
 
   mc.innerHTML = html;
-
-  // Category-based norm load (v1)
-  let legacyManuallyChanged = false;
-  document.getElementById('fCategory')?.addEventListener('change', async function () {
-    if (isEdit) return;
-    const catId = this.value;
-    if (!catId) return;
-    const selectedCat = state.categories.find(c => c.id == catId);
-    const catDisplayName = selectedCat ? selectedCat.name : 'category';
-    try {
-      const norm = await apiCall('GET', `/norms/${catId}`);
-      if (norm) {
-        const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
-        if (banner) banner.style.display = ''; if (noNorms) noNorms.style.display = 'none';
-        ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
-          const el = document.getElementById(id);
-          if (el) { el.classList.remove('legacy-overridden'); el.classList.add('legacy-auto'); }
-        });
-        document.getElementById('fLDays').value = norm.typical_calendar_days || '';
-        document.getElementById('fLTeam').value = norm.typical_team_size || '';
-        document.getElementById('fLRevisions').value = norm.typical_revision_rounds || '';
-        legacyManuallyChanged = false;
-        document.querySelectorAll('[data-legacy-source]').forEach(span => { span.textContent = `(from ${catDisplayName} defaults)`; span.classList.remove('overridden'); });
-      }
-    } catch {
-      const banner = document.getElementById('legacyBanner'); const noNorms = document.getElementById('legacyNoNorms');
-      if (banner) banner.style.display = 'none'; if (noNorms) noNorms.style.display = '';
-      ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; el.classList.remove('legacy-auto', 'legacy-overridden'); } });
-    }
-  });
-
-  // Legacy field override tracking (new project only)
-  if (!isEdit) {
-    ['fLDays', 'fLTeam', 'fLRevisions'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.addEventListener('change', function () {
-          this.classList.remove('legacy-auto'); this.classList.add('legacy-overridden');
-          legacyManuallyChanged = true;
-          const sourceSpan = this.closest('.form-group')?.querySelector('.legacy-source');
-          if (sourceSpan) { sourceSpan.textContent = '(overridden)'; sourceSpan.classList.add('overridden'); }
-        });
-      }
-    });
-  }
-
-  // Submit
-  document.getElementById('projectForm').addEventListener('submit', async function (e) {
-    e.preventDefault();
-    const dateStart = document.getElementById('fDateStart').value;
-    const dateEnd = document.getElementById('fDateEnd').value;
-    if (dateStart && dateEnd && dateStart > dateEnd) { showToast('Start date must be before delivery date', 'error'); return; }
-    const btn = document.getElementById('projectSubmit'); btn.disabled = true; btn.textContent = 'Saving\u2026';
-
-    const payload = {
-      project_name: document.getElementById('fName').value.trim(),
-      category_id: parseInt(document.getElementById('fCategory').value),
-      pioneer_name: document.getElementById('fPioneer').value.trim(),
-      pioneer_email: document.getElementById('fEmail').value.trim() || null,
-      client_name: document.getElementById('fClient').value.trim() || null,
-      description: document.getElementById('fDesc').value.trim() || null,
-      date_started: dateStart || null,
-      date_delivered: dateEnd || null,
-      xcsg_calendar_days: document.getElementById('fXDays').value,
-      xcsg_team_size: document.getElementById('fXTeam').value,
-      xcsg_revision_rounds: document.getElementById('fRevisions').value,
-      xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
-      legacy_calendar_days: document.getElementById('fLDays').value || null,
-      legacy_team_size: document.getElementById('fLTeam').value || null,
-      legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
-    };
-    try {
-      if (isEdit) {
-        await apiCall('PUT', `/projects/${prefill.id}`, payload);
-        showToast('Project updated'); window.location.hash = '#projects';
-      } else {
-        const result = await apiCall('POST', '/projects', payload);
-        if (!legacyManuallyChanged) showToast('Tip: Legacy baseline uses defaults. Edit project to set project-specific values for more accurate metrics.', 'info');
-        const expertUrl = `${window.location.origin}${window.location.pathname}#expert/${result.expert_token}`;
-        showModal(`<h3>Project Created</h3><p>Share this link with the expert:</p><div class="expert-link-box"><input type="text" value="${expertUrl}" readonly id="expertLinkInput" style="flex:1"><button class="btn btn-primary" onclick="copyToClipboard(document.getElementById('expertLinkInput').value)">Copy</button></div><div class="form-actions" style="margin-top:20px"><button class="btn btn-secondary" onclick="hideModal();window.location.hash='#projects'">Done</button></div>`);
-      }
-    } catch (err) { showToast(err.message, 'error'); }
-    finally { btn.disabled = false; btn.textContent = isEdit ? 'Save Changes' : 'Create Project'; }
-  });
+  requestAnimationFrame(() => renderDashboardCharts(localMetrics, filtered));
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   EXPERT ASSESSMENT READ-ONLY VIEW
-   ═══════════════════════════════════════════════════════════════════════ */
-
-const ASSESSMENT_FIELDS = [
-  {
-    section: 'B', title: 'Machine-First Operations',
-    desc: 'How much of this work was driven by AI vs. manual effort?',
-    icon: '🤖',
-    fields: [
-      { id: 'B1', key: 'b1_starting_point', label: 'Starting Point', hint: 'Did the final deliverable start from an AI draft or blank page?', scores: { 'From AI draft': 1.0, 'Mixed (AI structure, manual content)': 0.5, 'From blank page': 0.0 } },
-      { id: 'B2', key: 'b2_research_sources', label: 'Research Throughput', hint: 'How many distinct data sources were synthesized?', scores: { '1-3': 0.25, '4-7': 0.5, '8-12': 0.75, '13+': 1.0 } },
-      { id: 'B3', key: 'b3_assembly_ratio', label: 'Assembly Ratio', hint: 'What % of data collection & structuring was AI-performed?', scores: { '>75% AI': 1.0, '50-75%': 0.75, '25-50%': 0.5, '<25%': 0.25 } },
-      { id: 'B4', key: 'b4_hypothesis_first', label: 'Hypothesis Approach', hint: 'Was this structured around a thesis or open-ended discovery?', scores: { 'Hypothesis-first (tested a specific thesis)': 1.0, 'Hybrid (hypothesis emerged during work)': 0.5, 'Discovery-first (open-ended research)': 0.0 } },
-    ]
-  },
-  {
-    section: 'C', title: 'Senior-Led Engagement',
-    desc: 'How deeply was senior expertise involved in crafting the output?',
-    icon: '👔',
-    fields: [
-      { id: 'C1', key: 'c1_specialization', label: 'Specialization Match', hint: 'Is the analyst a recognized domain specialist?', scores: { 'Deep specialist in this TA/methodology': 1.0, 'Adjacent expertise': 0.5, 'Generalist': 0.0 } },
-      { id: 'C2', key: 'c2_directness', label: 'Directness', hint: 'Did the expert author, co-author, or only review?', scores: { 'Expert authored (with AI assist)': 1.0, 'Expert co-authored (shared with team)': 0.5, 'Expert reviewed only': 0.0 } },
-      { id: 'C3', key: 'c3_judgment_pct', label: 'Judgment Concentration', hint: 'What % of expert time was high-value judgment vs assembly?', scores: { '>75% judgment': 1.0, '50-75%': 0.75, '25-50%': 0.5, '<25%': 0.25 } },
-    ]
-  },
-  {
-    section: 'D', title: 'Proprietary Knowledge Moat',
-    desc: 'How much proprietary or accumulated knowledge made this unique?',
-    icon: '🏰',
-    fields: [
-      { id: 'D1', key: 'd1_proprietary_data', label: 'Proprietary Data', hint: 'Does this contain data from Alira proprietary sources?', scores: { 'Yes': 1.0, 'No': 0.0 } },
-      { id: 'D2', key: 'd2_knowledge_reuse', label: 'Knowledge Reuse', hint: 'Did this build on reusable assets from prior engagements?', scores: { 'Yes, directly reused and extended': 1.0, 'Yes, provided useful starting context': 0.5, 'No, built from scratch': 0.0 } },
-      { id: 'D3', key: 'd3_moat_test', label: 'Moat Test', hint: 'Could a competitor without Alira\'s data produce an equivalent?', scores: { 'No \u2014 proprietary inputs decisive': 1.0, 'Partially \u2014 they would miss key insights': 0.5, 'Yes \u2014 all inputs publicly available': 0.0 } },
-    ]
-  },
-  {
-    section: 'F', title: 'Value Creation',
-    desc: 'Whether xCSG created value that wouldn\'t exist in the legacy model.',
-    icon: '💎',
-    fields: [
-      { id: 'F1', key: 'f1_feasibility', label: 'Legacy Feasibility', hint: 'Would this have been feasible without AI?', scores: { 'Not feasible \u2014 scope or timeline was only possible with AI': 1.0, 'Feasible but at 2x+ the cost and time': 0.67, 'Feasible at similar cost \u2014 xCSG provided marginal benefit': 0.33, 'Legacy would have been more effective': 0.0 } },
-      { id: 'F2', key: 'f2_productization', label: 'Productization Potential', hint: 'Could a component be reused as a standardized offering?', scores: { 'Yes, largely as-is': 1.0, 'Yes, with moderate customization': 0.5, 'No, fully bespoke': 0.0 } },
-    ]
-  },
-];
-
-function scoreColor(score) {
-  if (score >= 0.7) return '#10B981'; // green
-  if (score >= 0.4) return '#F59E0B'; // amber
-  return '#EF4444'; // red
-}
-
-function scoreLabel(score) {
-  if (score >= 0.8) return 'Strong';
-  if (score >= 0.6) return 'Good';
-  if (score >= 0.4) return 'Moderate';
-  return 'Low';
-}
-
-function gaugeHTML(score, size = 56) {
-  const pct = Math.round(score * 100);
-  const color = scoreColor(score);
-  const circumference = 2 * Math.PI * 20;
-  const offset = circumference * (1 - score);
-  return `<div class="score-gauge" style="width:${size}px;height:${size}px">
-    <svg viewBox="0 0 48 48" width="${size}" height="${size}">
-      <circle cx="24" cy="24" r="20" fill="none" stroke="var(--gray-200)" stroke-width="4"/>
-      <circle cx="24" cy="24" r="20" fill="none" stroke="${color}" stroke-width="4"
-        stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
-        stroke-linecap="round" transform="rotate(-90 24 24)"/>
-      <text x="24" y="26" text-anchor="middle" font-size="11" font-weight="700" fill="${color}">${pct}</text>
-    </svg>
-  </div>`;
+function _sliceDashboard(category) {
+  if (!_projectsCache || !_dashboardCache) return;
+  _renderDashboardView(_projectsCache, _dashboardCache, category);
 }
 
 function barHTML(score, label) {
   const pct = Math.round(score * 100);
   const color = scoreColor(score);
   return `<div class="assessment-bar">
-    <div class="assessment-bar-track">
-      <div class="assessment-bar-fill" style="width:${pct}%;background:${color}"></div>
-    </div>
+    <div class="assessment-bar-track"><div class="assessment-bar-fill" style="width:${pct}%;background:${color}"></div></div>
     <span class="assessment-bar-label" style="color:${color}">${label || pct + '%'}</span>
   </div>`;
 }
 
 function renderExpertAssessment(er, metrics) {
-  // Compute section scores
   const sectionScores = {};
-  for (const sec of ASSESSMENT_FIELDS) {
+  for (const sec of getAssessmentFields()) {
     let sum = 0, count = 0;
     for (const f of sec.fields) {
       const val = er[f.key];
@@ -980,89 +524,283 @@ function renderExpertAssessment(er, metrics) {
     sectionScores[sec.section] = count > 0 ? sum / count : null;
   }
 
-  // Overall xCSG Score = average of B, C, D (F is descriptive)
   const coreScores = [sectionScores.B, sectionScores.C, sectionScores.D].filter(s => s !== null);
   const overall = coreScores.length > 0 ? coreScores.reduce((a, b) => a + b, 0) / coreScores.length : null;
 
-  // Value multiplier from metrics
-  const vm = metrics.value_multiplier;
-  const effortRatio = metrics.effort_ratio;
-  const qualityRatio = metrics.quality_ratio;
+  const fmtScore = (v) => v == null ? '\u2014' : round2(v);
+  const fmtRatio = (v) => v == null ? '\u2014' : `${round2(v)}x`;
 
   let html = `<div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
     <span>Expert Assessment</span>
-    <span class="badge badge-complete" style="font-size:11px">Submitted</span>
-  </div>`;
+    <span class="badge badge-green" style="font-size:11px">Submitted</span>
+  </div><div class="card-body">`;
 
-  html += `<div class="card-body">`;
-
-  // ── Overall Score Banner ──
   html += `<div class="assessment-overall-banner">
     <div class="assessment-overall-left">
       ${overall !== null ? gaugeHTML(overall, 72) : '<div class="score-gauge" style="width:72px;height:72px"><div class="score-na">N/A</div></div>'}
       <div>
-        <div class="assessment-overall-title">xCSG Score</div>
-        <div class="assessment-overall-subtitle">${overall !== null ? scoreLabel(overall) + ' (' + Math.round(overall * 100) + '/100)' : 'Insufficient data'}</div>
+        <div class="assessment-overall-title" title="Average of Machine-First (B), Senior-Led (C), and Proprietary Knowledge (D) section scores.">xCSG Score</div>
+        <div class="assessment-overall-subtitle">${overall !== null ? Math.round(overall * 100) + '/100' : 'Insufficient data'}</div>
         <div class="assessment-overall-hint">Average of Machine-First, Senior-Led, and Knowledge Moat</div>
       </div>
     </div>
     <div class="assessment-overall-metrics">
-      <div class="assessment-metric-chip ${effortRatio >= 2 ? 'chip-green' : effortRatio >= 1 ? 'chip-amber' : 'chip-red'}">
-        <span class="chip-value">${effortRatio !== undefined ? effortRatio.toFixed(1) + '×' : '—'}</span>
-        <span class="chip-label">Effort Ratio</span>
-        <span class="chip-hint">Person-days saved vs legacy</span>
-      </div>
-      <div class="assessment-metric-chip ${qualityRatio >= 1 ? 'chip-green' : qualityRatio >= 0.5 ? 'chip-amber' : 'chip-red'}">
-        <span class="chip-value">${qualityRatio !== undefined ? qualityRatio.toFixed(1) + '×' : '—'}</span>
-        <span class="chip-label">Quality Ratio</span>
-        <span class="chip-hint">Revision reduction vs legacy</span>
-      </div>
-      <div class="assessment-metric-chip ${vm >= 3 ? 'chip-green' : vm >= 1.5 ? 'chip-amber' : 'chip-red'}">
-        <span class="chip-value">${vm !== undefined ? vm.toFixed(1) + '×' : '—'}</span>
-        <span class="chip-label">Value Multiplier</span>
-        <span class="chip-hint">Effort × Quality combined</span>
-      </div>
+      <div class="assessment-metric-chip ${metrics.effort_ratio >= 2 ? 'chip-green' : metrics.effort_ratio >= 1 ? 'chip-amber' : 'chip-red'}" title="Legacy person-days \xf7 xCSG person-days. >1x means xCSG delivered faster.">
+        <span class="chip-value">${fmtRatio(metrics.effort_ratio)}</span><span class="chip-label">Effort Ratio</span></div>
+      <div class="assessment-metric-chip ${metrics.quality_score >= 0.7 ? 'chip-green' : metrics.quality_score >= 0.4 ? 'chip-amber' : 'chip-red'}" title="Average of self-assessment, analytical depth, and decision readiness (0-1 scale).">
+        <span class="chip-value">${fmtScore(metrics.quality_score)}</span><span class="chip-label">Quality Score</span></div>
+      <div class="assessment-metric-chip ${metrics.outcome_rate_ratio >= 2 ? 'chip-green' : metrics.outcome_rate_ratio >= 1 ? 'chip-amber' : 'chip-red'}" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">
+        <span class="chip-value">${fmtRatio(metrics.outcome_rate_ratio)}</span><span class="chip-label">xCSG Value Gain</span></div>
     </div>
   </div>`;
 
-  // ── Section Cards ──
-  for (const sec of ASSESSMENT_FIELDS) {
+  for (const sec of getAssessmentFields()) {
     const secScore = sectionScores[sec.section];
     html += `<div class="assessment-section-card">
       <div class="assessment-section-header">
         <div class="assessment-section-title-row">
           <span class="assessment-section-icon">${sec.icon}</span>
-          <div>
-            <div class="assessment-section-label">Section ${sec.section}: ${esc(sec.title)}</div>
-            <div class="assessment-section-desc">${esc(sec.desc)}</div>
-          </div>
+          <div><div class="assessment-section-label">Section ${sec.section}: ${esc(sec.title)}</div><div class="assessment-section-desc">${esc(sec.desc)}</div></div>
         </div>
         ${secScore !== null ? gaugeHTML(secScore, 44) : ''}
       </div>
       <div class="assessment-fields">`;
-
     for (const f of sec.fields) {
-      const val = er[f.key] || '—';
+      const val = er[f.key] || '\u2014';
       const score = f.scores[val];
-      const displayVal = val === 'Yes' ? 'Yes ✓' : val === 'No' ? 'No ✗' : val;
       html += `<div class="assessment-field">
         <div class="assessment-field-top">
           <span class="assessment-field-id">${f.id}</span>
           <span class="assessment-field-label">${esc(f.label)}</span>
-          <span class="assessment-field-hint">${esc(f.hint)}</span>
         </div>
         <div class="assessment-field-answer">
-          <span class="assessment-field-value">${esc(displayVal)}</span>
-          ${score !== undefined ? barHTML(score, scoreLabel(score)) : ''}
+          <span class="assessment-field-value">${esc(val)}</span>
+          ${score !== undefined ? barHTML(score) : ''}
         </div>
       </div>`;
     }
+    html += `</div></div>`;
+  }
 
+  // Show legacy estimates if available — pull all L-fields from schema
+  const legacyFields = schema && schema.fields
+    ? Object.entries(schema.fields)
+        .filter(([k, f]) => f.section === 'L')
+        .map(([key, f]) => ({ key, label: f.label }))
+    : [
+        { key: 'l1_legacy_working_days', label: 'Legacy Working Days' },
+        { key: 'l2_legacy_team_size', label: 'Legacy Team Size' },
+        { key: 'l3_legacy_revision_depth', label: 'Legacy Revision Depth' },
+        { key: 'l4_legacy_scope_expansion', label: 'Legacy Scope Expansion' },
+        { key: 'l5_legacy_client_reaction', label: 'Legacy Client Reaction' },
+      ];
+  const hasLegacy = legacyFields.some(f => er[f.key] != null);
+  if (hasLegacy) {
+    html += `<div class="assessment-section-card">
+      <div class="assessment-section-header">
+        <div class="assessment-section-title-row">
+          <span class="assessment-section-icon">\uD83D\uDCDD</span>
+          <div><div class="assessment-section-label">Section L: Legacy Estimates</div><div class="assessment-section-desc">Expert\u2019s estimate of traditional delivery performance</div></div>
+        </div>
+      </div>
+      <div class="assessment-fields">`;
+    for (const f of legacyFields) {
+      const val = er[f.key];
+      if (val == null) continue;
+      html += `<div class="assessment-field">
+        <div class="assessment-field-top"><span class="assessment-field-label">${esc(f.label)}</span></div>
+        <div class="assessment-field-answer"><span class="assessment-field-value">${esc(val)}</span></div>
+      </div>`;
+    }
     html += `</div></div>`;
   }
 
   html += `</div>`;
   return html;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NEW / EDIT PROJECT FORM
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function renderNewProject(existing) {
+  await loadCategories();
+  const mc = document.getElementById('mainContent');
+  const isEdit = !!existing;
+  const p = existing || {};
+
+  mc.innerHTML = `
+    <form id="projectForm" class="project-form">
+      <fieldset><legend>Project Info</legend>
+        <div class="form-row">
+          <div class="form-group"><label>Project Name *</label><input type="text" id="fName" value="${esc(p.project_name || '')}" required></div>
+          <div class="form-group"><label>Category *</label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Pioneer Name *</label><input type="text" id="fPioneer" value="${esc(p.pioneer_name || '')}" required></div>
+          <div class="form-group"><label>Pioneer Email</label><input type="email" id="fEmail" value="${esc(p.pioneer_email || '')}"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(p.client_name || '')}"></div>
+          <div class="form-group"><label>Client Contact Email</label><input type="email" id="fClientEmail" value="${esc(p.client_contact_email || '')}"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Engagement Stage</label><select id="fStage">${optionsHTML(ENGAGEMENT_STAGES, p.engagement_stage)}</select></div>
+          <div class="form-group"><label>Client Pulse</label><select id="fPulse">${optionsHTML(CLIENT_PULSE_OPTIONS, p.client_pulse || 'Not yet received')}</select></div>
+        </div>
+        <div class="form-group"><label>Description</label><textarea id="fDesc" rows="3">${esc(p.description || '')}</textarea></div>
+      </fieldset>
+
+      <fieldset><legend>Timeline <span id="calendarDaysBadge" class="badge badge-info" style="font-size:11px"></span></legend>
+        <div class="form-row">
+          <div class="form-group"><label>Date Started</label><input type="date" id="fDateStart" value="${p.date_started || ''}"></div>
+          <div class="form-group"><label>Date Delivered</label><input type="date" id="fDateEnd" value="${p.date_delivered || ''}"></div>
+        </div>
+      </fieldset>
+
+      <fieldset><legend>xCSG Performance</legend>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Calendar Days</label>
+            <input type="number" id="fXDays" min="1" max="365" step="1" value="${esc(p.xcsg_calendar_days || '')}" placeholder="e.g. 5">
+            <span class="field-warn" id="warnXDays"></span>
+          </div>
+          <div class="form-group">
+            <label>Team Size *</label>
+            <input type="number" id="fXTeam" min="1" max="50" step="1" value="${esc(p.xcsg_team_size || '')}" required placeholder="e.g. 2">
+            <span class="field-warn" id="warnXTeam"></span>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Revision Rounds *</label>
+            <input type="number" id="fRevisions" min="0" max="20" step="1" value="${esc(p.xcsg_revision_rounds || '')}" required placeholder="e.g. 1">
+            <span class="field-warn" id="warnRevisions"></span>
+          </div>
+          <div class="form-group"><label>Scope Expansion</label><select id="fScopeExpansion">${optionsHTML(SCOPE_OPTIONS, p.xcsg_scope_expansion)}</select></div>
+        </div>
+        <div class="form-group"><label>Revision Depth</label><select id="fRevDepth">${optionsHTML(REVISION_DEPTH_OPTIONS, p.revision_depth)}</select></div>
+      </fieldset>
+
+      <fieldset><legend>Legacy Comparables</legend>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Calendar Days</label>
+            <input type="number" id="fLDays" min="1" max="365" step="1" value="${esc(p.legacy_calendar_days || '')}" placeholder="e.g. 10">
+            <span class="field-warn" id="warnLDays"></span>
+          </div>
+          <div class="form-group">
+            <label>Team Size</label>
+            <input type="number" id="fLTeam" min="1" max="50" step="1" value="${esc(p.legacy_team_size || '')}" placeholder="e.g. 3">
+            <span class="field-warn" id="warnLTeam"></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Revision Rounds</label>
+          <input type="number" id="fLRevisions" min="0" max="20" step="1" value="${esc(p.legacy_revision_rounds || '')}" placeholder="e.g. 3">
+          <span class="field-warn" id="warnLRevisions"></span>
+        </div>
+      </fieldset>
+
+      <div style="display:flex;gap:12px;margin-top:24px;align-items:center">
+        <button type="submit" class="btn btn-primary" id="fSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>
+        ${isEdit ? '<button type="button" class="btn btn-secondary" onclick="window.location.hash=\'#projects\'">Back to Projects</button>' : ''}
+        ${isEdit && p.expert_token ? `<button type="button" class="btn btn-secondary" onclick="showExpertLink('${esc(p.expert_token)}')">Expert Link</button>` : ''}
+        ${isEdit && state.user && state.user.role === 'admin' ? `<button type="button" class="btn btn-danger" onclick="confirmDelete(${p.id}, '${esc(p.project_name)}')">Delete</button>` : ''}
+      </div>
+    </form>`;
+
+  // Calendar days auto-compute
+  function updateCalendarDays() {
+    const s = document.getElementById('fDateStart').value;
+    const e = document.getElementById('fDateEnd').value;
+    const badge = document.getElementById('calendarDaysBadge');
+    if (s && e) {
+      const days = Math.round((new Date(e) - new Date(s)) / 86400000);
+      badge.textContent = days >= 0 ? days + ' calendar days' : '';
+    } else { badge.textContent = ''; }
+  }
+  document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);
+  document.getElementById('fDateEnd').addEventListener('change', updateCalendarDays);
+  updateCalendarDays();
+
+  // Numeric field validation
+  function validateNumField(inputId, warnId, { min, max, intOnly, label }) {
+    const el = document.getElementById(inputId);
+    const warn = document.getElementById(warnId);
+    if (!el || !warn) return;
+    el.addEventListener('input', () => {
+      const v = el.value.trim();
+      if (v === '') { warn.textContent = ''; return; }
+      const n = Number(v);
+      if (isNaN(n)) { warn.textContent = label + ' must be a number'; return; }
+      if (intOnly && n !== Math.floor(n)) { warn.textContent = label + ' must be a whole number'; return; }
+      if (n < min) { warn.textContent = label + ' seems too low (min ' + min + ')'; return; }
+      if (n > max) { warn.textContent = label + ' seems too high (max ' + max + ')'; return; }
+      warn.textContent = '';
+    });
+  }
+  validateNumField('fXDays', 'warnXDays', { min: 1, max: 365, intOnly: true, label: 'Calendar days' });
+  validateNumField('fXTeam', 'warnXTeam', { min: 1, max: 50, intOnly: true, label: 'Team size' });
+  validateNumField('fRevisions', 'warnRevisions', { min: 0, max: 20, intOnly: true, label: 'Revision rounds' });
+  validateNumField('fLDays', 'warnLDays', { min: 1, max: 365, intOnly: true, label: 'Calendar days' });
+  validateNumField('fLTeam', 'warnLTeam', { min: 1, max: 50, intOnly: true, label: 'Team size' });
+  validateNumField('fLRevisions', 'warnLRevisions', { min: 0, max: 20, intOnly: true, label: 'Revision rounds' });
+
+  // Submit
+  document.getElementById('projectForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = document.getElementById('fSubmit');
+    btn.disabled = true; btn.textContent = isEdit ? 'Saving\u2026' : 'Creating\u2026';
+    const payload = {
+      project_name: document.getElementById('fName').value,
+      category_id: parseInt(document.getElementById('fCategory').value),
+      pioneer_name: document.getElementById('fPioneer').value,
+      pioneer_email: document.getElementById('fEmail').value || null,
+      client_name: document.getElementById('fClient').value || null,
+      client_contact_email: document.getElementById('fClientEmail').value || null,
+      engagement_stage: document.getElementById('fStage').value || null,
+      client_pulse: document.getElementById('fPulse').value || 'Not yet received',
+      description: document.getElementById('fDesc').value || null,
+      date_started: document.getElementById('fDateStart').value || null,
+      date_delivered: document.getElementById('fDateEnd').value || null,
+      xcsg_calendar_days: document.getElementById('fXDays').value || null,
+      xcsg_team_size: document.getElementById('fXTeam').value,
+      xcsg_revision_rounds: document.getElementById('fRevisions').value,
+      revision_depth: document.getElementById('fRevDepth').value || null,
+      xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
+      legacy_calendar_days: document.getElementById('fLDays').value || null,
+      legacy_team_size: document.getElementById('fLTeam').value || null,
+      legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
+    };
+    try {
+      if (isEdit) {
+        await apiCall('PUT', `/projects/${p.id}`, payload);
+        showToast('Project updated');
+        window.location.hash = '#projects';
+      } else {
+        const result = await apiCall('POST', '/projects', payload);
+        showExpertLink(result.expert_token);
+        showToast('Project created');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = isEdit ? 'Save Changes' : 'Create Project';
+    }
+  });
+}
+
+function showExpertLink(token) {
+  const link = window.location.origin + '/#expert/' + token;
+  showModal(`<h3 style="color:var(--navy);margin-bottom:12px">Project Created</h3>
+    <p style="margin-bottom:12px">Share this expert assessment link:</p>
+    <input type="text" value="${esc(link)}" readonly style="width:100%;padding:8px;border:1px solid var(--gray-200);border-radius:6px;font-family:monospace;font-size:13px" id="expertLinkInput">
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('expertLinkInput').value);showToast('Copied!')">Copy Link</button>
+      <button class="btn btn-secondary btn-sm" onclick="hideModal()">Close</button>
+    </div>`);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1074,18 +812,8 @@ async function renderEditProject(id) {
   mc.innerHTML = '<div class="loading">Loading\u2026</div>';
   try {
     const p = await apiCall('GET', `/projects/${id}`);
-    renderNewProject(p);
+    await renderNewProject(p);
 
-    // Complete Project button
-    if (p.status === 'expert_pending' && p.expert_response) {
-      const btnBar = document.createElement('div');
-      btnBar.style.cssText = 'display:flex;gap:12px;align-items:center;margin-top:20px;';
-      btnBar.innerHTML = '<button class="btn btn-primary" id="completeProjectBtn" style="background:var(--success)">\u2705 Complete Project</button>';
-      mc.querySelector('.form-actions')?.after(btnBar);
-      btnBar.querySelector('#completeProjectBtn').addEventListener('click', () => showCompletionModal(id, p));
-    }
-
-    // If expert response exists, show rich read-only assessment below form
     if (p.expert_response) {
       const er = p.expert_response;
       const m = p.metrics || {};
@@ -1098,75 +826,6 @@ async function renderEditProject(id) {
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load project: ${esc(err.message)}</div>`;
   }
-}
-
-function showCompletionModal(projectId, project) {
-  const p = project;
-  const overlay = document.getElementById('globalModal');
-  const card = document.getElementById('globalModalCard');
-  card.className = 'modal-card wide-modal';
-  card.innerHTML = `
-    <div class="completion-modal">
-      <h3>Complete Project</h3>
-      <p class="modal-subtitle">Compare xCSG vs legacy performance for <strong>${esc(p.project_name)}</strong></p>
-      <div class="completion-sides">
-        <div class="completion-side xcsg-side">
-          <h4>\uD83E\uDD16 xCSG Performance</h4>
-          <div class="completion-slider"><label>Revision Intensity <span class="slider-value-badge" id="compXRI">${p.xcsg_revision_intensity || 3}</span></label><div class="slider-labels"><span>Minimal</span><span>Exhaustive</span></div><input type="range" class="xcsg-slider" id="compXcsgRI" min="1" max="7" step="1" value="${p.xcsg_revision_intensity || 3}"></div>
-          <div class="completion-slider"><label>Scope Expansion <span class="slider-value-badge" id="compXSE">${p.xcsg_scope_expansion || 3}</span></label><div class="slider-labels"><span>Stayed on scope</span><span>Blew past scope</span></div><input type="range" class="xcsg-slider" id="compXcsgSE" min="1" max="7" step="1" value="${p.xcsg_scope_expansion || 3}"></div>
-          <div class="completion-slider"><label>Senior Involvement <span class="slider-value-badge" id="compXSI">3</span></label><div class="slider-labels"><span>Junior-led</span><span>Senior-led</span></div><input type="range" class="xcsg-slider" id="compXcsgSI" min="1" max="7" step="1" value="3"></div>
-          <div class="completion-slider"><label>AI Usage <span class="slider-value-badge" id="compXAI">3</span></label><div class="slider-labels"><span>None</span><span>Fully machine-first</span></div><input type="range" class="xcsg-slider" id="compXcsgAI" min="1" max="7" step="1" value="3"></div>
-        </div>
-        <div class="completion-side legacy-side">
-          <h4>\uD83D\uDCBC Legacy Performance</h4>
-          <div class="completion-slider"><label>Revision Intensity <span class="slider-value-badge" id="compLRI">3</span></label><div class="slider-labels"><span>Minimal</span><span>Exhaustive</span></div><input type="range" class="xcsg-slider" id="compLegacyRI" min="1" max="7" step="1" value="3"></div>
-          <div class="completion-slider"><label>Scope Expansion <span class="slider-value-badge" id="compLSE">3</span></label><div class="slider-labels"><span>Stayed on scope</span><span>Blew past scope</span></div><input type="range" class="xcsg-slider" id="compLegacySE" min="1" max="7" step="1" value="3"></div>
-          <div class="completion-slider"><label>Senior Involvement <span class="slider-value-badge" id="compLSI">3</span></label><div class="slider-labels"><span>Junior-led</span><span>Senior-led</span></div><input type="range" class="xcsg-slider" id="compLegacySI" min="1" max="7" step="1" value="3"></div>
-          <div class="completion-slider"><label>AI Usage <span class="slider-value-badge" id="compLAI">1</span></label><div class="slider-labels"><span>None</span><span>Fully machine-first</span></div><input type="range" class="xcsg-slider" id="compLegacyAI" min="1" max="7" step="1" value="1"></div>
-        </div>
-      </div>
-      <div class="form-actions" style="margin-top:20px">
-        <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
-        <button class="btn btn-primary" id="submitCompletion" style="background:var(--success)">Complete Project</button>
-      </div>
-      <div id="completionResult"></div>
-    </div>`;
-  overlay.classList.add('active');
-
-  // Wire slider badges
-  const sliderBadgeMap = [
-    ['compXcsgRI','compXRI'], ['compXcsgSE','compXSE'], ['compXcsgSI','compXSI'], ['compXcsgAI','compXAI'],
-    ['compLegacyRI','compLRI'], ['compLegacySE','compLSE'], ['compLegacySI','compLSI'], ['compLegacyAI','compLAI'],
-  ];
-  sliderBadgeMap.forEach(([sliderId, badgeId]) => {
-    const s = document.getElementById(sliderId);
-    if (s) s.addEventListener('input', () => { document.getElementById(badgeId).textContent = s.value; });
-  });
-
-  document.getElementById('submitCompletion').addEventListener('click', async () => {
-    const btn = document.getElementById('submitCompletion'); btn.disabled = true; btn.textContent = 'Saving\u2026';
-    try {
-      const result = await apiCall('POST', `/projects/${projectId}/complete`, {
-        xcsg_revision_intensity: parseFloat(document.getElementById('compXcsgRI').value),
-        xcsg_scope_expansion: parseFloat(document.getElementById('compXcsgSE').value),
-        xcsg_senior_involvement: parseFloat(document.getElementById('compXcsgSI').value),
-        xcsg_ai_usage: parseFloat(document.getElementById('compXcsgAI').value),
-        legacy_revision_intensity: parseFloat(document.getElementById('compLegacyRI').value),
-        legacy_scope_expansion: parseFloat(document.getElementById('compLegacySE').value),
-        legacy_senior_involvement: parseFloat(document.getElementById('compLegacySI').value),
-        legacy_ai_usage: parseFloat(document.getElementById('compLegacyAI').value),
-      });
-      const mfs = result.machine_first_score != null ? Math.round(result.machine_first_score) : '—';
-      document.getElementById('completionResult').innerHTML = `
-        <div class="completion-score-banner">
-          <div class="score-label">Machine-First Score</div>
-          <div class="score-value">${mfs}${typeof mfs === 'number' ? '/100' : ''}</div>
-          <div class="score-desc">Project completed successfully</div>
-        </div>`;
-      btn.textContent = 'Done';
-      btn.onclick = () => { hideModal(); window.location.hash = `#edit/${projectId}`; };
-    } catch (err) { showToast(err.message, 'error'); btn.disabled = false; btn.textContent = 'Complete Project'; }
-  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1186,6 +845,8 @@ async function renderProjects() {
     const cats = [...new Set(rows.map(p => p.category_name).filter(Boolean))].sort();
     const pioneers = [...new Set(rows.map(p => p.pioneer_name).filter(Boolean))].sort();
 
+    const fmtScore = (v) => v == null ? '\u2014' : round2(v);
+
     let html = `
       <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
         <select id="statusFilter" class="filter-select">
@@ -1204,14 +865,16 @@ async function renderProjects() {
         <a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
-        <th>Project Name</th><th>Category</th><th>Client</th><th>Pioneer</th><th>Status</th><th>Created</th><th>Actions</th>
+        <th>Project</th><th>Category</th><th>Working Days</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody>`;
 
     for (const p of rows) {
       const statusBadge = p.status === 'complete'
         ? '<span class="badge badge-green">Complete</span>'
         : '<span class="badge badge-orange">Expert Pending</span>';
-      const confFlag = !p.legacy_overridden ? CONFIDENCE_FLAG_SVG : '';
+      const pulseSelect = `<select class="filter-select client-pulse-inline" data-project-id="${p.id}" onchange="updateClientPulse(${p.id}, this.value)">${optionsHTML(CLIENT_PULSE_OPTIONS, p.client_pulse || 'Not yet received')}</select>`;
+      const qualityScore = p.metrics ? fmtScore(p.metrics.quality_score) : '\u2014';
+      const workingDays = p.working_days || '\u2014';
       const linkSvg = '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
       const trashSvg = '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
       const expertBtn = p.status !== 'complete' && p.expert_token
@@ -1222,8 +885,12 @@ async function renderProjects() {
         ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${p.id},'${esc(p.project_name)}')">${trashSvg}</button>`
         : '';
       html += `<tr class="clickable-row" data-status="${p.status}" data-cat="${esc(p.category_name)}" data-pioneer="${esc(p.pioneer_name)}" onclick="window.location.hash='#edit/${p.id}'">
-        <td>${esc(p.project_name)}${confFlag}</td><td><span class="badge badge-navy">${esc(p.category_name)}</span></td><td>${esc(p.client_name || '\u2014')}</td>
-        <td>${esc(p.pioneer_name)}</td><td>${statusBadge}</td><td>${formatDate(p.created_at)}</td>
+        <td>${esc(p.project_name)}</td>
+        <td>${esc(p.category_name || '\u2014')}</td>
+        <td>${workingDays}</td>
+        <td>${qualityScore}</td>
+        <td onclick="event.stopPropagation()">${pulseSelect}</td>
+        <td>${statusBadge}</td>
         <td class="actions-cell">${expertBtn}${deleteBtn}</td>
       </tr>`;
     }
@@ -1252,6 +919,13 @@ async function renderProjects() {
   }
 }
 
+async function updateClientPulse(projectId, value) {
+  try {
+    await apiCall('PUT', `/projects/${projectId}`, { client_pulse: value });
+    showToast('Client pulse updated');
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
 function confirmDelete(id, name) {
   showModal(`
     <h3>Delete Project</h3>
@@ -1273,39 +947,525 @@ async function doDelete(id) {
     showToast(err.message, 'error');
   }
 }
+
 /* ═══════════════════════════════════════════════════════════════════════
-   EXPERT FORM — Phase 1 Accordion (standalone, no auth)
+   DASHBOARD CHARTS
    ═══════════════════════════════════════════════════════════════════════ */
 
-function _expertLocalStorageKey(token) { return `expert_form_${token}`; }
+
+
+const C = {
+  navy: '#121F6B', blue: '#3B82F6', teal: '#14B8A6', green: '#10B981',
+  orange: '#F59E0B', red: '#EF4444', gray: '#9CA3AF', gray200: '#E5E7EB',
+  gray50: '#F9FAFB', gray100: '#F3F4F6', purple: '#8B5CF6', indigo: '#6366F1',
+};
+const ec = {};
+function ecInit(id) {
+  if (ec[id]) ec[id].dispose();
+  const dom = document.getElementById(id);
+  if (!dom) return null;
+  const c = echarts.init(dom, null, { renderer: 'canvas' });
+  ec[id] = c;
+  const ro = new ResizeObserver(() => c.resize());
+  ro.observe(dom);
+  return c;
+}
+function tone(v) { return v == null ? C.gray : v > 1.5 ? C.green : v >= 1 ? C.blue : v >= 0.8 ? C.orange : C.red; }
+function barColor(v) { return tone(v); }
+function tip() {
+  return { backgroundColor: 'rgba(18,31,107,0.94)', borderColor: 'none', borderRadius: 10, padding: [12, 16],
+    textStyle: { color: '#fff', fontSize: 13, fontFamily: 'Inter, system-ui' },
+    extraCssText: 'box-shadow: 0 8px 24px rgba(0,0,0,0.2);' };
+}
+function axisLbl() { return { color: '#6B7280', fontSize: 12, fontFamily: 'Inter, system-ui' }; }
+
+function renderDashboardCharts(dashboard, allProjects) {
+  if (typeof echarts === 'undefined') return;
+  Object.keys(ec).forEach(k => { ec[k].dispose(); delete ec[k]; });
+  echarts.registerTheme;
+  const done = allProjects.filter(p => p.status === 'complete' && p.metrics);
+
+  // 1. SCATTER
+  const s1 = ecInit('chartDisprove');
+  if (s1 && done.length) {
+    const pts = done.map(p => {
+      const m = p.metrics;
+      if (m.delivery_speed == null || m.output_quality == null) return null;
+      const q = (m.delivery_speed >= 1 && m.output_quality >= 1);
+      return { value: [m.delivery_speed, m.output_quality], name: p.project_name, pioneer: p.pioneer_name, client: p.client_name, cat: p.category_name, good: q };
+    }).filter(Boolean);
+    if (pts.length) {
+      const maxX = Math.max(...pts.map(p => p.value[0])) * 1.15;
+      const maxY = Math.max(...pts.map(p => p.value[1])) * 1.15;
+      s1.setOption({
+        tooltip: { ...tip(), trigger: 'item',
+          formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${d.name}</b><br><span style="opacity:.6">${d.pioneer} · ${d.client}</span><br><br>Speed: <b>${d.value[0]}×</b> &nbsp; Quality: <b>${d.value[1]}×</b>`; } },
+        grid: { left: 55, right: 30, top: 30, bottom: 45 },
+        xAxis: { type: 'value', max: maxX, name: 'Delivery Speed', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+        yAxis: { type: 'value', max: maxY, name: 'Output Quality', nameLocation: 'middle', nameGap: 35, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+        series: [{ type: 'scatter', data: pts.map(d => ({
+          value: d.value,
+          symbolSize: 28,
+          itemStyle: { color: d.good ? C.green : C.orange, borderColor: '#fff', borderWidth: 2, shadowBlur: 8, shadowColor: d.good ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)' },
+        })), emphasis: { scale: 1.5, itemStyle: { shadowBlur: 16 } },
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: '#D1D5DB', type: 'dashed', width: 1.5 },
+            data: [{ xAxis: 1 }, { yAxis: 1 }] } }],
+        graphic: [
+          { type: 'text', right: 30, top: 15, style: { text: '\u2713 Thesis Validated', fill: 'rgba(16,185,129,0.5)', fontSize: 13, fontWeight: 600 } },
+          { type: 'text', left: 30, bottom: 55, style: { text: '\u2717 Model Failing', fill: 'rgba(239,68,68,0.4)', fontSize: 13, fontWeight: 600 } },
+        ],
+      });
+    }
+  }
+
+  // 2. RADAR
+  const s2 = ecInit('chartRadar');
+  if (s2) {
+    const labels = ['Machine-First', 'Senior-Led', 'Knowledge', 'Rework Eff.', 'Client Impact', 'Data Ind.'];
+    const vals = [dashboard.machine_first_avg, dashboard.senior_led_avg, dashboard.proprietary_knowledge_avg,
+      dashboard.rework_efficiency_avg, dashboard.client_impact_avg, dashboard.data_independence_avg];
+    const vp = labels.map((l, i) => ({ l, v: vals[i] })).filter(p => p.v != null);
+    if (vp.length) {
+      const maxVal = Math.max(...vp.map(p => p.v), 2) * 1.15;
+      s2.setOption({
+        tooltip: { ...tip(), trigger: 'item' },
+        legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 16, itemHeight: 8, itemGap: 24 },
+        radar: { shape: 'circle', indicator: vp.map(p => ({ name: p.l, max: maxVal })),
+          axisName: { color: '#374151', fontSize: 12, fontWeight: 500 },
+          splitArea: { areaStyle: { color: ['rgba(243,244,246,0.6)', 'rgba(255,255,255,0.6)'] } },
+          splitLine: { lineStyle: { color: C.gray200 } }, axisLine: { lineStyle: { color: C.gray200 } } },
+        series: [{ type: 'radar', data: [
+          { value: vp.map(p => p.v), name: 'xCSG Average', areaStyle: { color: 'rgba(99,102,241,0.2)' },
+            lineStyle: { color: C.indigo, width: 3 }, itemStyle: { color: C.indigo, borderWidth: 2, borderColor: '#fff' }, symbol: 'circle', symbolSize: 8 },
+          { value: vp.map(() => 1.0), name: 'Baseline', lineStyle: { color: C.gray, type: 'dashed', width: 1.5 },
+            itemStyle: { color: 'transparent' }, areaStyle: { color: 'transparent' }, symbol: 'none' },
+        ] }],
+      });
+    }
+  }
+
+  // 3. ADVANTAGE TREND
+  const s3 = ecInit('chartAdvantageTrend');
+  if (s3 && done.length) {
+    const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
+    const td = sorted.map(p => ({ d: p.date_delivered || p.date_started, v: p.metrics.productivity_ratio, n: p.project_name })).filter(d => d.v != null);
+    if (td.length) {
+      s3.setOption({
+        tooltip: { ...tip(), trigger: 'axis', formatter: ps => { const d = td[ps[0].dataIndex]; return `<b>${d.n}</b><br>xCSG Value Gain: <b>${d.v}\xd7</b>`; } },
+        grid: { left: 55, right: 20, top: 15, bottom: 35 },
+        xAxis: { type: 'category', data: td.map(d => new Date(d.d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
+          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
+        yAxis: { type: 'value', name: 'xCSG Value Gain', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
+          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+        series: [{ type: 'line', data: td.map(d => d.v), smooth: 0.4, symbol: 'circle', symbolSize: 10, showSymbol: true,
+          lineStyle: { color: C.navy, width: 3.5 },
+          itemStyle: { color: C.navy, borderWidth: 3, borderColor: '#fff' },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(18,31,107,0.15)' }, { offset: 1, color: 'rgba(18,31,107,0.01)' }] } },
+          emphasis: { itemStyle: { shadowBlur: 12, shadowColor: 'rgba(18,31,107,0.3)' } },
+          markLine: { silent: true, symbol: 'none', data: [{ yAxis: 1 }], lineStyle: { color: '#D1D5DB', type: 'dashed' }, label: { show: false } } }],
+      });
+    }
+  }
+
+  // 4. SPEED vs QUALITY
+  const s4 = ecInit('chartSpeedQuality');
+  if (s4 && done.length) {
+    const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
+    const lbl = sorted.map(p => new Date(p.date_delivered || p.date_started).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+    s4.setOption({
+      tooltip: { ...tip(), trigger: 'axis' },
+      legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 18, itemHeight: 3, itemGap: 24 },
+      grid: { left: 55, right: 20, top: 15, bottom: 40 },
+      xAxis: { type: 'category', data: lbl, axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
+      yAxis: { type: 'value', name: 'Ratio', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
+        axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+      series: [
+        { type: 'line', name: 'Speed', data: sorted.map(p => p.metrics.delivery_speed), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
+          lineStyle: { color: C.blue, width: 3 }, itemStyle: { color: C.blue, borderWidth: 2, borderColor: '#fff' } },
+        { type: 'line', name: 'Quality', data: sorted.map(p => p.metrics.output_quality), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
+          lineStyle: { color: C.navy, width: 3 }, itemStyle: { color: C.navy, borderWidth: 2, borderColor: '#fff' } },
+        { type: 'line', name: 'Value Gain', data: sorted.map(p => p.metrics.productivity_ratio), smooth: 0.4, symbol: 'diamond', symbolSize: 9, showSymbol: true,
+          lineStyle: { color: C.green, width: 3, type: 'dashed' }, itemStyle: { color: C.green, borderWidth: 2, borderColor: '#fff' } },
+      ],
+    });
+  }
+
+  // 5. CATEGORY BAR (show all with 1+ projects)
+  const s5 = ecInit('chartCategory');
+  if (s5 && done.length) {
+    const byCat = {};
+    done.forEach(p => { const c = p.category_name || 'Other'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byCat[c]) byCat[c] = []; byCat[c].push(v); } });
+    let catE = Object.entries(byCat).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+    const catMore = catE.length > 8 ? catE.slice(8) : [];
+    catE = catE.slice(0, 8);
+    // Auto-resize chart body height based on item count
+    const catH = Math.max(260, catE.length * 38 + 40);
+    document.getElementById('chartCategory')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', catH + 'px');
+    if (catE.length) {
+      s5.setOption({
+        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+          formatter: ps => { const d = catE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+        grid: { left: 180, right: 50, top: 5, bottom: catMore.length ? 25 : 10 },
+        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+        yAxis: { type: 'category', data: catE.map(e => e.n.length > 30 ? e.n.slice(0, 27) + '\u2026' : e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
+        series: [{ type: 'bar', data: catE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
+        graphic: catMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${catMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
+      });
+    }
+  }
+
+  // 6. PIONEER BAR (show all with 1+ projects)
+  const s6 = ecInit('chartPioneer');
+  if (s6 && done.length) {
+    const byP = {};
+    done.forEach(p => { const pn = p.pioneer_name || 'Unknown'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byP[pn]) byP[pn] = []; byP[pn].push(v); } });
+    let pE = Object.entries(byP).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+    const pMore = pE.length > 8 ? pE.slice(8) : [];
+    pE = pE.slice(0, 8);
+    const pH = Math.max(260, pE.length * 38 + 40);
+    document.getElementById('chartPioneer')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', pH + 'px');
+    if (pE.length) {
+      s6.setOption({
+        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+          formatter: ps => { const d = pE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+        grid: { left: 140, right: 50, top: 5, bottom: pMore.length ? 25 : 10 },
+        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+        yAxis: { type: 'category', data: pE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl() },
+        series: [{ type: 'bar', data: pE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+          emphasis: { itemStyle: { shadowBlur: 8 } } }],
+        graphic: pMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${pMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
+      });
+    }
+  }
+
+  // 7. DOUGHNUT — Client Pulse
+  const s7 = ecInit('chartPulse');
+  if (s7 && done.length) {
+    const pc = { 'Exceeded expectations': 0, 'Met expectations': 0, 'Below expectations': 0, 'Not yet received': 0 };
+    done.forEach(p => { const v = p.client_pulse; if (pc[v] !== undefined) pc[v]++; });
+    const responded = pc['Exceeded expectations'] + pc['Met expectations'] + pc['Below expectations'];
+    const totalPulse = responded + pc['Not yet received'];
+    if (totalPulse > 0) {
+      const data = [
+        { value: pc['Exceeded expectations'], name: 'Exceeded', itemStyle: { color: C.green } },
+        { value: pc['Met expectations'], name: 'Met', itemStyle: { color: C.blue } },
+        { value: pc['Below expectations'], name: 'Below', itemStyle: { color: C.red } },
+      ];
+      if (pc['Not yet received'] > 0) data.push({ value: pc['Not yet received'], name: 'Pending', itemStyle: { color: C.gray200 } });
+      s7.setOption({
+        tooltip: { ...tip(), trigger: 'item',
+          formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
+        legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
+        series: [
+          { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
+            itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+            label: { show: false },
+            emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
+              itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
+            data },
+          { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
+            label: { show: true, position: 'center', formatter: `{big|${responded}/${totalPulse}}\n{sub|responded}`,
+              rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
+                      sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
+            data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
+        ],
+      });
+    }
+  }
+
+  // 8. DOUGHNUT — Reuse Intent (from metrics score: 1.0=enthusiastic, 0.5=reserved, 0.0=no)
+  const s8 = ecInit('chartReuse');
+  if (s8 && done.length) {
+    let enthusiastic = 0, reserved = 0, noReuse = 0, pending = 0;
+    done.forEach(p => {
+      const s = p.metrics && p.metrics.reuse_intent_score;
+      if (s === 1.0) enthusiastic++;
+      else if (s === 0.5) reserved++;
+      else if (s != null && s === 0) noReuse++;
+      else pending++;
+    });
+    const responded = enthusiastic + reserved + noReuse;
+    const totalReuse = responded + pending;
+    if (totalReuse > 0) {
+      const data = [
+        { value: enthusiastic, name: 'Enthusiastic', itemStyle: { color: C.green } },
+        { value: reserved, name: 'Reserved', itemStyle: { color: C.orange } },
+        { value: noReuse, name: 'No', itemStyle: { color: C.red } },
+      ];
+      if (pending > 0) data.push({ value: pending, name: 'Pending', itemStyle: { color: C.gray200 } });
+      s8.setOption({
+        tooltip: { ...tip(), trigger: 'item',
+          formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
+        legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
+        series: [
+          { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
+            itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+            label: { show: false },
+            emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
+              itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
+            data },
+          { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
+            label: { show: true, position: 'center', formatter: `{big|${responded}/${totalReuse}}\n{sub|responded}`,
+              rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
+                      sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
+            data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
+        ],
+      });
+    }
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXPERT FORM — 27-field Accordion (standalone, no auth)
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 function _expertSaveToStorage(token, formData) {
   try { localStorage.setItem(_expertLocalStorageKey(token), JSON.stringify(formData)); } catch {}
 }
-
 function _expertLoadFromStorage(token) {
   try { const raw = localStorage.getItem(_expertLocalStorageKey(token)); return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
-
 function _expertClearStorage(token) {
   try { localStorage.removeItem(_expertLocalStorageKey(token)); } catch {}
 }
 
-function _expertBuildFieldHTML(fieldDef, savedVal, suffix) {
-  const fieldName = fieldDef.key + '_' + suffix;
-  const isNumeric = fieldDef.type === 'numeric';
-  if (isNumeric) {
-    return '<input type="number" name="' + esc(fieldName) + '" class="accordion-field expert-input" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" min="0" step="0.5" placeholder="Enter hours" value="' + esc(savedVal ?? '') + '" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
+// Section metadata for accordion
+// EXPERT_SECTIONS removed — now served from /api/schema via getExpertSections()
+
+async function renderExpert(token) {
+  const ec = document.getElementById('expertContent');
+  ec.innerHTML = '<div class="loading">Loading assessment\u2026</div>';
+
+  try {
+    const [ctx, optionsResp] = await Promise.all([
+      apiCall('GET', '/expert/' + token),
+      apiCall('GET', '/expert/options'),
+      loadSchema(),
+    ]);
+
+    if (ctx.already_completed) {
+      ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment has already been submitted. Your responses have been recorded.</p></div>';
+      return;
+    }
+
+    // Parse options into sections
+    const sectionsMap = {};
+    const sectionOrder = ['B', 'C', 'D', 'E', 'F', 'G', 'L'];
+    let totalFields = 0;
+
+    for (const secKey of sectionOrder) {
+      sectionsMap[secKey] = [];
+    }
+
+    // Iterate all fields from API response
+    for (const [key, fieldDef] of Object.entries(optionsResp)) {
+      const sec = fieldDef.section;
+      if (sec && sectionsMap[sec]) {
+        sectionsMap[sec].push({
+          key: key,
+          label: fieldDef.label || key,
+          options: fieldDef.options || [],
+          type: fieldDef.type || 'categorical',
+          section: sec,
+        });
+        totalFields++;
+      }
+    }
+
+    // Restore from localStorage
+    const saved = _expertLoadFromStorage(token);
+
+    // Build HTML
+    let html = '';
+
+    // Section A — Context
+    html += '<div class="expert-section-card">';
+    html += '<div class="accordion-section-label" style="font-size:12px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Section A \u2014 Context</div>';
+    html += '<div class="context-title">' + esc(ctx.project_name) + '</div>';
+    html += '<div class="context-subtitle">' + esc(ctx.category_name) + (ctx.client_name ? ' \u00b7 ' + esc(ctx.client_name) : '') + '</div>';
+    if (ctx.description) html += '<p class="context-description">' + esc(ctx.description) + '</p>';
+    html += '<div class="context-grid">';
+    html += '<div class="context-item"><span class="label">A1 \u2014 Deliverable Type</span><span class="value">' + esc(ctx.category_name) + '</span></div>';
+    html += '<div class="context-item"><span class="label">A2 \u2014 Engagement Stage</span><span class="value">' + esc(ctx.engagement_stage || '\u2014') + '</span></div>';
+    html += '<div class="context-item"><span class="label">Pioneer</span><span class="value">' + esc(ctx.pioneer_name) + '</span></div>';
+    html += '<div class="context-item"><span class="label">Timeline</span><span class="value">' + esc(ctx.date_started || '?') + ' \u2192 ' + esc(ctx.date_delivered || '?') + '</span></div>';
+    html += '<div class="context-item"><span class="label">Team Size</span><span class="value">' + esc(ctx.xcsg_team_size) + '</span></div>';
+    html += '<div class="context-item"><span class="label">Calendar Days</span><span class="value">' + esc(ctx.xcsg_calendar_days || '\u2014') + '</span></div>';
+    html += '</div></div>';
+
+    // Sticky progress bar
+    html += '<div class="accordion-progress-bar"><div class="accordion-progress-inner">';
+    html += '<div class="accordion-progress-track"><div class="accordion-progress-fill" id="expertProgressBar" style="width:0%"></div></div>';
+    html += '<span id="expertProgressLabel" class="accordion-progress-label">0/' + totalFields + ' fields completed</span>';
+    html += '</div></div>';
+
+    // Accordion sections
+    html += '<div id="expertAccordion">';
+    for (let si = 0; si < sectionOrder.length; si++) {
+      const secKey = sectionOrder[si];
+      const secMeta = getExpertSections()[secKey];
+      const secFields = sectionsMap[secKey];
+      if (!secFields || secFields.length === 0) continue;
+
+      html += '<div class="accordion-header" data-section="' + secKey + '" onclick="_expertToggleAccordion(\'' + secKey + '\')">';
+      html += '<div class="accordion-header-left">';
+      html += '<span class="accordion-chevron">\u25B6</span>';
+      html += '<span class="accordion-section-icon" data-section="' + secKey + '">' + (secMeta.icon || '') + '</span>';
+      html += '<div class="accordion-title-wrap">';
+      html += '<span class="accordion-section-title">Section ' + esc(secKey) + ' \u2014 ' + esc(secMeta.title) + '</span>';
+      html += '<span class="accordion-section-desc-inline">' + esc(secMeta.desc) + '</span>';
+      html += '</div>';
+      html += '<span class="accordion-count">0/' + secFields.length + '</span>';
+      html += '</div></div>';
+
+      html += '<div class="accordion-section" data-section="' + secKey + '">';
+
+      // Helper text for Section L
+      if (secKey === 'L') {
+        html += '<div class="expert-section-note">For each question below, estimate what would have been typical if this deliverable had been done using traditional methods, without AI assistance, for this specific project.</div>';
+      }
+
+      for (let fi = 0; fi < secFields.length; fi++) {
+        const f = secFields[fi];
+        const savedVal = saved ? (saved[f.key] || '') : '';
+        const isInteger = f.type === 'integer';
+
+        html += '<div class="accordion-question">';
+        html += '<div class="accordion-question-label">' + esc(f.label) + '</div>';
+
+        if (isInteger) {
+          // Integer input for L1
+          html += '<input type="number" class="accordion-field expert-input" data-key="' + esc(f.key) + '" data-section="' + esc(secKey) + '" min="1" step="1" placeholder="Enter number of working days" value="' + esc(savedVal) + '" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
+        } else {
+          // Dropdown
+          html += '<select class="accordion-field expert-select" data-key="' + esc(f.key) + '" data-section="' + esc(secKey) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
+          html += '<option value="">\u2014 Select \u2014</option>';
+          for (const opt of f.options) {
+            const sel = savedVal === opt ? ' selected' : '';
+            html += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+          }
+          html += '</select>';
+        }
+
+        html += '</div>';
+      }
+
+      html += '</div>'; // close accordion-section
+    }
+
+    // Submit area
+    html += '<div class="accordion-submit-area">';
+    html += '<span class="time-hint">Takes approximately 6\u20137 minutes</span>';
+    html += '<button type="button" class="btn btn-primary" id="expertSubmitBtn" disabled>Submit Assessment (0/' + totalFields + ')</button>';
+    html += '</div>';
+
+    ec.innerHTML = html;
+
+    // Wire field change handlers
+    const allFields = document.querySelectorAll('.accordion-field');
+    for (let i = 0; i < allFields.length; i++) {
+      const el = allFields[i];
+      el.addEventListener('change', function() {
+        _expertSaveToStorage(token, _expertGetFieldValues());
+        _expertUpdateProgress(totalFields);
+      });
+      el.addEventListener('input', function() {
+        _expertSaveToStorage(token, _expertGetFieldValues());
+        _expertUpdateProgress(totalFields);
+      });
+      el.addEventListener('focus', function() {
+        this.style.borderColor = 'var(--blue)';
+        this.style.boxShadow = '0 0 0 3px rgba(110,193,228,0.15)';
+      });
+      el.addEventListener('blur', function() {
+        this.style.borderColor = 'var(--gray-300)';
+        this.style.boxShadow = 'none';
+      });
+    }
+
+    // Submit
+    document.getElementById('expertSubmitBtn').addEventListener('click', async function() {
+      const btn = document.getElementById('expertSubmitBtn');
+      const filled = _expertCountFilled();
+      if (filled < totalFields) return;
+      btn.disabled = true;
+      btn.textContent = 'Submitting\u2026';
+
+      // Build flat key-value payload
+      const fieldValues = _expertGetFieldValues();
+      const payload = {};
+      for (const [key, val] of Object.entries(fieldValues)) {
+        if (val === '' || val == null) continue;
+        // L1 is integer
+        if (key === 'l1_legacy_working_days') {
+          payload[key] = parseInt(val);
+        } else {
+          payload[key] = val;
+        }
+      }
+
+      try {
+        const result = await apiCall('POST', '/expert/' + token, payload);
+        _expertClearStorage(token);
+        if (result.already_completed) {
+          ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>';
+        } else {
+          const m = result.metrics || {};
+          const fmtX = v => v != null ? (Math.round(v * 100) / 100) + '\xd7' : '\u2014';
+          const scoreColor = v => v == null ? '#9CA3AF' : v >= 2 ? '#10B981' : v >= 1 ? '#3B82F6' : v >= 0.5 ? '#F59E0B' : '#EF4444';
+          ec.innerHTML = '<div class="expert-thankyou">'
+            + '<div class="thankyou-icon">&#10003;</div>'
+            + '<h2>Thank You!</h2>'
+            + '<p>Your assessment has been recorded. Here is a summary of the three flywheel scores computed from your responses.</p>'
+            + '<div class="expert-results-section">'
+            + '<h3 style="color:#121F6B;margin:24px 0 8px;font-size:16px">How these scores are calculated</h3>'
+            + '<p style="color:#6B7280;font-size:13px;margin-bottom:20px">Each score compares your xCSG responses (Sections B\u2013D) against your legacy estimates (Section L). A value of 1\xd7 means parity; above 1\xd7 means xCSG outperformed legacy on that dimension.</p>'
+            + '</div>'
+            + '<div class="accordion-metrics-preview">'
+
+            + '<div class="accordion-metric">'
+            + '<div class="accordion-metric-value" style="color:' + scoreColor(m.machine_first_score) + '">' + fmtX(m.machine_first_score) + '</div>'
+            + '<div class="accordion-metric-label">Machine-First Gain</div>'
+            + '<div class="accordion-metric-explain">Breadth of knowledge synthesis: xCSG vs legacy. Compares your B2 answer (sources synthesized) against your L6 answer (what legacy would have used).</div>'
+            + '</div>'
+
+            + '<div class="accordion-metric">'
+            + '<div class="accordion-metric-value" style="color:' + scoreColor(m.senior_led_score) + '">' + fmtX(m.senior_led_score) + '</div>'
+            + '<div class="accordion-metric-label">Senior-Led Gain</div>'
+            + '<div class="accordion-metric-explain">Average of three comparisons: specialization depth (C1 vs L7), directness of authorship (C2 vs L8), and expert judgment time (C3 vs L9).</div>'
+            + '</div>'
+
+            + '<div class="accordion-metric">'
+            + '<div class="accordion-metric-value" style="color:' + scoreColor(m.proprietary_knowledge_score) + '">' + fmtX(m.proprietary_knowledge_score) + '</div>'
+            + '<div class="accordion-metric-label">Knowledge Gain</div>'
+            + '<div class="accordion-metric-explain">Average of three comparisons: proprietary data use (D1 vs L10), knowledge reuse (D2 vs L11), and competitive moat (D3 vs L12).</div>'
+            + '</div>'
+
+            + '</div></div>';
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+        btn.disabled = false;
+        _expertUpdateProgress(totalFields);
+      }
+    });
+
+    // Initial progress
+    _expertUpdateProgress(totalFields);
+
+  } catch (err) {
+    if (err.message.includes('404') || err.message.includes('invalid')) {
+      ec.innerHTML = '<div class="expert-error"><h2>Invalid Link</h2><p>This expert assessment link is invalid or has expired. Please contact the PMO team for a new link.</p></div>';
+    } else {
+      ec.innerHTML = '<div class="expert-error"><h2>Connection Error</h2><p>Unable to load the assessment. Please check your connection and try again.</p><button class="btn btn-primary" onclick="renderExpert(\'' + esc(token) + '\')">Retry</button></div>';
+    }
   }
-  const opts = fieldDef.options || [];
-  let html = '<select name="' + esc(fieldName) + '" class="accordion-field expert-select" data-key="' + esc(fieldName) + '" data-section="' + esc(fieldDef.section) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
-  html += '<option value="">\u2014 Select \u2014</option>';
-  for (const opt of opts) {
-    const sel = savedVal === opt ? ' selected' : '';
-    html += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
-  }
-  html += '</select>';
-  return html;
 }
 
 function _expertGetFieldValues() {
@@ -1370,202 +1530,6 @@ function _expertToggleAccordion(sectionKey) {
   }
 }
 
-// Full question text and scale labels for the expert assessment form
-const EXPERT_QUESTION_TEXT = {
-  'b1_starting_point': { question: 'What was the starting point for the deliverable?', scale: ['Raw request', 'Full hypothesis deck'] },
-  'b2_research_sources': { question: 'What research sources were primarily used?', scale: ['General web', 'Synthesized firm knowledge'] },
-  'b3_assembly_ratio': { question: 'What proportion of the work was manually assembled?', scale: ['>80% manual', '<20% manual'] },
-  'b4_hypothesis_first': { question: 'How hypothesis-driven was the approach?', scale: ['Exploratory', 'Fully hypothesis-led'] },
-  'c1_specialization': { question: 'How specialized was the team member leading this?', scale: ['Generalist', 'World-class expert'] },
-  'c2_directness': { question: 'How directly was the senior person involved?', scale: ['Delegated', 'Personally leading'] },
-  'c3_judgment_pct': { question: 'What proportion of the output reflects senior judgment?', scale: ['<20%', '>80%'] },
-  'c4_senior_hours': { question: 'Senior hours invested (xCSG only)', scale: null },
-  'c5_junior_hours': { question: 'Junior hours invested (xCSG only)', scale: null },
-  'd1_proprietary_data': { question: 'How much proprietary data/knowledge was used?', scale: ['None', 'Fully proprietary'] },
-  'd2_knowledge_reuse': { question: 'To what extent was prior firm knowledge reused?', scale: ['One-time', 'Maximum'] },
-  'd3_moat_test': { question: 'How defensible is the knowledge advantage?', scale: ['Easily replicable', 'Impossible to replicate'] },
-  'f1_feasibility': { question: 'How thoroughly was feasibility assessed?', scale: ['Not assessed', 'Exceeds requirements'] },
-  'f2_productization': { question: 'What is the productization potential?', scale: ['None', 'Scaled'] },
-};
-
-async function renderExpert(token) {
-  const ec = document.getElementById('expertContent');
-  ec.innerHTML = '<div class="loading">Loading assessment\u2026</div>';
-
-  try {
-    const [ctx, optionsResp] = await Promise.all([
-      apiCall('GET', '/expert/' + token),
-      apiCall('GET', '/expert/options'),
-    ]);
-
-    if (ctx.already_completed) {
-      ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment has already been submitted. Your responses have been recorded.</p></div>';
-      return;
-    }
-
-    // Parse options response
-    // Parse flat options object from API into sections
-    const fieldDefs = {};
-    const sectionsMap = { B: { title: 'Machine-First Operations', desc: 'How AI-driven was the approach?', icon: '🤖', fields: [] }, C: { title: 'Senior-Led Model', desc: 'How deeply was senior expertise involved?', icon: '👔', fields: [] }, D: { title: 'Proprietary Knowledge', desc: 'How unique was the knowledge advantage?', icon: '🏰', fields: [] }, F: { title: 'Value Creation', desc: 'What value did xCSG create beyond legacy?', icon: '💎', fields: [] } };
-    let totalFields = 0;
-    const questionOrder = ['b1_starting_point','b2_research_sources','b3_assembly_ratio','b4_hypothesis_first','c1_specialization','c2_directness','c3_judgment_pct','c4_senior_hours','c5_junior_hours','d1_proprietary_data','d2_knowledge_reuse','d3_moat_test','f1_feasibility','f2_productization'];
-    for (const key of questionOrder) {
-      const o = optionsResp[key];
-      if (!o) continue;
-      const def = { key, section: o.section, label: o.label, options: o.options, type: o.type || 'categorical', has_legacy: o.has_legacy, legacy_default: o.legacy_default || null };
-      fieldDefs[key] = def;
-      sectionsMap[o.section].fields.push(def);
-      totalFields += 1 + (o.has_legacy ? 1 : 0);
-    }
-
-    // Restore from localStorage
-    const saved = _expertLoadFromStorage(token);
-
-    // Build HTML
-    let html = '';
-
-    // Context card
-    html += '<div class="expert-section-card">';
-    html += '<div class="context-title">' + esc(ctx.project_name) + '</div>';
-    html += '<div class="context-subtitle">' + esc(ctx.category_name) + (ctx.client_name ? ' \u00b7 ' + esc(ctx.client_name) : '') + '</div>';
-    if (ctx.description) html += '<p class="context-description">' + esc(ctx.description) + '</p>';
-    html += '<div class="context-grid">';
-    html += '<div class="context-item"><span class="label">Pioneer</span><span class="value">' + esc(ctx.pioneer_name) + '</span></div>';
-    html += '<div class="context-item"><span class="label">Timeline</span><span class="value">' + esc(ctx.date_started || '?') + ' \u2192 ' + esc(ctx.date_delivered || '?') + '</span></div>';
-    html += '<div class="context-item"><span class="label">Team Size</span><span class="value">' + esc(ctx.xcsg_team_size) + '</span></div>';
-    html += '<div class="context-item"><span class="label">Calendar Days</span><span class="value">' + esc(ctx.xcsg_calendar_days) + '</span></div>';
-    html += '</div></div>';
-
-    // Sticky progress bar
-    html += '<div class="accordion-progress-bar"><div class="accordion-progress-inner">';
-    html += '<div class="accordion-progress-track"><div class="accordion-progress-fill" id="expertProgressBar" style="width:0%"></div></div>';
-    html += '<span id="expertProgressLabel" class="accordion-progress-label">0/' + totalFields + ' fields completed</span>';
-    html += '</div></div>';
-
-    // Accordion sections
-    html += '<div id="expertAccordion">';
-    const secKeys = Object.keys(sectionsMap);
-    for (let si = 0; si < secKeys.length; si++) {
-      const secKey = secKeys[si];
-      const sec = sectionsMap[secKey];
-      const secFields = sec.fields;
-      html += '<div class="accordion-header" data-section="' + secKey + '" onclick="_expertToggleAccordion(\'' + secKey + '\')">';
-      html += '<div class="accordion-header-left">';
-      html += '<span class="accordion-chevron">\u25B6</span>';
-      html += '<span class="accordion-section-icon" data-section="' + secKey + '">' + (sec.icon || '') + '</span>';
-      html += '<div class="accordion-title-wrap">';
-      html += '<span class="accordion-section-title">Section ' + esc(secKey) + ' \u2014 ' + esc(sec.title) + '</span>';
-      html += '<span class="accordion-section-desc-inline">' + esc(sec.desc) + '</span>';
-      html += '</div>';
-      html += '<span class="accordion-count">0/' + secFields.length + '</span>';
-      html += '</div></div>';
-      html += '<div class="accordion-section" data-section="' + secKey + '">';
-      for (let fi = 0; fi < secFields.length; fi++) {
-        const f = secFields[fi];
-        const hasLegacy = f.has_legacy;
-        const legacyDefault = f.legacy_default || null;
-        const xcsgSaved = saved ? saved[f.key + '_xcsg'] : '';
-        const legacySaved = saved ? saved[f.key + '_legacy'] : (legacyDefault || '');
-        const isNorm = !saved && legacyDefault;
-        const qId = f.key.split('_')[0].toUpperCase();
-        const qText = EXPERT_QUESTION_TEXT[f.key];
-        const fullLabel = qText ? qText.question : (f.label || f.key);
-        html += '<div class="accordion-question">';
-        html += '<div class="accordion-question-label"><span class="q-id">' + esc(qId) + '</span> ' + esc(fullLabel) + '</div>';
-        html += '<div class="accordion-question-fields">';
-        html += '<div class="accordion-field-group xcsg-field">';
-        html += '<label class="accordion-field-label xcsg-label">xCSG</label>';
-        html += _expertBuildFieldHTML(f, xcsgSaved, 'xcsg');
-        html += '</div>';
-        if (hasLegacy) {
-          html += '<div class="accordion-field-group legacy-field">';
-          html += '<label class="accordion-field-label legacy-label">Legacy' + (isNorm ? ' <span class="norm-suffix">(norm)</span>' : '') + '</label>';
-          html += _expertBuildFieldHTML(f, legacySaved, 'legacy');
-          html += '</div>';
-        }
-        html += '</div>';
-        if (qText && qText.scale) {
-          html += '<div class="accordion-scale-labels"><span>' + esc(qText.scale[0]) + '</span><span>' + esc(qText.scale[1]) + '</span></div>';
-        }
-        html += '</div>';
-      }
-      html += '</div>';  // close accordion-section
-    }
-
-    // Submit area
-    html += '<div class="accordion-submit-area">';
-    html += '<span class="time-hint">Takes approximately 3 minutes</span>';
-    html += '<button type="button" class="btn btn-primary" id="expertSubmitBtn" disabled>Submit Assessment (0/' + totalFields + ')</button>';
-    html += '</div>';
-
-    ec.innerHTML = html;
-
-    // Wire field change handlers
-    const allFields = document.querySelectorAll('.accordion-field');
-    for (let i = 0; i < allFields.length; i++) {
-      const el = allFields[i];
-      el.addEventListener('change', function() {
-        _expertSaveToStorage(token, _expertGetFieldValues());
-        _expertUpdateProgress(totalFields);
-      });
-      el.addEventListener('input', function() {
-        _expertSaveToStorage(token, _expertGetFieldValues());
-        _expertUpdateProgress(totalFields);
-      });
-      el.addEventListener('focus', function() {
-        this.style.borderColor = 'var(--blue)';
-        this.style.boxShadow = '0 0 0 3px rgba(110,193,228,0.15)';
-      });
-      el.addEventListener('blur', function() {
-        this.style.borderColor = 'var(--gray-300)';
-        this.style.boxShadow = 'none';
-      });
-    }
-
-    // Submit
-    document.getElementById('expertSubmitBtn').addEventListener('click', async function() {
-      const btn = document.getElementById('expertSubmitBtn');
-      const filled = _expertCountFilled();
-      if (filled < totalFields) return;
-      btn.disabled = true;
-      btn.textContent = 'Submitting\u2026';
-      const payload = _expertGetFieldValues();
-      try {
-        const result = await apiCall('POST', '/expert/' + token, payload);
-        _expertClearStorage(token);
-        if (result.already_completed) {
-          ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>';
-        } else {
-          const m = result.metrics || {};
-          ec.innerHTML = '<div class="expert-thankyou">';
-          ec.innerHTML += '<div class="thankyou-icon">&#10003;</div>';
-          ec.innerHTML += '<h2>Thank You!</h2>';
-          ec.innerHTML += '<p>Your assessment has been recorded successfully.</p>';
-          ec.innerHTML += '<div class="accordion-metrics-preview">';
-          ec.innerHTML += '<div class="accordion-metric"><div class="accordion-metric-value">' + (m.machine_first_score != null ? Math.round(m.machine_first_score) + '%' : '\u2014') + '</div><div class="accordion-metric-label">Machine-First</div></div>';
-          ec.innerHTML += '<div class="accordion-metric"><div class="accordion-metric-value">' + (m.senior_led_score != null ? Math.round(m.senior_led_score) + '%' : '\u2014') + '</div><div class="accordion-metric-label">Senior-Led</div></div>';
-          ec.innerHTML += '<div class="accordion-metric"><div class="accordion-metric-value">' + (m.proprietary_knowledge_score != null ? Math.round(m.proprietary_knowledge_score) + '%' : '\u2014') + '</div><div class="accordion-metric-label">Knowledge Moat</div></div>';
-          ec.innerHTML += '</div></div>';
-        }
-      } catch (err) {
-        showToast(err.message, 'error');
-        btn.disabled = false;
-        _expertUpdateProgress(totalFields);
-      }
-    });
-
-    // Initial progress
-    _expertUpdateProgress(totalFields);
-
-  } catch (err) {
-    if (err.message.includes('404') || err.message.includes('invalid')) {
-      ec.innerHTML = '<div class="expert-error"><h2>Invalid Link</h2><p>This expert assessment link is invalid or has expired. Please contact the PMO team for a new link.</p></div>';
-    } else {
-      ec.innerHTML = '<div class="expert-error"><h2>Connection Error</h2><p>Unable to load the assessment. Please check your connection and try again.</p><button class="btn btn-primary" onclick="renderExpert(\'' + esc(token) + '\')">Retry</button></div>';
-    }
-  }
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
    SETTINGS (Categories + Legacy Norms tabs)
    ═══════════════════════════════════════════════════════════════════════ */
@@ -1614,7 +1578,7 @@ async function renderCategoriesTab() {
         <td>${count}</td>
         ${isAdmin ? `<td class="actions-cell">
           <button class="btn-icon" title="Edit" onclick="editCategory(${c.id},'${esc(c.name)}','${esc(c.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-          <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete \u2014 ' + count + ' projects use this category' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deleteCategory(" + c.id + ",'" + esc(c.name) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+          <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deleteCategory(" + c.id + ",'" + esc(c.name) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
         </td>` : ''}
       </tr>`;
     }
@@ -1683,368 +1647,84 @@ async function doDeleteCategory(id) {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-async function renderNormsTab() {
-  const sc = document.getElementById('settingsContent');
-  sc.innerHTML = '<div class="loading">Loading norms\u2026</div>';
-  try {
-    const [norms, cats] = await Promise.all([
-      apiCall('GET', '/norms'),
-      apiCall('GET', '/categories'),
-    ]);
-
-    // Build set of category IDs that have norms
-    const normCatIds = new Set(norms.map(n => n.category_id));
-
-    let html = `
-      <div class="card">
-        <div class="info-banner">These norms pre-fill legacy baseline fields when creating new projects. Pioneers can override them per-project. Think of these as starting suggestions, not fixed values.</div>
-        <table class="data-table"><thead><tr>
-          <th>Category</th><th>Calendar Days</th><th>Team Size</th><th>Revision Rounds</th><th>Notes</th><th>Actions</th>
-        </tr></thead><tbody>`;
-
-    for (const n of norms) {
-      html += `<tr id="norm-${n.category_id}">
-        <td><strong>${esc(n.category_name)}</strong></td>
-        <td><select class="norm-edit" data-field="typical_calendar_days">${optionsHTML(CALENDAR_DAYS, n.typical_calendar_days)}</select></td>
-        <td><select class="norm-edit" data-field="typical_team_size">${optionsHTML(TEAM_SIZES, n.typical_team_size)}</select></td>
-        <td><select class="norm-edit" data-field="typical_revision_rounds">${optionsHTML(REVISION_ROUNDS, n.typical_revision_rounds)}</select></td>
-        <td><input type="text" class="norm-edit" data-field="notes" value="${esc(n.notes || '')}" placeholder="Optional notes"></td>
-        <td><button class="btn btn-primary btn-sm norm-save-btn" onclick="saveNorm(${n.category_id})">Save</button></td>
-      </tr>`;
-    }
-
-    // Show categories without norms
-    for (const c of cats) {
-      if (!normCatIds.has(c.id)) {
-        html += `<tr id="norm-${c.id}" class="norm-not-configured">
-          <td><strong>${esc(c.name)}</strong> <span class="badge badge-gray">Not configured</span></td>
-          <td><select class="norm-edit" data-field="typical_calendar_days">${optionsHTML(CALENDAR_DAYS)}</select></td>
-          <td><select class="norm-edit" data-field="typical_team_size">${optionsHTML(TEAM_SIZES)}</select></td>
-          <td><select class="norm-edit" data-field="typical_revision_rounds">${optionsHTML(REVISION_ROUNDS)}</select></td>
-          <td><input type="text" class="norm-edit" data-field="notes" value="" placeholder="Optional notes"></td>
-          <td><button class="btn btn-primary btn-sm norm-save-btn" onclick="saveNorm(${c.id})">Save</button></td>
-        </tr>`;
-      }
-    }
-
-    html += '</tbody></table></div>';
-    sc.innerHTML = html;
-  } catch (err) {
-    sc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
-  }
-}
-
-async function saveNorm(categoryId) {
-  const row = document.getElementById(`norm-${categoryId}`);
-  if (!row) return;
-  const fields = {};
-  row.querySelectorAll('.norm-edit').forEach(el => {
-    const f = el.dataset.field;
-    fields[f] = el.value;
-  });
-  try {
-    await apiCall('PUT', `/norms/${categoryId}`, fields);
-    showToast('Norms updated');
-    // Remove "not configured" styling if it was
-    row.classList.remove('norm-not-configured');
-    const notConfBadge = row.querySelector('.badge-gray');
-    if (notConfBadge) notConfBadge.remove();
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
-   NORMS V2 PAGE
+   NORMS PAGE
    ═══════════════════════════════════════════════════════════════════════ */
 
-async function renderNormsV2Page() {
+function buildNormsAggregatesTable(rows, cats) {
+  const byCategoryId = {};
+  (rows || []).forEach(row => {
+    byCategoryId[row.category_id] = row;
+    byCategoryId[row.category_name] = row;
+  });
+
+  let html = `
+    <div class="card">
+      <div style="padding:24px 24px 8px">
+        <h1 style="font-size:20px;font-weight:700;color:var(--navy);margin:0 0 8px">Category Norms</h1>
+        <p style="margin:0;color:var(--gray-500);font-size:14px">xCSG vs Legacy ratios by category \u2014 computed from completed expert surveys. Values >1\xd7 mean xCSG outperforms.</p>
+      </div>
+      <div style="padding:16px 24px 24px">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th title="Average delivery speed ratio across completed projects. >1\xd7 means xCSG is faster.">Avg Speed (xCSG/Legacy)</th>
+              <th title="Average output quality ratio. >1\xd7 means xCSG output is higher quality.">Avg Quality (xCSG/Legacy)</th>
+              <th title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain</th>
+              <th title="Number of expert questionnaires submitted for this category.">Completed Surveys</th>
+              <th title="All projects (including pending) in this category.">Total Projects</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+  const fmtRatio = (v, n) => (n && n > 0 && v != null) ? round2(v) + '\xd7' : '\u2014';
+  const tone = (v) => {
+    if (v == null) return 'var(--gray-400)';
+    if (v > 2) return 'var(--success)';
+    if (v >= 1) return 'var(--blue)';
+    if (v >= 0.8) return 'var(--warning)';
+    return 'var(--error)';
+  };
+
+  cats.forEach(cat => {
+    const row = byCategoryId[cat.id] || byCategoryId[cat.name] || {};
+    const n = row.completed_surveys || 0;
+    html += `<tr>
+      <td><strong>${esc(cat.name)}</strong></td>
+      <td style="color:${tone(row.avg_effort_ratio)};font-weight:600">${fmtRatio(row.avg_effort_ratio, n)}</td>
+      <td style="color:${tone(row.avg_quality_ratio)};font-weight:600">${fmtRatio(row.avg_quality_ratio, n)}</td>
+      <td style="color:${tone(row.avg_productivity)};font-weight:600">${fmtRatio(row.avg_productivity, n)}</td>
+      <td>${n}</td>
+      <td>${row.total_projects || 0}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div></div>`;
+  return html;
+}
+
+async function renderNormsPage() {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = '<div class="loading">Loading norms v2\u2026</div>';
+  mc.innerHTML = '<div class="loading">Loading norms\u2026</div>';
   try {
-    const [normsData, cats] = await Promise.all([apiCall('GET', '/norms/v2'), apiCall('GET', '/categories')]);
-    const isAdmin = state.user && state.user.role === 'admin';
-
-    // Group norms by category
-    const grouped = {};
-    for (const n of (normsData.norms || normsData || [])) {
-      const catId = n.category_id;
-      if (!grouped[catId]) grouped[catId] = [];
-      grouped[catId].push(n);
-    }
-
-    let html = `<div class="norms-v2-header"><h1>Norms</h1>`;
-    if (isAdmin) html += '<button class="btn btn-primary" id="recalcNormsBtn">Recalculate All Norms</button>';
-    html += '</div>';
-
-    // Show categories, even those without norms
-    for (const cat of cats) {
-      const norms = grouped[cat.id] || [];
-      html += `<div class="norms-v2-category" data-cat-id="${cat.id}">`;
-      html += `<div class="norms-v2-category-header" onclick="this.classList.toggle('collapsed');this.nextElementSibling.classList.toggle('collapsed')">
-        <span>${esc(cat.name)} <span style="font-weight:400;color:var(--gray-400);font-size:12px">(${norms.length} norms)</span></span>
-        <span class="collapse-icon">\u25BC</span>
-      </div>`;
-      html += `<div class="norms-v2-category-body">`;
-
-      if (norms.length === 0 && !isAdmin) {
-        html += '<div style="padding:16px 20px;color:var(--gray-400);font-size:13px">No norms configured for this category.</div>';
-      } else if (norms.length === 0) {
-        html += '<div style="padding:16px 20px;text-align:center">';
-        html += '<div style="color:var(--gray-400);font-size:13px;margin-bottom:12px">No norms yet — add one to define legacy baselines for this category.</div>';
-        html += '<button class="btn btn-primary" onclick="showAddNormForm(' + cat.id + ')" style="font-size:13px;padding:8px 20px">+ Add First Norm</button>';
-        html += '</div>';
-      }
-      // Column headers when norms exist
-      if (norms.length > 0) {
-        html += `<div class="norms-v2-row norms-v2-col-header">
-          <div>Profile</div>
-          <div>Cal Days</div>
-          <div>Team Size</div>
-          <div>Revision Int.</div>
-          <div>Scope Exp.</div>
-          <div>Senior Inv.</div>
-          <div>Sample</div>
-        </div>`;
-      }
-      for (const n of norms) {
-        const sampleSize = n.sample_size || 0;
-        const sampleClass = sampleSize >= 20 ? 'badge-green' : sampleSize >= 5 ? 'badge-orange' : 'badge-red';
-        html += `<div class="norms-v2-row" id="normv2-${n.id}" onclick="toggleNormEdit(${n.id})">
-          <div><strong>C${n.complexity != null ? n.complexity : '?'}</strong> <span class="badge badge-navy" style="font-size:10px">${esc(n.client_sector || '\u2014')}</span> <span class="badge badge-gray" style="font-size:10px">${esc(n.client_sub_category || '\u2014')}</span></div>
-          <div>${n.avg_calendar_days != null ? n.avg_calendar_days : '\u2014'}</div>
-          <div>${n.avg_team_size != null ? n.avg_team_size : '\u2014'}</div>
-          <div>${n.avg_revision_intensity != null ? round2(n.avg_revision_intensity) : '\u2014'}</div>
-          <div>${n.avg_scope_expansion != null ? round2(n.avg_scope_expansion) : '\u2014'}</div>
-          <div>${n.avg_senior_involvement != null ? round2(n.avg_senior_involvement) : '\u2014'}</div>
-          <div><span class="badge ${sampleClass}">n=${sampleSize}</span></div>
-        </div>
-        <div id="normv2-edit-${n.id}" style="display:none"></div>
-      `;
-      }
-
-      // Add Norm button (admin only)
-      // When 0 norms, the empty state already has an Add button, so skip the add-area
-      if (isAdmin && norms.length > 0) {
-        html += `<div class="norms-v2-add-area" id="normv2-add-area-${cat.id}" style="padding:12px 20px;border-top:1px solid var(--gray-100)">`;
-        html += `<button class="btn btn-primary" onclick="showAddNormForm(${cat.id})" style="font-size:13px;padding:8px 20px">+ Add Norm</button>`;
-        html += `<div id="normv2-add-form-${cat.id}" style="display:none"></div>`;
-        html += '</div>';
-      } else if (isAdmin) {
-        // Still need the hidden form container for the empty-state Add button
-        html += `<div id="normv2-add-form-${cat.id}" style="display:none"></div>`;
-      }
-
-      html += '</div></div>';
-    }
-
-    mc.innerHTML = html;
-
-    // Recalculate button
-    document.getElementById('recalcNormsBtn')?.addEventListener('click', async () => {
-      const btn = document.getElementById('recalcNormsBtn'); btn.disabled = true; btn.textContent = 'Recalculating\u2026';
-      try {
-        const result = await apiCall('POST', '/norms/v2/recalculate');
-        showToast(`Recalculation complete: ${result.norms_updated || 0} norms updated`, 'success');
-        renderNormsV2Page();
-      } catch (err) { showToast(err.message, 'error'); btn.disabled = false; btn.textContent = 'Recalculate All Norms'; }
-    });
+    const [rows, cats] = await Promise.all([apiCall('GET', '/norms/aggregates'), apiCall('GET', '/categories')]);
+    mc.innerHTML = buildNormsAggregatesTable(rows, cats);
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
   }
 }
 
-/* ── Norm form helpers (shared between add/edit) ── */
-
-function _normFormHTML(prefix, defaults) {
-  defaults = defaults || {};
-  const sectorOptions = Object.keys(SECTORS).map(s =>
-    `<option value="${esc(s)}"${defaults.client_sector === s ? ' selected' : ''}>${esc(s)}</option>`
-  ).join('');
-
-  let geoChecks = '';
-  for (const region of GEO_KEYS) {
-    geoChecks += `<div class="norm-geo-region"><strong>${esc(region)}</strong>`;
-    for (const c of GEOGRAPHIES[region]) {
-      const checked = (defaults._geoList || []).includes(c) ? ' checked' : '';
-      geoChecks += `<label class="norm-geo-check"><input type="checkbox" name="${prefix}_geo" value="${esc(c)}"${checked}> ${esc(c)}</label>`;
-    }
-    geoChecks += '</div>';
-  }
-
-  // Build sub-category options for current sector
-  let subcatOptions = '<option value="">\u2014</option>';
-  if (defaults.client_sector && SECTORS[defaults.client_sector]) {
-    for (const sc of SECTORS[defaults.client_sector]) {
-      subcatOptions += `<option value="${esc(sc)}"${defaults.client_sub_category === sc ? ' selected' : ''}>${esc(sc)}</option>`;
-    }
-  }
-
-  return `
-    <div class="norms-v2-edit-panel">
-      <div class="edit-grid">
-        <div><label>Complexity (1-7)</label><input type="number" min="1" max="7" step="1" id="${prefix}_complexity" value="${defaults.complexity != null ? defaults.complexity : ''}"></div>
-        <div><label>Client Sector</label><select id="${prefix}_sector" onchange="_onSectorChange('${prefix}')"><option value="">\u2014</option>${sectorOptions}</select></div>
-        <div><label>Client Sub-Category</label><select id="${prefix}_subcat">${subcatOptions}</select></div>
-        <div><label>Avg Calendar Days</label><input type="number" step="0.1" id="${prefix}_cal" value="${defaults.avg_calendar_days != null ? defaults.avg_calendar_days : ''}"></div>
-        <div><label>Avg Team Size</label><input type="number" step="0.1" id="${prefix}_team" value="${defaults.avg_team_size != null ? defaults.avg_team_size : ''}"></div>
-        <div><label>Avg Revision Intensity (1-7)</label><input type="number" min="1" max="7" step="0.1" id="${prefix}_ri" value="${defaults.avg_revision_intensity != null ? defaults.avg_revision_intensity : ''}"></div>
-        <div><label>Avg Scope Expansion</label><input type="number" step="0.1" id="${prefix}_se" value="${defaults.avg_scope_expansion != null ? defaults.avg_scope_expansion : ''}"></div>
-        <div><label>Avg Senior Involvement</label><input type="number" step="0.1" id="${prefix}_si" value="${defaults.avg_senior_involvement != null ? defaults.avg_senior_involvement : ''}"></div>
-        <div><label>Avg AI Usage</label><input type="number" step="0.1" id="${prefix}_ai" value="${defaults.avg_ai_usage != null ? defaults.avg_ai_usage : ''}"></div>
-      </div>
-      <div><label style="font-size:12px;font-weight:500;color:var(--gray-600);display:block;margin-bottom:4px">Geographies</label><div class="norm-geo-grid">${geoChecks}</div></div>
-      <div style="margin-top:8px"><label style="font-size:12px;font-weight:500;color:var(--gray-600);display:block;margin-bottom:4px">Notes</label><textarea id="${prefix}_notes" rows="2" style="width:100%;padding:8px;border:1px solid var(--gray-300);border-radius:var(--radius-sm);font-size:13px;font-family:Roboto,sans-serif">${esc(defaults.notes || '')}</textarea></div>
-    </div>`;
-}
-
-function _onSectorChange(prefix) {
-  const sector = document.getElementById(`${prefix}_sector`).value;
-  const subcatSel = document.getElementById(`${prefix}_subcat`);
-  subcatSel.innerHTML = '<option value="">\u2014</option>';
-  if (sector && SECTORS[sector]) {
-    for (const sc of SECTORS[sector]) {
-      subcatSel.innerHTML += `<option value="${esc(sc)}">${esc(sc)}</option>`;
-    }
-  }
-}
-
-function _collectNormFields(prefix) {
-  const geoChecked = [];
-  document.querySelectorAll(`input[name="${prefix}_geo"]:checked`).forEach(cb => geoChecked.push(cb.value));
-  return {
-    complexity: document.getElementById(`${prefix}_complexity`)?.value ? parseFloat(document.getElementById(`${prefix}_complexity`).value) : null,
-    client_sector: document.getElementById(`${prefix}_sector`)?.value || null,
-    client_sub_category: document.getElementById(`${prefix}_subcat`)?.value || null,
-    geographies: geoChecked.length ? geoChecked : null,
-    avg_calendar_days: document.getElementById(`${prefix}_cal`)?.value ? parseFloat(document.getElementById(`${prefix}_cal`).value) : null,
-    avg_team_size: document.getElementById(`${prefix}_team`)?.value ? parseFloat(document.getElementById(`${prefix}_team`).value) : null,
-    avg_revision_intensity: document.getElementById(`${prefix}_ri`)?.value ? parseFloat(document.getElementById(`${prefix}_ri`).value) : null,
-    avg_scope_expansion: document.getElementById(`${prefix}_se`)?.value ? parseFloat(document.getElementById(`${prefix}_se`).value) : null,
-    avg_senior_involvement: document.getElementById(`${prefix}_si`)?.value ? parseFloat(document.getElementById(`${prefix}_si`).value) : null,
-    avg_ai_usage: document.getElementById(`${prefix}_ai`)?.value ? parseFloat(document.getElementById(`${prefix}_ai`).value) : null,
-    notes: document.getElementById(`${prefix}_notes`)?.value || null,
-  };
-}
-
-/* ── Add Norm ── */
-
-function showAddNormForm(catId) {
-  const container = document.getElementById(`normv2-add-form-${catId}`);
-  if (!container) return;
-  if (container.style.display !== 'none') {
-    container.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-  container.style.display = '';
-  container.innerHTML = _normFormHTML('newnorm', {}) +
-    `<div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-primary btn-sm" onclick="createNormV2(${catId})">Save</button>
-      <button class="btn btn-sm" style="background:transparent;border:1px solid var(--gray-300)" onclick="showAddNormForm(${catId})">Cancel</button>
-    </div>`;
-}
-
-async function createNormV2(catId) {
-  const payload = _collectNormFields('newnorm');
+async function renderNormsTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = '<div class="loading">Loading norms\u2026</div>';
   try {
-    await apiCall('POST', `/norms/v2?category_id=${catId}`, payload);
-    showToast('Norm created');
-    renderNormsV2Page();
-  } catch (err) { showToast(err.message, 'error'); }
-}
-
-/* ── Delete Norm ── */
-
-async function deleteNormV2(normId) {
-  if (!confirm('Delete this norm? This cannot be undone.')) return;
-  try {
-    await apiCall('DELETE', `/norms/v2/${normId}`);
-    showToast('Norm deleted');
-    renderNormsV2Page();
-  } catch (err) { showToast(err.message, 'error'); }
-}
-
-let activeNormEdit = null;
-async function toggleNormEdit(normId) {
-  // Close previous
-  if (activeNormEdit && activeNormEdit !== normId) {
-    const prev = document.getElementById(`normv2-edit-${activeNormEdit}`);
-    if (prev) { prev.style.display = 'none'; prev.innerHTML = ''; }
-    const prevRow = document.getElementById(`normv2-${activeNormEdit}`);
-    if (prevRow) prevRow.style.background = '';
-  }
-  const panel = document.getElementById(`normv2-edit-${normId}`);
-  const row = document.getElementById(`normv2-${normId}`);
-  if (!panel) return;
-
-  if (panel.style.display === 'none') {
-    activeNormEdit = normId;
-    row.style.background = 'var(--blue-pale)';
-    panel.style.display = '';
-    try {
-      const norm = await apiCall('GET', `/norms/v2/${normId}`);
-      // Parse geographies for the checkbox defaults
-      let geoList = [];
-      if (norm.geographies) {
-        try { geoList = JSON.parse(norm.geographies); } catch(e) { geoList = [norm.geographies]; }
-      }
-      const defaults = { ...norm, _geoList: geoList };
-      panel.innerHTML = _normFormHTML(`edit${normId}`, defaults) +
-        `<div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn btn-primary btn-sm" onclick="saveNormV2(${normId})">Save</button>
-          <button class="btn btn-secondary btn-sm" onclick="loadNormHistory(${normId})">History</button>
-          <button class="btn btn-sm" style="background:transparent;border:1px solid var(--gray-300)" onclick="toggleNormEdit(${normId})">Cancel</button>
-          <button class="btn btn-sm" style="background:var(--error-bg);color:var(--error-text);border:1px solid var(--error-text);margin-left:auto" onclick="deleteNormV2(${normId})">Delete</button>
-        </div>
-        <div id="normHistory-${normId}"></div>`;
-    } catch (err) {
-      panel.innerHTML = `<div style="color:var(--error);font-size:13px;padding:12px">Failed: ${esc(err.message)}</div>`;
-    }
-  } else {
-    activeNormEdit = null;
-    row.style.background = '';
-    panel.style.display = 'none';
-    panel.innerHTML = '';
-  }
-}
-
-async function saveNormV2(normId) {
-  const payload = _collectNormFields(`edit${normId}`);
-  try {
-    await apiCall('PUT', `/norms/v2/${normId}`, payload);
-    showToast('Norm updated');
-    renderNormsV2Page();
-  } catch (err) { showToast(err.message, 'error'); }
-}
-
-async function loadNormHistory(normId) {
-  const container = document.getElementById(`normHistory-${normId}`);
-  if (!container) return;
-  container.innerHTML = '<div class="loading" style="padding:12px">Loading history\u2026</div>';
-  try {
-    const history = await apiCall('GET', `/norms/v2/${normId}/history`);
-    if (!history || history.length === 0) {
-      container.innerHTML = '<div style="font-size:13px;color:var(--gray-400);padding:8px">No edit history.</div>';
-      return;
-    }
-    let html = '<div class="norms-v2-history"><h4>Edit History</h4>';
-    for (const h of history) {
-      html += `<div class="history-entry">
-        <span class="history-field">${esc(h.field_changed)}</span>
-        <span class="history-arrow">\u2192</span>
-        ${esc(h.old_value)} <span class="history-arrow">\u2192</span> ${esc(h.new_value)}
-        <br><small style="color:var(--gray-400)">${esc(h.changed_by || '')} \u00b7 ${formatDateTime(h.changed_at)}</small>
-      </div>`;
-    }
-    html += '</div>';
-    container.innerHTML = html;
+    const [rows, cats] = await Promise.all([apiCall('GET', '/norms/aggregates'), apiCall('GET', '/categories')]);
+    sc.innerHTML = buildNormsAggregatesTable(rows, cats);
   } catch (err) {
-    container.innerHTML = `<div style="color:var(--error);font-size:13px">Failed: ${esc(err.message)}</div>`;
+    sc.innerHTML = `<div class="error-state">Failed to load norms: ${esc(err.message)}</div>`;
   }
 }
-
-
 
 /* ═══════════════════════════════════════════════════════════════════════
    ACTIVITY LOG
@@ -2128,22 +1808,18 @@ async function exportExcel() {
    INIT
    ═══════════════════════════════════════════════════════════════════════ */
 
-// Modal close on overlay click
 document.getElementById('globalModal')?.addEventListener('click', function (e) {
   if (e.target === this) hideModal();
 });
 
-// Nav clicks
 document.querySelectorAll('.nav-item[data-route]').forEach(el => {
   el.addEventListener('click', () => {
     window.location.hash = '#' + el.dataset.route;
   });
 });
 
-// Logout
 on('logoutBtn', 'click', handleLogout);
 
-// Login form — use direct binding to ensure preventDefault fires
 document.addEventListener('DOMContentLoaded', () => {
   const loginForm = document.getElementById('loginForm');
   if (loginForm) {
@@ -2151,10 +1827,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// Hash routing
 window.addEventListener('hashchange', route);
 
-// Restore user from JWT payload (base64 decode the middle segment)
 function restoreUserFromToken(token) {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
@@ -2168,10 +1842,9 @@ function restoreUserFromToken(token) {
     const avatarEl = document.getElementById('topbarAvatar');
     if (nameEl) nameEl.textContent = state.user.name;
     if (avatarEl) avatarEl.textContent = state.user.name[0].toUpperCase();
-  } catch { /* invalid token — will fail on first API call and logout */ }
+  } catch { /* invalid token */ }
 }
 
-// Boot
 document.addEventListener('DOMContentLoaded', () => {
   if (state.token) {
     restoreUserFromToken(state.token);

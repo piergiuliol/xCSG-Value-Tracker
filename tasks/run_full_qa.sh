@@ -28,18 +28,18 @@ pip install requests -q
 
 # ── 3. Start server (if not running) ──────────────────────────────────────────
 SERVER_PID=""
-if curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
-  echo "✅ Server already running on port 8000"
+if curl -s http://localhost:8765/api/health > /dev/null 2>&1; then
+  echo "✅ Server already running on port 8765"
 else
   echo "🚀 Starting server..."
-  python -m uvicorn backend.app:app --host 0.0.0.0 --port 8000 --log-level warning &
+  python -m uvicorn backend.app:app --host 0.0.0.0 --port 8765 --log-level warning &
   SERVER_PID=$!
   echo "   Server PID: $SERVER_PID"
   
   # Wait for server to be ready
   echo "   Waiting for server..."
   for i in {1..20}; do
-    if curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
+    if curl -s http://localhost:8765/api/health > /dev/null 2>&1; then
       echo "✅ Server ready"
       break
     fi

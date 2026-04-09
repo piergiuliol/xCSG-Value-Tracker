@@ -2,7 +2,7 @@
 
 ## Context
 This is a FastAPI + vanilla JS/CSS/HTML app at `~/Documents/Projects/xCSG-Value-Tracker/`.
-Server runs on port 8000. Login: admin / AliraAdmin2026!
+Server runs on port 8765. Login: admin / AliraAdmin2026!
 Files to edit: `frontend/styles.css`, `frontend/index.html`, `frontend/app.js`
 
 ## Logo Issue (CRITICAL)

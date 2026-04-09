@@ -28,7 +28,6 @@ from backend.models import (
     LoginRequest,
     LoginResponse,
     MetricsSummary,
-    NormUpdate,
     ProjectCreate,
     ProjectUpdate,
     RegisterRequest,
@@ -36,178 +35,43 @@ from backend.models import (
     TrendData,
     UserInfo,
 )
+from backend.schema import EXPERT_FIELDS, build_schema_response
 
 
-# ── Expert field options (canonical source of truth for dropdown values) ──────
+# ── Expert field options (derived from schema.py) ────────────────────────────
 
 EXPERT_FIELD_OPTIONS = {
-    "b1_starting_point": {
-        "section": "B",
-        "label": "Starting point",
-        "options": [
-            "Raw request",
-            "Light brief",
-            "Structured brief",
-            "Hypothesis",
-            "Full hypothesis deck",
-        ],
-        "has_legacy": True,
-        "legacy_default": "Raw request",
-    },
-    "b2_research_sources": {
-        "section": "B",
-        "label": "Research sources",
-        "options": [
-            "General web",
-            "Industry databases",
-            "Proprietary database",
-            "Internal knowledge base",
-            "Synthesized firm knowledge",
-        ],
-        "has_legacy": True,
-        "legacy_default": None,
-    },
-    "b3_assembly_ratio": {
-        "section": "B",
-        "label": "Assembly ratio",
-        "options": [
-            ">80% manual",
-            "60-80%",
-            "40-60%",
-            "20-40%",
-            "<20% manual",
-        ],
-        "has_legacy": True,
-        "legacy_default": ">80% manual",
-    },
-    "b4_hypothesis_first": {
-        "section": "B",
-        "label": "Hypothesis approach",
-        "options": [
-            "Exploratory",
-            "Mostly exploratory",
-            "Balanced",
-            "Mostly hypothesis-led",
-            "Fully hypothesis-led",
-        ],
-        "has_legacy": True,
-        "legacy_default": "Exploratory",
-    },
-    "c1_specialization": {
-        "section": "C",
-        "label": "Specialization match",
-        "options": [
-            "Generalist",
-            "Mixed",
-            "Specialist",
-            "Deep specialist",
-            "World-class expert",
-        ],
+    key: {
+        "key": key,
+        "label": defn["label"],
+        "section": defn["section"],
+        "options": defn.get("options", []),
+        "type": defn.get("type", "categorical"),
         "has_legacy": False,
-    },
-    "c2_directness": {
-        "section": "C",
-        "label": "Directness",
-        "options": [
-            "Delegated",
-            "Partially delegated",
-            "Shared",
-            "Hands-on",
-            "Personally leading",
-        ],
-        "has_legacy": False,
-    },
-    "c3_judgment_pct": {
-        "section": "C",
-        "label": "Judgment concentration",
-        "options": [
-            "<20%",
-            "20-40%",
-            "40-60%",
-            "60-80%",
-            ">80%",
-        ],
-        "has_legacy": False,
-    },
-    "c4_senior_hours": {
-        "section": "C",
-        "label": "Senior hours",
-        "type": "numeric",
-        "has_legacy": False,
-    },
-    "c5_junior_hours": {
-        "section": "C",
-        "label": "Junior hours",
-        "type": "numeric",
-        "has_legacy": False,
-    },
-    "d1_proprietary_data": {
-        "section": "D",
-        "label": "Proprietary data",
-        "options": [
-            "None",
-            "Public data",
-            "Some proprietary",
-            "Mostly proprietary",
-            "Fully proprietary",
-        ],
-        "has_legacy": True,
-        "legacy_default": None,
-    },
-    "d2_knowledge_reuse": {
-        "section": "D",
-        "label": "Knowledge reuse",
-        "options": [
-            "One-time",
-            "Some reuse",
-            "Moderate",
-            "High",
-            "Maximum",
-        ],
-        "has_legacy": True,
-        "legacy_default": None,
-    },
-    "d3_moat_test": {
-        "section": "D",
-        "label": "Moat test",
-        "options": [
-            "Easily replicable",
-            "Somewhat",
-            "Moderately unique",
-            "Highly unique",
-            "Impossible to replicate",
-        ],
-        "has_legacy": True,
-        "legacy_default": None,
-    },
-    "f1_feasibility": {
-        "section": "F",
-        "label": "Feasibility",
-        "options": [
-            "Not assessed",
-            "Basic",
-            "Standard",
-            "Comprehensive",
-            "Exceeds requirements",
-        ],
-        "has_legacy": True,
-        "legacy_default": None,
-    },
-    "f2_productization": {
-        "section": "F",
-        "label": "Productization",
-        "options": [
-            "None",
-            "Identified",
-            "Designed",
-            "Implemented",
-            "Scaled",
-        ],
-        "has_legacy": True,
-        "legacy_default": None,
-    },
+    }
+    for key, defn in EXPERT_FIELDS.items()
 }
 
+
+def _normalize_project_payload(data: dict) -> dict:
+    normalized = dict(data)
+    if normalized.get("working_days") is not None and normalized.get("xcsg_calendar_days") is None:
+        normalized["xcsg_calendar_days"] = str(normalized["working_days"])
+    if normalized.get("revision_depth") and normalized.get("xcsg_revision_rounds") is None:
+        normalized["xcsg_revision_rounds"] = normalized["revision_depth"]
+    # Auto-compute working_days from dates if not provided
+    if normalized.get("working_days") is None and normalized.get("date_started") and normalized.get("date_delivered"):
+        try:
+            from datetime import date as _date
+            s = _date.fromisoformat(normalized["date_started"])
+            e = _date.fromisoformat(normalized["date_delivered"])
+            # Business days approximation: total days * 5/7
+            total = (e - s).days
+            if total >= 0:
+                normalized["working_days"] = max(1, round(total * 5 / 7))
+        except (ValueError, TypeError):
+            pass
+    return normalized
 
 # ── App init ──────────────────────────────────────────────────────────────────
 
@@ -216,12 +80,12 @@ app = FastAPI(title="xCSG Value Tracker", version="2.1.0")
 # CORS
 _raw_origins = os.environ.get(
     "CORS_ORIGINS",
-    '["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:8000"]',
+    '["http://localhost:3000", "http://localhost:8765", "http://127.0.0.1:8765"]',
 )
 try:
     CORS_ORIGINS = json.loads(_raw_origins)
 except Exception:
-    CORS_ORIGINS = ["http://localhost:8000"]
+    CORS_ORIGINS = ["http://localhost:8765"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -235,6 +99,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     db.init_db()
+    db.migrate()
+    db.migrate_v2()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -376,9 +242,11 @@ async def list_projects(
         expert_response = db.get_expert_response(project["id"])
         result["metrics"] = None
         if expert_response:
+            er_dict = dict(expert_response)
             merged = dict(project)
-            merged.update({k: v for k, v in dict(expert_response).items() if k != "id"})
+            merged.update({k: v for k, v in er_dict.items() if k != "id"})
             result["metrics"] = mtx.compute_project_metrics(merged)
+            result["reuse_intent"] = er_dict.get("g1_reuse_intent")
         enriched_projects.append(result)
 
     return enriched_projects
@@ -393,7 +261,7 @@ async def create_project(
     if not cat:
         raise HTTPException(status_code=400, detail="Invalid category_id")
 
-    data = body.model_dump()
+    data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
 
     norm = db.get_norm_by_category(body.category_id)
@@ -446,7 +314,7 @@ async def update_project(
     row = db.get_project(project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    data = {k: v for k, v in body.model_dump().items() if v is not None}
+    data = {k: v for k, v in _normalize_project_payload(body.model_dump()).items() if v is not None}
     db.update_project(project_id, data)
     db.log_activity(
         current_user["sub"],
@@ -474,6 +342,29 @@ async def delete_project(
     db.delete_project(project_id)
 
 
+@app.patch("/api/deliverables/{project_id}")
+async def patch_deliverable(
+    project_id: int,
+    body: ProjectUpdate,
+    current_user: dict = Depends(auth.get_current_user),
+):
+    row = db.get_project(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if body.client_pulse is None:
+        raise HTTPException(status_code=400, detail="client_pulse is required")
+    db.update_project_client_pulse(project_id, body.client_pulse)
+    return dict(db.get_project(project_id))
+
+
+# ── Schema (NO auth — public) ────────────────────────────────────────────────
+
+@app.get("/api/schema")
+async def get_schema():
+    """Return full schema: fields, scores, sections, metrics, norms columns."""
+    return build_schema_response()
+
+
 # ── Expert (NO auth — token-based) ───────────────────────────────────────────
 
 @app.get("/api/expert/options")
@@ -499,6 +390,7 @@ async def get_expert_context(token: str):
         date_delivered=row["date_delivered"],
         xcsg_team_size=row["xcsg_team_size"],
         xcsg_calendar_days=row["xcsg_calendar_days"],
+        engagement_stage=dict(row).get("engagement_stage"),
         already_completed=already_done,
     )
 
@@ -517,10 +409,18 @@ async def get_expert_metrics(token: str):
         raise HTTPException(status_code=404, detail="No response found")
 
     er_dict = dict(er)
+    project_row = db.get_project(row["id"])
+    merged = dict(project_row)
+    merged.update(er_dict)
+    metrics = mtx.compute_project_metrics(merged)
     return ExpertAssessmentMetrics(
-        machine_first_score=mtx.compute_machine_first_score(er_dict),
-        senior_led_score=mtx.compute_senior_led_score(er_dict),
-        proprietary_knowledge_score=mtx.compute_proprietary_knowledge_score(er_dict),
+        machine_first_score=metrics.get("machine_first_score"),
+        senior_led_score=metrics.get("senior_led_score"),
+        proprietary_knowledge_score=metrics.get("proprietary_knowledge_score"),
+        client_impact=metrics.get("client_impact"),
+        data_independence=metrics.get("data_independence"),
+        ai_survival_rate=metrics.get("ai_survival_rate"),
+        reuse_intent_score=metrics.get("reuse_intent_score"),
     )
 
 
@@ -542,49 +442,18 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
 
     # Compute and return metrics on successful submission
     er = db.get_expert_response(row["id"])
-    metrics = {
-        "machine_first_score": mtx.compute_machine_first_score(dict(er)),
-        "senior_led_score": mtx.compute_senior_led_score(dict(er)),
-        "proprietary_knowledge_score": mtx.compute_proprietary_knowledge_score(dict(er)),
-    }
+    project_row = db.get_project(row["id"])
+    merged = dict(project_row)
+    merged.update(dict(er))
+    metrics = mtx.compute_project_metrics(merged)
     return {"success": True, "message": "Assessment submitted successfully", "metrics": metrics}
 
 
 # ── Legacy Norms ──────────────────────────────────────────────────────────────
 
-@app.get("/api/norms")
-async def list_norms(current_user: dict = Depends(auth.get_current_user)):
-    return db.list_norms()
-
-
-@app.get("/api/norms/{category_id}")
-async def get_norm(
-    category_id: int,
-    current_user: dict = Depends(auth.get_current_user),
-):
-    row = db.get_norm_by_category(category_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Norm not found for this category")
-    return dict(row)
-
-
-@app.put("/api/norms/{category_id}")
-async def update_norm(
-    category_id: int,
-    body: NormUpdate,
-    current_user: dict = Depends(auth.get_current_user),
-):
-    cat = db.get_category(category_id)
-    if not cat:
-        raise HTTPException(status_code=404, detail="Category not found")
-    data = {k: v for k, v in body.model_dump().items() if v is not None}
-    db.update_norm(category_id, data, current_user["sub"])
-    db.log_activity(
-        current_user["sub"],
-        "norm_updated",
-        details=f"Updated norm for category '{cat['name']}'",
-    )
-    return db.get_norm_by_category(category_id)
+@app.get("/api/norms/aggregates")
+async def list_norm_aggregates(current_user: dict = Depends(auth.get_current_user)):
+    return db.list_norm_aggregates()
 
 
 # ── Metrics ───────────────────────────────────────────────────────────────────

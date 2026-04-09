@@ -12,5 +12,5 @@ else PIP_CMD="python3 -m pip"; fi
 echo "📦 Installing dependencies with $PIP_CMD..."
 $PIP_CMD install -q -r requirements.txt
 
-echo "✅ Starting server on http://localhost:8000"
-python3 -m uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
+echo "✅ Starting server on http://localhost:8765"
+python3 -m uvicorn backend.app:app --host 0.0.0.0 --port 8765 --reload

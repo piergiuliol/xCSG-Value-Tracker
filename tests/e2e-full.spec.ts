@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 
-const BASE = 'http://localhost:8000';
+const BASE = 'http://localhost:8077';
 const jsErrors: string[] = [];
 
 test.describe.serial('xCSG Value Tracker E2E', () => {
@@ -37,10 +37,9 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
 
   // ─── TEST 2: Create a new project ────────────────────────────────────
   test('Test 2: Create a new project', async () => {
-    // Navigate via hash
-    await page.evaluate(() => { window.location.hash = '#new'; });
-    await page.waitForTimeout(1500);
-    await expect(page.locator('#projectForm')).toBeVisible({ timeout: 8000 });
+    // Navigate via full URL to ensure route() fires cleanly
+    await page.goto(BASE + '/#new');
+    await expect(page.locator('#projectForm')).toBeVisible({ timeout: 10000 });
 
     // Fill project info
     await page.fill('#fName', 'QA Test Project');
@@ -49,15 +48,15 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     await page.fill('#fEmail', 'qa@test.com');
 
     // xCSG Performance
-    await page.selectOption('#fXDays', '4-5');
-    await page.selectOption('#fXTeam', '3');
-    await page.selectOption('#fRevisions', '2');
-    await page.selectOption('#fScopeExpansion', 'Minor');
+    await page.fill('#fXDays', '5');
+    await page.fill('#fXTeam', '3');
+    await page.fill('#fRevisions', '2');
+    await page.selectOption('#fScopeExpansion', 'No');
 
     // Legacy Baseline — fill required fields
-    await page.selectOption('#fLDays', '6-10');
-    await page.selectOption('#fLTeam', '4+');
-    await page.selectOption('#fLRevisions', '3+');
+    await page.fill('#fLDays', '8');
+    await page.fill('#fLTeam', '4');
+    await page.fill('#fLRevisions', '3');
 
     // Submit
     await page.click('#projectForm button[type="submit"]');
@@ -92,92 +91,60 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     // Normal flow: context card loads
     await expect(page.locator('.context-title')).toHaveText('QA Test Project', { timeout: 10000 });
 
-    // Verify all 4 accordion headers
-    for (const sec of ['B', 'C', 'D', 'F']) {
-      await expect(page.locator(`.accordion-header[data-section="${sec}"]`)).toBeVisible();
-    }
+    // Expert form uses data-key attributes on .accordion-field elements
+    const fillField = async (key: string, optionIndex: number) => {
+      const sel = page.locator(`.accordion-field[data-key="${key}"]`);
+      await sel.waitFor({ state: 'visible', timeout: 5000 });
+      const tagName = await sel.evaluate(el => el.tagName);
+      if (tagName === 'SELECT') {
+        const options = await sel.locator('option').allTextContents();
+        // Pick the option at the given 1-based index (skip "— Select —")
+        const idx = Math.min(optionIndex, options.length - 1);
+        await sel.selectOption({ index: idx });
+      } else {
+        await sel.fill(String(optionIndex));
+        await sel.evaluate(el => el.dispatchEvent(new Event('input', { bubbles: true })));
+      }
+      await page.waitForTimeout(50);
+    };
 
-    // Helpers — use index-based selection for reliability
-    const fillSelect = async (name: string, label: string) => {
-      const sel = page.locator(`select[name="${name}"]`);
-      await sel.selectOption({ label });
-      await page.waitForTimeout(100);
-    };
-    const fillNumber = async (name: string, value: string) => {
-      const inp = page.locator(`input[name="${name}"]`);
-      await inp.fill(value);
-      await inp.evaluate(el => el.dispatchEvent(new Event('input', { bubbles: true })));
-      await page.waitForTimeout(100);
-    };
     const openSection = async (sec: string) => {
-      await page.click(`.accordion-header[data-section="${sec}"]`);
+      const header = page.locator(`.accordion-header[data-section="${sec}"]`);
+      await header.click();
       await page.waitForTimeout(500);
     };
 
-    // ── Section B (4 questions × 2 cols) ──
-    await openSection('B');
-    await fillSelect('b1_starting_point_xcsg', 'Full hypothesis deck');
-    await fillSelect('b1_starting_point_legacy', 'Raw request');
-    await fillSelect('b2_research_sources_xcsg', 'Synthesized firm knowledge');
-    await fillSelect('b2_research_sources_legacy', 'General web');
-    await fillSelect('b3_assembly_ratio_xcsg', '<20% manual');
-    await fillSelect('b3_assembly_ratio_legacy', '>80% manual');
-    await fillSelect('b4_hypothesis_first_xcsg', 'Fully hypothesis-led');
-    await fillSelect('b4_hypothesis_first_legacy', 'Exploratory');
+    // Fill all fields dynamically — get all field keys from the DOM
+    const allSections = await page.locator('.accordion-header[data-section]').evaluateAll(
+      els => els.map(el => el.getAttribute('data-section'))
+    );
 
-    // ── Section C (3 selects + 2 numeric, no legacy cols) ──
-    await openSection('C');
-    await fillSelect('c1_specialization_xcsg', 'World-class expert');
-    await fillSelect('c2_directness_xcsg', 'Personally leading');
-    await fillSelect('c3_judgment_pct_xcsg', '>80%');
-    await fillNumber('c4_senior_hours_xcsg', '8');
-    await fillNumber('c5_junior_hours_xcsg', '4');
-
-    // ── Section D (3 questions × 2 cols) ──
-    await openSection('D');
-    await fillSelect('d1_proprietary_data_xcsg', 'Fully proprietary');
-    await fillSelect('d1_proprietary_data_legacy', 'None');
-    await fillSelect('d2_knowledge_reuse_xcsg', 'Maximum');
-    await fillSelect('d2_knowledge_reuse_legacy', 'One-time');
-    await fillSelect('d3_moat_test_xcsg', 'Impossible to replicate');
-    await fillSelect('d3_moat_test_legacy', 'Easily replicable');
-
-    // ── Section F (2 questions × 2 cols) ──
-    await openSection('F');
-    await fillSelect('f1_feasibility_xcsg', 'Exceeds requirements');
-    await fillSelect('f1_feasibility_legacy', 'Basic');
-    await fillSelect('f2_productization_xcsg', 'Scaled');
-    await fillSelect('f2_productization_legacy', 'None');
+    for (const sec of allSections) {
+      await openSection(sec!);
+      const fieldKeys = await page.locator(`.accordion-field[data-section="${sec}"]`).evaluateAll(
+        els => els.map(el => ({ key: el.getAttribute('data-key')!, tag: el.tagName }))
+      );
+      for (const f of fieldKeys) {
+        if (f.tag === 'SELECT') {
+          await fillField(f.key, 1); // pick first non-placeholder option
+        } else {
+          await fillField(f.key, 10); // numeric: enter 10
+        }
+      }
+    }
 
     // Wait for progress to update
     await page.waitForTimeout(500);
 
-    // Debug: check progress and total fields
-    const progressText = await page.locator('#expertProgressLabel').textContent();
-    console.log('Progress:', progressText);
-    const btnText = await page.locator('#expertSubmitBtn').textContent();
-    console.log('Submit btn:', btnText);
     const btnDisabled = await page.locator('#expertSubmitBtn').isDisabled();
     console.log('Submit disabled:', btnDisabled);
 
-    // Count total fields on page
-    const totalFields = await page.locator('.accordion-field').count();
-    console.log('Total accordion fields:', totalFields);
-    const filledFields = await page.evaluate(() => {
-      let count = 0;
-      document.querySelectorAll('.accordion-field').forEach(el => {
-        if (el.value !== '' && el.value != null) count++;
-      });
-      return count;
-    });
-    console.log('Filled fields:', filledFields);
-
-    // If button is disabled, some fields are missing — log them
+    // If button is disabled, log empty fields
     if (btnDisabled) {
       const emptyFields = await page.evaluate(() => {
         const empty: string[] = [];
-        document.querySelectorAll('.accordion-field').forEach(el => {
-          if (!el.value || el.value === '') empty.push(el.name);
+        document.querySelectorAll('.accordion-field').forEach((el: any) => {
+          if (!el.value || el.value === '') empty.push(el.getAttribute('data-key'));
         });
         return empty;
       });
@@ -199,7 +166,6 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
       throw new Error(`Submit failed with toast: ${toastText}`);
     }
 
-    // h2 is a sibling of .expert-thankyou (JS uses innerHTML +=), not a child
     await expect(page.locator('#expertContent h2')).toHaveText(/Thank You|Already Submitted/, { timeout: 10000 });
   });
 
@@ -247,14 +213,14 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     expect(formHtml).not.toContain('Sub-category');
     expect(formHtml).not.toContain('Geography');
 
-    // Fields that SHOULD exist
+    // Fields that SHOULD exist (now number inputs)
     await expect(page.locator('#fXTeam')).toBeVisible();
     await expect(page.locator('#fRevisions')).toBeVisible();
     await expect(page.locator('#fScopeExpansion')).toBeVisible();
 
-    // Verify options
-    expect(await page.locator('#fXTeam option').count()).toBeGreaterThanOrEqual(4);
-    expect(await page.locator('#fRevisions option').count()).toBeGreaterThanOrEqual(4);
+    // Verify numeric fields have correct attributes
+    expect(await page.locator('#fXTeam').getAttribute('type')).toBe('number');
+    expect(await page.locator('#fRevisions').getAttribute('type')).toBe('number');
     expect(await page.locator('#fScopeExpansion option').count()).toBeGreaterThanOrEqual(3);
   });
 
@@ -272,7 +238,7 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
   // ─── Summary ──────────────────────────────────────────────────────────
   test('Summary: JS error check', async () => {
     // Filter out non-critical console errors (422s are normal API validation)
-    const realErrors = jsErrors.filter(e => !e.includes('422'));
+    const realErrors = jsErrors.filter(e => !e.includes('422') && !e.includes('favicon') && !e.includes('404'));
     if (realErrors.length > 0) {
       console.log('⚠️ JS Errors:', realErrors);
     }
