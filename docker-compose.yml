@@ -6,8 +6,10 @@ services:
       - "8765:8765"
     volumes:
       - tracker_data:/app/data
+    env_file:
+      - .env
     environment:
-      - SECRET_KEY=change-this-in-production
       - DATABASE_PATH=/app/data/tracker.db
+    restart: unless-stopped
 volumes:
   tracker_data:
