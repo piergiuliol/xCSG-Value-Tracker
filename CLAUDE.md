@@ -9,11 +9,13 @@ xCSG Value Measurement Tracker — a web app (FastAPI + SQLite + vanilla HTML/JS
 ## Commands
 
 ### Run the dev server
+
 ```bash
 ./launch.sh          # installs deps, starts uvicorn on port 8765 with --reload
 ```
 
 ### Run E2E tests (Playwright)
+
 ```bash
 # Each suite needs a clean DB — they delete tracker.db on startup via the playwright config
 npx playwright test tests/e2e-full.spec.ts --headed --timeout 600000     # 7 tests, ~30s
@@ -21,21 +23,25 @@ npx playwright test tests/e2e-realistic.spec.ts --headed --timeout 600000  # 11 
 ```
 
 ### Run backend QC suite
+
 ```bash
 python tests/test_v2_qc.py
 ```
 
 ### Check frontend syntax
+
 ```bash
 node --check frontend/app.js
 ```
 
 ### Docker
+
 ```bash
 docker-compose up --build   # port 8765
 ```
 
 ### Login credentials (dev seed)
+
 - admin / AliraAdmin2026! (admin — full access)
 - pmo / AliraPMO2026! (analyst — create/edit projects, no delete, no user/category management)
 - viewer / AliraView2026! (viewer — read-only, no create/edit/delete)
@@ -62,28 +68,39 @@ FastAPI serving both the API and static frontend files.
   - **xCSG Value Gain**: (xcsg_quality / xcsg_days) / (legacy_quality / legacy_days) — quality per unit of effort
   - **Flywheel scores**: Machine-First (B2/L6 ratio), Senior-Led (avg of C1/L7, C2/L8, C3/L9), Knowledge (avg of D1/L10, D2/L11, D3/L12)
   - **7 Scaling Gates**: multi-engagement, effort reduction, client-invisible quality, transferability, flywheel validation, compounding, adoption confidence
-- `app.py` — Routes: `/api/schema`, `/api/auth/*`, `/api/projects/*`, `/api/expert/*`, `/api/dashboard/*`, `/api/norms/*`, `/api/activity`, `/api/export/*`. Static mount is the **last line** (catch-all for SPA).
+- `app.py` — Routes: `/api/schema`, `/api/auth/*`, `/api/users/*`, `/api/projects/*`, `/api/expert/*`, `/api/dashboard/*`, `/api/norms/*`, `/api/activity`, `/api/export/*`. Static mount is the **last line** (catch-all for SPA).
 
 ### Frontend (`frontend/`)
 
 Single-page app, purely vanilla JS. No build step, no bundler.
 
 - `index.html` — Three root containers: `#loginScreen`, `#appShell`, `#expertView`. Loads ECharts 5.6.0 from CDN.
-- `app.js` — Hash-based routing (#portfolio, #new, #projects, #norms, #settings, #activity, #expert/, #assess/). Loads schema from `/api/schema` at startup. `getAssessmentFields()` and `getExpertSections()` derive UI from schema — no hardcoded field definitions.
+- `app.js` — Hash-based routing (#portfolio, #new, #projects, #norms, #settings, #activity, #expert/, #assess/). Loads schema from `/api/schema` at startup. `getAssessmentFields()` and `getExpertSections()` derive UI from schema — no hardcoded field definitions. Role-based UI: `canWrite()` hides create/edit controls for viewers, `isAdmin()` hides delete/user management.
 - `styles.css` — Alira Health brand: Navy `#121F6B` primary, Blue `#6EC1E4` accent, Inter font.
 
 ### Expert Flow
 
-1. Project created → generates unique `expert_token`
+1. Project created -> generates unique `expert_token`
 2. Expert link: `/#expert/{token}` or `/#assess/{token}`
 3. Expert form shows Section A (context, read-only) then Sections B-G and L (accordion)
-4. On submit → backend computes metrics, returns flywheel scores with explanations
-5. Project status → `complete`, metrics available in dashboard
+4. On submit -> backend computes metrics, returns flywheel scores with explanations
+5. Project status -> `complete`, metrics available in dashboard
 
-### Key Metrics Terminology
+### Role-Based Access Control
+
+| Action | admin | analyst | viewer |
+| ------ | ----- | ------- | ------ |
+| View dashboard, projects, norms, activity | Yes | Yes | Yes |
+| Create/edit projects | Yes | Yes | No |
+| Delete projects | Yes | No | No |
+| Manage users (create, delete, reset passwords) | Yes | No | No |
+| Manage categories | Yes | No | No |
+| Change own password | Yes | Yes | Yes |
+
+### Key Metrics
 
 | Label | Key | What it measures |
-| ----- | --- | --------------- |
+| ----- | --- | ---------------- |
 | Delivery Speed | `delivery_speed` | Legacy person-days / xCSG person-days |
 | Output Quality | `output_quality` | xCSG quality score / legacy quality score |
 | xCSG Value Gain | `productivity_ratio` | Quality per person-day, xCSG vs legacy |
@@ -97,16 +114,23 @@ All ratios displayed as `Nx` format. Signal metrics (Reuse Intent, AI Survival, 
 
 - **No frameworks**: No React, Vue, or Tailwind. Vanilla HTML/JS/CSS only.
 - **Schema is the source of truth**: All field definitions, scoring weights, option strings, and metric labels live in `backend/schema.py`. Do not duplicate them in `app.js` or `metrics.py`.
-- **String consistency**: Option values in `schema.py` must match exactly across scoring maps and expert form. The D3 moat-test options use em dashes (—).
+- **String consistency**: Option values in `schema.py` must match exactly across scoring maps and expert form. The D3 moat-test options use em dashes.
 - **Import paths**: Use `from backend import auth`, `from backend.schema import SCORES`. The app runs from project root via `python -m uvicorn backend.app:app`.
 - **Static mount last**: `app.mount("/", StaticFiles(...))` must remain the final line in `app.py`.
 - **Seed recovery**: `seed_data()` in `database.py` re-hashes default passwords on every startup.
 - **ECharts containers**: Use `<div>` elements (not `<canvas>`) for ECharts chart containers. ECharts creates its own canvas internally.
 - **Working days auto-computed**: When `date_started` and `date_delivered` are provided but `working_days` is not, `_normalize_project_payload` computes business days automatically.
 
+## Production
+
+- **Live URL**: https://xcsg-initiative.duckdns.org
+- **Server**: 212.192.3.149 (Hetzner, SSH key only)
+- **SSH**: `ssh root@212.192.3.149` (key-based auth, password login disabled)
+- **Update**: `ssh root@212.192.3.149 "cd /opt/tracker && git pull && docker compose up -d --build"`
+
 ## Environment Variables
 
-- `SECRET_KEY` — JWT signing key (has dev default, must change in prod)
+- `SECRET_KEY` — JWT signing key (must be random in production, stored in `.env`)
 - `DATABASE_PATH` — SQLite file location (default: `./data/tracker.db`)
 - `JWT_EXPIRY_HOURS` — Token lifetime (default: 8)
 - `CORS_ORIGINS` — JSON array of allowed origins
@@ -117,4 +141,3 @@ All ratios displayed as `Nx` format. Signal metrics (Reuse Intent, AI Survival, 
 - `docs/FRAMEWORK.md` — Measurement methodology (flywheel, scoring, survey design)
 - `docs/Instructions.md` — Build order and critical rules
 - `docs/DESIGN-palladio-ui.md` — UI design system
-- `v2/` — Previous version snapshot for reference

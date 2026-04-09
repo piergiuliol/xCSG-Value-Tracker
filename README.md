@@ -51,6 +51,16 @@ docker-compose up --build
 
 **Change all passwords after first login** via Settings > Change Password.
 
+## User Management
+
+Admins manage users via **Settings > Users**:
+- **Add users** with username, email, password, and role
+- **Change roles** inline (admin, analyst, viewer)
+- **Reset passwords** — generates a random 14-character password, shown once with a Copy button
+- **Delete users** (cannot delete your own account)
+
+All users can change their own password via **Settings > Change Password** (requires current password).
+
 ## Production Deployment
 
 ### 1. Get a server
