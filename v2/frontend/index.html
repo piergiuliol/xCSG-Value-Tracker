@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>xCSG Value Tracker V2</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="loginScreen">
+    <div class="login-card">
+        <div class="login-logo">
+            <div class="logo-bars">
+                <span class="bar-blue"></span>
+                <span class="bar-navy"></span>
+                <span class="bar-orange"></span>
+            </div>
+            <span class="logo-text">Alira</span>
+        </div>
+        <h2>Sign in to xCSG Value Tracker</h2>
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="loginUsername">Username</label>
+                <input type="text" id="loginUsername" autocomplete="username" required>
+            </div>
+            <div class="form-group">
+                <label for="loginPassword">Password</label>
+                <input type="password" id="loginPassword" autocomplete="current-password" required>
+            </div>
+            <p id="loginError" class="error-text" style="display:none;">Invalid username or password</p>
+            <button type="submit" id="loginBtn" class="btn btn-primary btn-full" style="margin-top:12px;">Sign In</button>
+        </form>
+    </div>
+</div>
+
+<!-- App Shell -->
+<div id="appShell">
+    <nav class="sidebar">
+        <div class="sidebar-logo">
+            <div class="logo-bars">
+                <span class="bar-blue"></span>
+                <span class="bar-navy"></span>
+                <span class="bar-orange"></span>
+            </div>
+            <span class="logo-text">Alira</span>
+        </div>
+        <div class="sidebar-nav">
+            <a class="nav-item active" data-route="dashboard" href="#dashboard"><span class="nav-icon">📊</span> Dashboard</a>
+            <a class="nav-item" data-route="new" href="#new"><span class="nav-icon">➕</span> New Deliverable</a>
+            <a class="nav-item" data-route="deliverables" href="#deliverables"><span class="nav-icon">📋</span> Deliverables</a>
+            <a class="nav-item" data-route="settings" href="#settings"><span class="nav-icon">⚙️</span> Settings</a>
+            <a class="nav-item" data-route="activity" href="#activity"><span class="nav-icon">📝</span> Activity Log</a>
+        </div>
+        <div class="sidebar-footer">
+            <a href="#" id="logoutLink" style="color:rgba(255,255,255,0.7);text-decoration:none;">Sign Out</a>
+        </div>
+    </nav>
+    <div class="main-area">
+        <div class="topbar">
+            <h1 id="topbarTitle">Dashboard</h1>
+            <div class="topbar-user">
+                <span id="topbarUsername"></span>
+                <div class="topbar-avatar" id="topbarAvatar"></div>
+            </div>
+        </div>
+        <div id="mainContent"></div>
+    </div>
+</div>
+
+<!-- Expert View -->
+<div id="expertView">
+    <div class="expert-container">
+        <div class="login-logo" style="margin-bottom:24px;">
+            <div class="logo-bars"><span class="bar-blue"></span><span class="bar-navy"></span><span class="bar-orange"></span></div>
+            <span class="logo-text">Alira</span>
+        </div>
+        <div id="expertContent"></div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer"></div>
+
+<!-- Modal -->
+<div id="globalModal">
+    <div id="globalModalCard"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

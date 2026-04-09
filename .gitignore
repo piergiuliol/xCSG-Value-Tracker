@@ -1,0 +1,33 @@
+# Data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.db.bak
+data/tracker 2.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Node
+node_modules/
+
+# IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Test artifacts
+test-results/
+.playwright-mcp/
+walkthrough-*.png
+project-detail-full.png
+
+# Environment
+.env
+*.log
+
+# Temporary
+tmp_run_server.py
