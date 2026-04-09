@@ -1821,20 +1821,33 @@ async function doDeleteUser(userId) {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
+function generatePassword() {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+  let pw = '';
+  for (let i = 0; i < 14; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+  return pw;
+}
+
 function resetUserPassword(userId, username) {
-  showModal('<h3>Reset Password</h3><p>Set a new password for <strong>' + esc(username) + '</strong>:</p>'
-    + '<input type="password" id="resetPwInput" placeholder="New password (min 8 chars)" style="width:100%;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);margin:12px 0">'
-    + '<div class="form-actions"><button class="btn btn-primary" onclick="doResetPassword(' + userId + ')">Reset</button>'
+  const newPw = generatePassword();
+  showModal('<h3>Reset Password</h3>'
+    + '<p>Generate a new password for <strong>' + esc(username) + '</strong>?</p>'
+    + '<div class="form-actions" style="margin-top:16px">'
+    + '<button class="btn btn-primary" onclick="doResetPassword(' + userId + ',\'' + esc(newPw) + '\',\'' + esc(username) + '\')">Reset Now</button>'
     + '<button class="btn btn-secondary" onclick="hideModal()">Cancel</button></div>');
 }
 
-async function doResetPassword(userId) {
-  const pw = document.getElementById('resetPwInput').value;
-  if (pw.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
+async function doResetPassword(userId, newPw, username) {
   hideModal();
   try {
-    await apiCall('PUT', '/users/' + userId, { password: pw });
-    showToast('Password reset');
+    await apiCall('PUT', '/users/' + userId, { password: newPw });
+    showModal('<h3>Password Reset</h3>'
+      + '<p>New password for <strong>' + esc(username) + '</strong>:</p>'
+      + '<input type="text" id="resetPwDisplay" value="' + esc(newPw) + '" readonly style="width:100%;padding:10px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-family:monospace;font-size:15px;margin:12px 0;background:var(--gray-50)">'
+      + '<p style="color:var(--warning);font-size:12px;margin:0 0 16px">\u26a0 Share this securely with the user. It will not be shown again.</p>'
+      + '<div class="form-actions">'
+      + '<button class="btn btn-primary" onclick="navigator.clipboard.writeText(document.getElementById(\'resetPwDisplay\').value);showToast(\'Copied to clipboard\')">Copy Password</button>'
+      + '<button class="btn btn-secondary" onclick="hideModal()">Done</button></div>');
   } catch (err) { showToast(err.message, 'error'); }
 }
 
