@@ -5,9 +5,10 @@ How the tracker measures whether AI-augmented consulting (xCSG) outperforms trad
 ## How It Works
 
 1. An internal user creates a project with timeline, team size, and category
-2. The expert who completed the deliverable fills a structured survey comparing xCSG vs legacy
-3. The system computes metrics automatically from survey responses
-4. Results feed into a portfolio dashboard with KPIs, charts, and scaling gates
+2. Legacy defaults (calendar days, team size, revision rounds) are pre-filled from category norms
+3. The expert who completed the deliverable fills a structured survey comparing xCSG vs legacy
+4. The system computes metrics automatically from survey responses
+5. Results feed into a portfolio dashboard with KPIs, charts, and scaling gates
 
 ## Survey Structure
 
@@ -25,6 +26,26 @@ The expert assessment has 8 sections. Section A is project context (read-only). 
 | L | Legacy Estimates | Traditional delivery estimates for the same deliverable (16 questions) |
 
 Each question uses a fixed set of options. Each option maps to a score between 0.0 and 1.0. These mappings are defined once in `backend/schema.py` and used everywhere.
+
+## Data Priority: Expert Prevails
+
+Legacy estimates exist in two places:
+
+| Source | Set by | Fields |
+| ------ | ------ | ------ |
+| Project configuration | Internal user (PMO/admin) at project creation | Working days, team size, revision rounds — pre-filled from category norms |
+| Section L survey | Expert who did the work | 16 fields covering all legacy dimensions |
+
+**When both exist, expert data always takes precedence.** Project configuration values are only used as fallback when the expert hasn't provided an answer. This ensures metrics reflect the expert's firsthand assessment of what legacy delivery would have looked like for their specific deliverable, not a generic category estimate.
+
+## Legacy Norms
+
+Admins can set default legacy estimates per project category (e.g., "Landscape Assessment" typically takes 15 days with a team of 3). These norms serve two purposes:
+
+1. **Pre-fill convenience** — when creating a project, legacy fields auto-populate from the category norm
+2. **Override tracking** — if the internal user changes the pre-filled values, the system flags it as overridden
+
+The norms dashboard shows computed aggregates (average speed, quality, value gain per category) derived from actual completed projects — not from the manually entered defaults.
 
 ## Core Metrics
 
