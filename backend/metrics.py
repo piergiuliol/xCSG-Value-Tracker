@@ -202,40 +202,79 @@ def compute_legacy_smoothness(data: dict) -> Optional[float]:
 
 
 
-def compute_project_metrics(data: dict) -> dict:
+def _compute_effort_metrics(data: dict) -> dict:
+    """Compute delivery speed and person-day metrics."""
     calendar_days = compute_calendar_days(data.get("date_started"), data.get("date_delivered"))
     xcsg_person_days = compute_person_days(coalesce(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
     legacy_person_days = compute_person_days(coalesce(data, "l1_legacy_working_days", "legacy_working_days"), coalesce(data, "l2_legacy_team_size", "legacy_team_size"))
-
     delivery_speed = compute_ratio(legacy_person_days, xcsg_person_days)
     engagement_revenue = parse_number(data.get("engagement_revenue"))
     revenue_productivity_xcsg = round2(engagement_revenue / xcsg_person_days) if engagement_revenue is not None and xcsg_person_days else None
     revenue_productivity_legacy = round2(engagement_revenue / legacy_person_days) if engagement_revenue is not None and legacy_person_days else None
+    return {
+        "calendar_days": calendar_days, "xcsg_person_days": xcsg_person_days,
+        "legacy_person_days": legacy_person_days, "delivery_speed": delivery_speed,
+        "effort_ratio": delivery_speed,
+        "revenue_productivity_xcsg": revenue_productivity_xcsg,
+        "revenue_productivity_legacy": revenue_productivity_legacy,
+    }
+
+
+def _compute_quality_metrics(data: dict, xcsg_person_days, legacy_person_days) -> dict:
+    """Compute quality scores and value gain."""
     quality_score = compute_quality_score(data)
     legacy_quality = compute_legacy_quality(data)
     output_quality = compute_ratio(quality_score, legacy_quality)
+    xcsg_qpd = round2(quality_score / xcsg_person_days) if quality_score is not None and xcsg_person_days else None
+    legacy_qpd = round2(legacy_quality / legacy_person_days) if legacy_quality is not None and legacy_person_days else None
+    productivity_ratio = compute_ratio(xcsg_qpd, legacy_qpd)
+    return {
+        "quality_score": quality_score, "legacy_quality": legacy_quality, "legacy_quality_score": legacy_quality,
+        "quality_ratio": output_quality, "output_quality": output_quality,
+        "xcsg_quality_per_day": xcsg_qpd, "legacy_quality_per_day": legacy_qpd,
+        "productivity_ratio": productivity_ratio, "xcsg_advantage": productivity_ratio,
+        "value_multiplier": productivity_ratio, "outcome_rate_ratio": productivity_ratio,
+    }
 
-    # Productivity = quality per person-day, xCSG vs legacy
-    xcsg_quality_per_day = round2(quality_score / xcsg_person_days) if quality_score is not None and xcsg_person_days else None
-    legacy_quality_per_day = round2(legacy_quality / legacy_person_days) if legacy_quality is not None and legacy_person_days else None
-    productivity_ratio = compute_ratio(xcsg_quality_per_day, legacy_quality_per_day)
 
+def _compute_smoothness_metrics(data: dict) -> dict:
+    """Compute rework efficiency metrics."""
     xcsg_smoothness = compute_xcsg_smoothness(data)
     legacy_smoothness = compute_legacy_smoothness(data)
     rework_efficiency = compute_ratio(xcsg_smoothness, legacy_smoothness)
+    return {"xcsg_smoothness": xcsg_smoothness, "legacy_smoothness": legacy_smoothness, "rework_efficiency": rework_efficiency}
 
-    machine_first_score = compute_machine_first_score(data)
-    senior_led_score = compute_senior_led_score(data)
-    proprietary_knowledge_score = compute_proprietary_knowledge_score(data)
+
+def _compute_flywheel_metrics(data: dict) -> dict:
+    """Compute flywheel pillar scores."""
+    mf = compute_machine_first_score(data)
+    sl = compute_senior_led_score(data)
+    pk = compute_proprietary_knowledge_score(data)
     raw_impact = score_pair_ratio(data, "e1_client_decision", "l15_legacy_e1_decision", E1_CLIENT_DECISION_SCORES)
-    client_impact = min(raw_impact, 10.0) if raw_impact is not None else None
-    data_independence = score_pair_ratio(data, "b6_data_analysis_split", "l16_legacy_b6_data", B6_DATA_ANALYSIS_SCORES)
+    ci = min(raw_impact, 10.0) if raw_impact is not None else None
+    di = score_pair_ratio(data, "b6_data_analysis_split", "l16_legacy_b6_data", B6_DATA_ANALYSIS_SCORES)
+    return {
+        "machine_first_score": mf, "senior_led_score": sl, "proprietary_knowledge_score": pk,
+        "overall_xcsg_score": average([mf, sl, pk]),
+        "client_impact": ci, "data_independence": di,
+    }
 
-    ai_survival_rate = compute_ai_survival_rate(data)
-    reuse_intent_score = compute_reuse_intent_score(data)
-    client_pulse_score = compute_client_pulse_score(data)
-    overall_xcsg_score = average([machine_first_score, senior_led_score, proprietary_knowledge_score])
-    has_expert_response = data.get("project_id") is not None or data.get("b1_starting_point") is not None
+
+def _compute_signal_metrics(data: dict) -> dict:
+    """Compute signal percentage metrics."""
+    return {
+        "ai_survival_rate": compute_ai_survival_rate(data),
+        "reuse_intent_score": compute_reuse_intent_score(data),
+        "client_pulse_score": compute_client_pulse_score(data),
+    }
+
+
+def compute_project_metrics(data: dict) -> dict:
+    effort = _compute_effort_metrics(data)
+    quality = _compute_quality_metrics(data, effort["xcsg_person_days"], effort["legacy_person_days"])
+    smoothness = _compute_smoothness_metrics(data)
+    flywheel = _compute_flywheel_metrics(data)
+    signals = _compute_signal_metrics(data)
 
     return {
         "id": data.get("id"),
@@ -245,40 +284,11 @@ def compute_project_metrics(data: dict) -> dict:
         "pioneer_name": data.get("pioneer_name", ""),
         "client_name": data.get("client_name"),
         "created_at": data.get("created_at", ""),
-        "has_expert_response": has_expert_response,
-        "calendar_days": calendar_days,
-        "xcsg_person_days": xcsg_person_days,
-        "legacy_person_days": legacy_person_days,
-        "effort_ratio": delivery_speed,
-        "delivery_speed": delivery_speed,
-        "quality_score": quality_score,
-        "quality_ratio": output_quality,
-        "output_quality": output_quality,
-        "legacy_quality": legacy_quality,
-        "legacy_quality_score": legacy_quality,
-        "xcsg_smoothness": xcsg_smoothness,
-        "legacy_smoothness": legacy_smoothness,
-        "rework_efficiency": rework_efficiency,
+        "has_expert_response": data.get("project_id") is not None or data.get("b1_starting_point") is not None,
         "outcome_rate_xcsg": None,
         "outcome_rate_legacy": None,
-        "outcome_rate_ratio": productivity_ratio,
-        "revenue_productivity_xcsg": revenue_productivity_xcsg,
-        "revenue_productivity_legacy": revenue_productivity_legacy,
-        "productivity_ratio": productivity_ratio,
-        "xcsg_quality_per_day": xcsg_quality_per_day,
-        "legacy_quality_per_day": legacy_quality_per_day,
-        "client_impact": client_impact,
-        "data_independence": data_independence,
-        "xcsg_advantage": productivity_ratio,
-        "value_multiplier": productivity_ratio,
-        "machine_first_score": machine_first_score,
-        "senior_led_score": senior_led_score,
-        "proprietary_knowledge_score": proprietary_knowledge_score,
-        "overall_xcsg_score": overall_xcsg_score,
-        "ai_survival_rate": ai_survival_rate,
-        "reuse_intent_score": reuse_intent_score,
-        "client_pulse_score": client_pulse_score,
         "legacy_overridden": bool(data.get("legacy_overridden", 0)),
+        **effort, **quality, **smoothness, **flywheel, **signals,
     }
 
 

@@ -247,149 +247,161 @@ def migrate_v2() -> None:
         conn.close()
 
 
+def _migrate_v11_schema(conn) -> None:
+    """Add v1.1 tables and columns."""
+    # Create project_pioneers table if not exists
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS project_pioneers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            pioneer_name TEXT NOT NULL,
+            pioneer_email TEXT,
+            total_rounds INTEGER,
+            show_previous INTEGER,
+            expert_token TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+        )
+    """)
+
+    # Add new columns to projects
+    project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    if "default_rounds" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN default_rounds INTEGER DEFAULT 1")
+    if "show_previous_answers" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN show_previous_answers INTEGER DEFAULT 0")
+
+    # Rebuild expert_responses to remove the UNIQUE constraint on project_id
+    # and add pioneer_id + round_number columns
+    expert_columns = {row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
+    needs_rebuild = "pioneer_id" not in expert_columns
+
+    if needs_rebuild:
+        # Check if there's a unique index/constraint on project_id
+        # SQLite requires table rebuild to remove column-level UNIQUE
+        conn.execute("ALTER TABLE expert_responses RENAME TO _expert_responses_v10")
+        conn.execute("""CREATE TABLE expert_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            pioneer_id INTEGER,
+            round_number INTEGER DEFAULT 1,
+            b1_starting_point TEXT,
+            b2_research_sources TEXT,
+            b3_assembly_ratio TEXT,
+            b4_hypothesis_first TEXT,
+            b5_ai_survival TEXT,
+            b6_data_analysis_split TEXT,
+            c1_specialization TEXT,
+            c2_directness TEXT,
+            c3_judgment_pct TEXT,
+            c6_self_assessment TEXT,
+            c7_analytical_depth TEXT,
+            c8_decision_readiness TEXT,
+            d1_proprietary_data TEXT,
+            d2_knowledge_reuse TEXT,
+            d3_moat_test TEXT,
+            e1_client_decision TEXT,
+            f1_feasibility TEXT,
+            f2_productization TEXT,
+            g1_reuse_intent TEXT,
+            l1_legacy_working_days INTEGER,
+            l2_legacy_team_size TEXT,
+            l3_legacy_revision_depth TEXT,
+            l4_legacy_scope_expansion TEXT,
+            l5_legacy_client_reaction TEXT,
+            l6_legacy_b2_sources TEXT,
+            l7_legacy_c1_specialization TEXT,
+            l8_legacy_c2_directness TEXT,
+            l9_legacy_c3_judgment TEXT,
+            l10_legacy_d1_proprietary TEXT,
+            l11_legacy_d2_reuse TEXT,
+            l12_legacy_d3_moat TEXT,
+            l13_legacy_c7_depth TEXT,
+            l14_legacy_c8_decision TEXT,
+            l15_legacy_e1_decision TEXT,
+            l16_legacy_b6_data TEXT,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            UNIQUE(pioneer_id, round_number)
+        )""")
+
+        # Copy existing data (determine which columns exist in the old table)
+        old_cols = {row[1] for row in conn.execute("PRAGMA table_info(_expert_responses_v10)").fetchall()}
+        # Build list of columns common to both tables (excluding new ones)
+        common_cols = [
+            "id", "project_id",
+            "b1_starting_point", "b2_research_sources", "b3_assembly_ratio",
+            "b4_hypothesis_first", "b5_ai_survival", "b6_data_analysis_split",
+            "c1_specialization", "c2_directness", "c3_judgment_pct",
+            "c6_self_assessment", "c7_analytical_depth", "c8_decision_readiness",
+            "d1_proprietary_data", "d2_knowledge_reuse", "d3_moat_test",
+            "e1_client_decision", "f1_feasibility", "f2_productization",
+            "g1_reuse_intent",
+            "l1_legacy_working_days", "l2_legacy_team_size",
+            "l3_legacy_revision_depth", "l4_legacy_scope_expansion",
+            "l5_legacy_client_reaction", "l6_legacy_b2_sources",
+            "l7_legacy_c1_specialization", "l8_legacy_c2_directness",
+            "l9_legacy_c3_judgment", "l10_legacy_d1_proprietary",
+            "l11_legacy_d2_reuse", "l12_legacy_d3_moat",
+            "l13_legacy_c7_depth", "l14_legacy_c8_decision",
+            "l15_legacy_e1_decision", "l16_legacy_b6_data",
+            "submitted_at",
+        ]
+        cols_to_copy = [c for c in common_cols if c in old_cols]
+        cols_str = ", ".join(cols_to_copy)
+        conn.execute(
+            f"INSERT INTO expert_responses ({cols_str}) SELECT {cols_str} FROM _expert_responses_v10"
+        )
+        conn.execute("DROP TABLE _expert_responses_v10")
+
+
+def _migrate_v11_data(conn) -> None:
+    """Migrate existing v1.0 data to v1.1 structure."""
+    # Create pioneer rows from existing project pioneer_name/email/token
+    rows = conn.execute(
+        "SELECT id, pioneer_name, pioneer_email, expert_token FROM projects WHERE pioneer_name IS NOT NULL AND pioneer_name != ''"
+    ).fetchall()
+    for row in rows:
+        project_id = row["id"]
+        pioneer_name = row["pioneer_name"]
+        pioneer_email = row["pioneer_email"]
+        expert_token = row["expert_token"]
+        # Check if already migrated
+        existing = conn.execute(
+            "SELECT id FROM project_pioneers WHERE expert_token = ?", (expert_token,)
+        ).fetchone()
+        if not existing:
+            cur = conn.execute(
+                "INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, expert_token) VALUES (?, ?, ?, ?)",
+                (project_id, pioneer_name, pioneer_email, expert_token),
+            )
+            pioneer_id = cur.lastrowid
+            # Link existing expert_responses to the new pioneer
+            conn.execute(
+                "UPDATE expert_responses SET pioneer_id = ? WHERE project_id = ? AND pioneer_id IS NULL",
+                (pioneer_id, project_id),
+            )
+
+    # Clean up orphaned responses
+    conn.execute("DELETE FROM expert_responses WHERE pioneer_id IS NULL")
+
+    # Update expert_pending status to pending
+    conn.execute("UPDATE projects SET status = 'pending' WHERE status = 'expert_pending'")
+
+
+def _migrate_v11_indexes(conn) -> None:
+    """Add indexes for v1.1 queries."""
+    # Create unique index on (pioneer_id, round_number)
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_er_pioneer_round ON expert_responses(pioneer_id, round_number) WHERE pioneer_id IS NOT NULL")
+
+
 def migrate_v11() -> None:
-    """v1.1 migration: multi-pioneer support with round-based responses."""
+    """Migrate from v1.0 to v1.1: multi-pioneer support."""
     conn = get_connection()
     try:
-        # Create project_pioneers table if not exists
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS project_pioneers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                pioneer_name TEXT NOT NULL,
-                pioneer_email TEXT,
-                total_rounds INTEGER,
-                show_previous INTEGER,
-                expert_token TEXT UNIQUE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects(id)
-            )
-        """)
-
-        # Add new columns to projects
-        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
-        if "default_rounds" not in project_columns:
-            conn.execute("ALTER TABLE projects ADD COLUMN default_rounds INTEGER DEFAULT 1")
-        if "show_previous_answers" not in project_columns:
-            conn.execute("ALTER TABLE projects ADD COLUMN show_previous_answers INTEGER DEFAULT 0")
-
-        # Rebuild expert_responses to remove the UNIQUE constraint on project_id
-        # and add pioneer_id + round_number columns
-        expert_columns = {row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
-        needs_rebuild = "pioneer_id" not in expert_columns
-
-        if needs_rebuild:
-            # Check if there's a unique index/constraint on project_id
-            # SQLite requires table rebuild to remove column-level UNIQUE
-            conn.execute("ALTER TABLE expert_responses RENAME TO _expert_responses_v10")
-            conn.execute("""CREATE TABLE expert_responses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                pioneer_id INTEGER,
-                round_number INTEGER DEFAULT 1,
-                b1_starting_point TEXT,
-                b2_research_sources TEXT,
-                b3_assembly_ratio TEXT,
-                b4_hypothesis_first TEXT,
-                b5_ai_survival TEXT,
-                b6_data_analysis_split TEXT,
-                c1_specialization TEXT,
-                c2_directness TEXT,
-                c3_judgment_pct TEXT,
-                c6_self_assessment TEXT,
-                c7_analytical_depth TEXT,
-                c8_decision_readiness TEXT,
-                d1_proprietary_data TEXT,
-                d2_knowledge_reuse TEXT,
-                d3_moat_test TEXT,
-                e1_client_decision TEXT,
-                f1_feasibility TEXT,
-                f2_productization TEXT,
-                g1_reuse_intent TEXT,
-                l1_legacy_working_days INTEGER,
-                l2_legacy_team_size TEXT,
-                l3_legacy_revision_depth TEXT,
-                l4_legacy_scope_expansion TEXT,
-                l5_legacy_client_reaction TEXT,
-                l6_legacy_b2_sources TEXT,
-                l7_legacy_c1_specialization TEXT,
-                l8_legacy_c2_directness TEXT,
-                l9_legacy_c3_judgment TEXT,
-                l10_legacy_d1_proprietary TEXT,
-                l11_legacy_d2_reuse TEXT,
-                l12_legacy_d3_moat TEXT,
-                l13_legacy_c7_depth TEXT,
-                l14_legacy_c8_decision TEXT,
-                l15_legacy_e1_decision TEXT,
-                l16_legacy_b6_data TEXT,
-                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                UNIQUE(pioneer_id, round_number)
-            )""")
-
-            # Copy existing data (determine which columns exist in the old table)
-            old_cols = {row[1] for row in conn.execute("PRAGMA table_info(_expert_responses_v10)").fetchall()}
-            # Build list of columns common to both tables (excluding new ones)
-            common_cols = [
-                "id", "project_id",
-                "b1_starting_point", "b2_research_sources", "b3_assembly_ratio",
-                "b4_hypothesis_first", "b5_ai_survival", "b6_data_analysis_split",
-                "c1_specialization", "c2_directness", "c3_judgment_pct",
-                "c6_self_assessment", "c7_analytical_depth", "c8_decision_readiness",
-                "d1_proprietary_data", "d2_knowledge_reuse", "d3_moat_test",
-                "e1_client_decision", "f1_feasibility", "f2_productization",
-                "g1_reuse_intent",
-                "l1_legacy_working_days", "l2_legacy_team_size",
-                "l3_legacy_revision_depth", "l4_legacy_scope_expansion",
-                "l5_legacy_client_reaction", "l6_legacy_b2_sources",
-                "l7_legacy_c1_specialization", "l8_legacy_c2_directness",
-                "l9_legacy_c3_judgment", "l10_legacy_d1_proprietary",
-                "l11_legacy_d2_reuse", "l12_legacy_d3_moat",
-                "l13_legacy_c7_depth", "l14_legacy_c8_decision",
-                "l15_legacy_e1_decision", "l16_legacy_b6_data",
-                "submitted_at",
-            ]
-            cols_to_copy = [c for c in common_cols if c in old_cols]
-            cols_str = ", ".join(cols_to_copy)
-            conn.execute(
-                f"INSERT INTO expert_responses ({cols_str}) SELECT {cols_str} FROM _expert_responses_v10"
-            )
-            conn.execute("DROP TABLE _expert_responses_v10")
-
-        # Migrate existing data: create project_pioneers from projects with pioneer_name
-        rows = conn.execute(
-            "SELECT id, pioneer_name, pioneer_email, expert_token FROM projects WHERE pioneer_name IS NOT NULL AND pioneer_name != ''"
-        ).fetchall()
-        for row in rows:
-            project_id = row["id"]
-            pioneer_name = row["pioneer_name"]
-            pioneer_email = row["pioneer_email"]
-            expert_token = row["expert_token"]
-            # Check if already migrated
-            existing = conn.execute(
-                "SELECT id FROM project_pioneers WHERE expert_token = ?", (expert_token,)
-            ).fetchone()
-            if not existing:
-                cur = conn.execute(
-                    "INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, expert_token) VALUES (?, ?, ?, ?)",
-                    (project_id, pioneer_name, pioneer_email, expert_token),
-                )
-                pioneer_id = cur.lastrowid
-                # Link existing expert_responses to the new pioneer
-                conn.execute(
-                    "UPDATE expert_responses SET pioneer_id = ? WHERE project_id = ? AND pioneer_id IS NULL",
-                    (pioneer_id, project_id),
-                )
-
-        # Clean up any responses that couldn't be linked to a pioneer
-        conn.execute("DELETE FROM expert_responses WHERE pioneer_id IS NULL")
-
-        # Add unique index for pioneer_id + round_number
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_er_pioneer_round ON expert_responses(pioneer_id, round_number) WHERE pioneer_id IS NOT NULL")
-
-        # Update expert_pending status to pending
-        conn.execute("UPDATE projects SET status = 'pending' WHERE status = 'expert_pending'")
-
+        _migrate_v11_schema(conn)
+        _migrate_v11_data(conn)
+        _migrate_v11_indexes(conn)
         conn.commit()
     finally:
         conn.close()

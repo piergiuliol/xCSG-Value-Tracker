@@ -761,21 +761,16 @@ async def get_monitoring(
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
-@app.get("/api/export/excel")
-async def export_excel(current_user: dict = Depends(auth.get_current_user)):
-    try:
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
-    except ImportError:
-        raise HTTPException(status_code=500, detail="openpyxl not installed")
+def _build_export_workbook(all_projects: list, complete_projects: list):
+    """Build the Excel export workbook with Raw Data and Computed Metrics sheets."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
 
     wb = openpyxl.Workbook()
 
     # ── Sheet 1: Raw Data ──
     ws1 = wb.active
     ws1.title = "Raw Data"
-    all_p = db.list_projects()
-    complete = db.list_complete_projects()
 
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="121F6B")
@@ -804,10 +799,10 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
 
     # Build expert response lookup: all responses per project for raw data export
     responses_by_project = {}
-    for p_item in all_p:
+    for p_item in all_projects:
         responses_by_project[p_item["id"]] = db.get_all_project_responses(p_item["id"])
 
-    for p in all_p:
+    for p in all_projects:
         responses = responses_by_project.get(p["id"], [])
         # Get pioneer names for this project
         project_pioneers = db.list_pioneers(p["id"])
@@ -880,7 +875,7 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         cell.fill = header_fill
 
     # Use averaged metrics for the computed metrics sheet
-    for p in complete:
+    for p in complete_projects:
         responses = db.get_all_project_responses(p["id"])
         if responses:
             m = mtx.compute_averaged_project_metrics(p, responses)
@@ -904,6 +899,20 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         for col in ws.columns:
             max_len = max((len(str(cell.value or "")) for cell in col), default=0)
             ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
+
+    return wb
+
+
+@app.get("/api/export/excel")
+async def export_excel(current_user: dict = Depends(auth.get_current_user)):
+    try:
+        import openpyxl
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed")
+
+    all_p = db.list_projects()
+    complete = db.list_complete_projects()
+    wb = _build_export_workbook(all_p, complete)
 
     tmp = tempfile.NamedTemporaryFile(
         suffix=".xlsx", prefix="xCSG_Export_", delete=False, dir="/tmp"
