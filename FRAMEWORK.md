@@ -4,11 +4,12 @@ How the tracker measures whether AI-augmented consulting (xCSG) outperforms trad
 
 ## How It Works
 
-1. An internal user creates a project with timeline, team size, and category
+1. An internal user creates a project with timeline, team size, category, and assigns one or more pioneers
 2. Legacy defaults (calendar days, team size, revision rounds) are pre-filled from category norms
-3. The expert who completed the deliverable fills a structured survey comparing xCSG vs legacy
-4. The system computes metrics automatically from survey responses
+3. Each pioneer receives a unique assessment link and independently fills a structured survey comparing xCSG vs legacy
+4. The system computes metrics from all responses, averaged across pioneers and rounds
 5. Results feed into a portfolio dashboard with KPIs, charts, and scaling gates
+6. PMO monitors response progress via the Monitoring page
 
 ## Survey Structure
 

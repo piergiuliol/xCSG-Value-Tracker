@@ -2,9 +2,20 @@
 
 A web application for tracking and measuring the value of xCSG (AI-augmented consulting) deliverables against traditional methods. Built for Alira Health.
 
-Internal users create projects and share assessment links with experts. Experts complete a structured survey comparing xCSG vs legacy approaches. The system computes performance metrics and displays them on a portfolio dashboard.
+Internal users create projects and assign multiple pioneers. Each pioneer receives a unique assessment link to independently evaluate the deliverable across six dimensions. The system computes averaged performance metrics and displays them on a portfolio dashboard.
 
 For the measurement methodology, metrics, and scoring details, see [FRAMEWORK.md](FRAMEWORK.md).
+
+## Key Features
+
+- **Multi-pioneer assessment** — assign multiple experts per project, each with their own survey link
+- **Multiple survey rounds** — configure how many times each pioneer is surveyed
+- **Averaged metrics** — all responses averaged across pioneers and rounds
+- **Portfolio dashboard** — KPIs, trend charts, category breakdowns, scaling gates
+- **PMO monitoring** — track response progress across all projects and pioneers
+- **Methodology reference** — built-in "How scores work" page with formulas, examples, and contextual help
+- **Role-based access** — admin, analyst, and viewer roles
+- **Excel export** — download raw data and computed metrics
 
 ## Deployment
 
@@ -51,8 +62,8 @@ docker compose logs -f       # view logs
 
 | Username | Password | Role | Permissions |
 | -------- | -------- | ---- | ----------- |
-| admin | AliraAdmin2026! | Admin | Full access: users, categories, projects, delete |
-| pmo | AliraPMO2026! | Analyst | Create and edit projects |
+| admin | AliraAdmin2026! | Admin | Full access: users, categories, projects, pioneers, delete |
+| pmo | AliraPMO2026! | Analyst | Create/edit projects, manage pioneers |
 | viewer | AliraView2026! | Viewer | Read-only |
 
 **Change all passwords after first login** via Settings > Change Password.
