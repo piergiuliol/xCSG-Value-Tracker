@@ -5,6 +5,7 @@ Realigned to final spec (April 2026).
 import os
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from typing import Optional
 
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "./data/tracker.db")
@@ -20,10 +21,19 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-def init_db() -> None:
-    """Create all tables if they don't exist, then seed data."""
+@contextmanager
+def _db():
+    """Context manager for database connections. Auto-closes on exit."""
     conn = get_connection()
     try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    """Create all tables if they don't exist, then seed data."""
+    with _db() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,8 +165,6 @@ def init_db() -> None:
             );
         """)
         conn.commit()
-    finally:
-        conn.close()
 
     # Clean up v2 tables if they exist
     _drop_v2_tables()
@@ -170,8 +178,7 @@ def init_db() -> None:
 
 
 def migrate() -> None:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
         for statement in [
             "ALTER TABLE projects ADD COLUMN engagement_stage TEXT",
@@ -183,13 +190,10 @@ def migrate() -> None:
                 conn.execute(statement)
         conn.execute("UPDATE projects SET client_pulse = 'Not yet received' WHERE client_pulse IS NULL OR TRIM(client_pulse) = ''")
         conn.commit()
-    finally:
-        conn.close()
 
 
 def migrate_v2() -> None:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
         for statement in [
             "ALTER TABLE projects ADD COLUMN working_days INTEGER",
@@ -243,8 +247,6 @@ def migrate_v2() -> None:
             if col not in expert_columns:
                 conn.execute(statement)
         conn.commit()
-    finally:
-        conn.close()
 
 
 def _migrate_v11_schema(conn) -> None:
@@ -397,20 +399,16 @@ def _migrate_v11_indexes(conn) -> None:
 
 def migrate_v11() -> None:
     """Migrate from v1.0 to v1.1: multi-pioneer support."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         _migrate_v11_schema(conn)
         _migrate_v11_data(conn)
         _migrate_v11_indexes(conn)
         conn.commit()
-    finally:
-        conn.close()
 
 
 def _drop_v2_tables() -> None:
     """Drop legacy v2 tables and history table if they exist."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         conn.execute("DROP TABLE IF EXISTS legacy_norms_history")
         conn.execute("DROP TABLE IF EXISTS legacy_norms_v2")
         # Remove v2 columns from projects table if they exist
@@ -426,14 +424,11 @@ def _drop_v2_tables() -> None:
         except sqlite3.OperationalError:
             pass
         conn.commit()
-    finally:
-        conn.close()
 
 
 def _migrate_expert_responses() -> None:
     """Migrate expert_responses from pre-v2 schema to the current response model."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='expert_responses'"
         ).fetchone()
@@ -498,8 +493,6 @@ def _migrate_expert_responses() -> None:
                )"""
         )
         conn.commit()
-    finally:
-        conn.close()
 
 def seed_data() -> None:
     """Create seed users, categories, and legacy norms."""
@@ -511,8 +504,7 @@ def seed_data() -> None:
         ("viewer", "viewer@alira.health", "AliraView2026!", "viewer"),
     ]
 
-    conn = get_connection()
-    try:
+    with _db() as conn:
         for username, email, password, role in SEED_USERS:
             row = conn.execute(
                 "SELECT id, password_hash FROM users WHERE username = ?", (username,)
@@ -555,57 +547,42 @@ def seed_data() -> None:
         conn.commit()
 
         # V2: No seeded legacy norms — norms are computed from expert responses
-    finally:
-        conn.close()
 
 
 # ── Users ──────────────────────────────────────────────────────────────────────
 
 def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute(
             "SELECT * FROM users WHERE username = ?", (username,)
         ).fetchone()
-    finally:
-        conn.close()
 
 
 def get_user_by_id(user_id: int) -> Optional[sqlite3.Row]:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    finally:
-        conn.close()
 
 
 def create_user(username: str, email: str, password_hash: str, role: str) -> int:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         cur = conn.execute(
             "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
             (username, email, password_hash, role),
         )
         conn.commit()
         return cur.lastrowid
-    finally:
-        conn.close()
 
 
 def list_users() -> list:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT id, username, email, role, created_at FROM users ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 def update_user(user_id: int, data: dict) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         fields = {k: v for k, v in data.items() if v is not None}
         if not fields:
             return False
@@ -614,70 +591,52 @@ def update_user(user_id: int, data: dict) -> bool:
         conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def delete_user(user_id: int) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 # ── Project Categories ───────────────────────────────────────────────────────
 
 def list_categories() -> list:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute("SELECT * FROM project_categories ORDER BY name").fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 def get_category(category_id: int) -> Optional[sqlite3.Row]:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute(
             "SELECT * FROM project_categories WHERE id = ?", (category_id,)
         ).fetchone()
-    finally:
-        conn.close()
 
 
 def create_category(name: str, description: Optional[str] = None) -> int:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         cur = conn.execute(
             "INSERT INTO project_categories (name, description) VALUES (?, ?)",
             (name, description),
         )
         conn.commit()
         return cur.lastrowid
-    finally:
-        conn.close()
 
 
 def update_category(category_id: int, name: str, description: Optional[str] = None) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         conn.execute(
             "UPDATE project_categories SET name = ?, description = ? WHERE id = ?",
             (name, description, category_id),
         )
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def delete_category(category_id: int) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM projects WHERE category_id = ?", (category_id,)
         ).fetchone()[0]
@@ -687,19 +646,14 @@ def delete_category(category_id: int) -> bool:
         conn.execute("DELETE FROM project_categories WHERE id = ?", (category_id,))
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def category_has_projects(category_id: int) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM projects WHERE category_id = ?", (category_id,)
         ).fetchone()[0]
         return count > 0
-    finally:
-        conn.close()
 
 
 # ── Projects ─────────────────────────────────────────────────────────────────
@@ -740,8 +694,7 @@ def create_project(data: dict) -> int:
     default_rounds = data.get("default_rounds", 1)
     show_previous_answers = 1 if data.get("show_previous_answers") else 0
 
-    conn = get_connection()
-    try:
+    with _db() as conn:
         cur = conn.execute(
             """INSERT INTO projects
                (created_by, project_name, category_id, client_name,
@@ -797,13 +750,10 @@ def create_project(data: dict) -> int:
 
         conn.commit()
         return project_id
-    finally:
-        conn.close()
 
 
 def get_project(project_id: int) -> Optional[sqlite3.Row]:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name as category_name
                FROM projects p
@@ -811,8 +761,6 @@ def get_project(project_id: int) -> Optional[sqlite3.Row]:
                WHERE p.id = ?""",
             (project_id,),
         ).fetchone()
-    finally:
-        conn.close()
 
 
 def list_projects(
@@ -821,8 +769,7 @@ def list_projects(
     pioneer: Optional[str] = None,
     client: Optional[str] = None,
 ) -> list:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         query = """SELECT DISTINCT p.*, pc.name as category_name
                    FROM projects p
                    JOIN project_categories pc ON p.category_id = pc.id"""
@@ -845,13 +792,10 @@ def list_projects(
         query += " ORDER BY p.created_at DESC"
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 def update_project(project_id: int, data: dict) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         fields = {k: v for k, v in data.items() if v is not None}
         if not fields:
             return False
@@ -863,13 +807,10 @@ def update_project(project_id: int, data: dict) -> bool:
         )
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def delete_project(project_id: int) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         conn.execute(
             "UPDATE activity_log SET project_id = NULL WHERE project_id = ?",
             (project_id,),
@@ -885,13 +826,10 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name as category_name
                FROM projects p
@@ -899,16 +837,13 @@ def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
                WHERE p.expert_token = ?""",
             (token,),
         ).fetchone()
-    finally:
-        conn.close()
 
 
 # ── Pioneer CRUD ─────────────────────────────────────────────────────────────
 
 def list_pioneers(project_id: int) -> list:
     """Return all pioneers for a project with response_count, last_round, last_submitted."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute(
             """SELECT pp.*,
                       COALESCE(stats.response_count, 0) AS response_count,
@@ -929,15 +864,12 @@ def list_pioneers(project_id: int) -> list:
             (project_id,),
         ).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None) -> int:
     """Add a new pioneer to an existing project. Returns the new pioneer id."""
     token = secrets.token_urlsafe(32)
-    conn = get_connection()
-    try:
+    with _db() as conn:
         cur = conn.execute(
             """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token)
                VALUES (?, ?, ?, ?, ?)""",
@@ -945,14 +877,11 @@ def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int
         )
         conn.commit()
         return cur.lastrowid
-    finally:
-        conn.close()
 
 
 def remove_pioneer(pioneer_id: int) -> bool:
     """Remove a pioneer only if they have zero responses."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM expert_responses WHERE pioneer_id = ?", (pioneer_id,)
         ).fetchone()[0]
@@ -961,8 +890,6 @@ def remove_pioneer(pioneer_id: int) -> bool:
         conn.execute("DELETE FROM project_pioneers WHERE id = ?", (pioneer_id,))
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def update_pioneer(pioneer_id: int, data: dict) -> bool:
@@ -971,8 +898,7 @@ def update_pioneer(pioneer_id: int, data: dict) -> bool:
     fields = {k: v for k, v in data.items() if k in allowed and v is not None}
     if not fields:
         return False
-    conn = get_connection()
-    try:
+    with _db() as conn:
         if "total_rounds" in fields and fields["total_rounds"] is not None:
             completed = conn.execute(
                 "SELECT COUNT(*) FROM expert_responses WHERE pioneer_id = ?", (pioneer_id,)
@@ -984,14 +910,11 @@ def update_pioneer(pioneer_id: int, data: dict) -> bool:
         conn.execute(f"UPDATE project_pioneers SET {set_clause} WHERE id = ?", values)
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def get_pioneer_by_token(token: str) -> Optional[dict]:
     """Look up a pioneer by token, joining with project and category data."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         row = conn.execute(
             """SELECT pp.*, p.project_name, p.category_id, p.client_name,
                       p.description, p.date_started, p.date_delivered,
@@ -1008,29 +931,23 @@ def get_pioneer_by_token(token: str) -> Optional[dict]:
             (token,),
         ).fetchone()
         return dict(row) if row else None
-    finally:
-        conn.close()
 
 
 def get_pioneer_responses(pioneer_id: int) -> list:
     """Return all responses for a pioneer ordered by round number."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT * FROM expert_responses WHERE pioneer_id = ? ORDER BY round_number ASC",
             (pioneer_id,),
         ).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 # ── Expert Responses (v1.1 round-based) ─────────────────────────────────────
 
 def create_expert_response(pioneer_id: int, project_id: int, round_number: int, data: dict) -> int:
     """Insert an expert response with pioneer_id and round_number."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         cur = conn.execute(
             """INSERT INTO expert_responses
                (project_id, pioneer_id, round_number,
@@ -1084,8 +1001,6 @@ def create_expert_response(pioneer_id: int, project_id: int, round_number: int, 
         )
         conn.commit()
         return cur.lastrowid
-    finally:
-        conn.close()
 
 
 def update_project_status(project_id: int) -> None:
@@ -1095,8 +1010,7 @@ def update_project_status(project_id: int) -> None:
     - ``partial`` if 1+ responses but not all pioneers x rounds done
     - ``complete`` if every pioneer has completed all their rounds
     """
-    conn = get_connection()
-    try:
+    with _db() as conn:
         # Get project default_rounds
         project = conn.execute(
             "SELECT default_rounds FROM projects WHERE id = ?", (project_id,)
@@ -1142,14 +1056,11 @@ def update_project_status(project_id: int) -> None:
             (new_status, project_id),
         )
         conn.commit()
-    finally:
-        conn.close()
 
 
 def get_all_project_responses(project_id: int) -> list:
     """Return all responses for a project across all pioneers and rounds."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute(
             """SELECT er.*, pp.pioneer_name, pp.pioneer_email
                FROM expert_responses er
@@ -1159,28 +1070,22 @@ def get_all_project_responses(project_id: int) -> list:
             (project_id,),
         ).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 # ── Expert Responses ─────────────────────────────────────────────────────────
 
 def get_expert_response(project_id: int) -> Optional[sqlite3.Row]:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute(
             "SELECT * FROM expert_responses WHERE project_id = ?", (project_id,)
         ).fetchone()
-    finally:
-        conn.close()
 
 
 
 # ── Legacy Norms ──────────────────────────────────────────────────────────────
 
 def list_norms() -> list:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute(
             """SELECT ln.*, pc.name as category_name
                FROM legacy_norms ln
@@ -1188,23 +1093,17 @@ def list_norms() -> list:
                ORDER BY pc.name"""
         ).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 def get_norm_by_category(category_id: int) -> Optional[sqlite3.Row]:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute(
             "SELECT * FROM legacy_norms WHERE category_id = ?", (category_id,)
         ).fetchone()
-    finally:
-        conn.close()
 
 
 def update_norm(category_id: int, data: dict, updated_by: int) -> bool:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         existing = conn.execute(
             "SELECT id FROM legacy_norms WHERE category_id = ?", (category_id,)
         ).fetchone()
@@ -1234,27 +1133,21 @@ def update_norm(category_id: int, data: dict, updated_by: int) -> bool:
             )
         conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 # ── Activity Log ──────────────────────────────────────────────────────────────
 
 def log_activity(user_id: int, action: str, project_id: Optional[int] = None, details: Optional[str] = None) -> None:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         conn.execute(
             "INSERT INTO activity_log (user_id, action, project_id, details) VALUES (?, ?, ?, ?)",
             (user_id, action, project_id, details),
         )
         conn.commit()
-    finally:
-        conn.close()
 
 
 def list_activity(limit: int = 100, offset: int = 0) -> list:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute(
             """SELECT a.*, u.username
                FROM activity_log a
@@ -1264,24 +1157,18 @@ def list_activity(limit: int = 100, offset: int = 0) -> list:
             (limit, offset),
         ).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 def get_activity_count() -> int:
-    conn = get_connection()
-    try:
+    with _db() as conn:
         return conn.execute("SELECT COUNT(*) FROM activity_log").fetchone()[0]
-    finally:
-        conn.close()
 
 
 # ── Metrics helpers ───────────────────────────────────────────────────────────
 
 def list_complete_projects() -> list:
     """Return projects with status 'partial' or 'complete' (have at least some responses)."""
-    conn = get_connection()
-    try:
+    with _db() as conn:
         rows = conn.execute(
             """SELECT DISTINCT p.*, pc.name as category_name
                FROM projects p
@@ -1290,8 +1177,6 @@ def list_complete_projects() -> list:
                ORDER BY p.created_at ASC"""
         ).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 def update_project_client_pulse(project_id: int, client_pulse: str) -> bool:
