@@ -101,6 +101,7 @@ async def startup_event():
     db.init_db()
     db.migrate()
     db.migrate_v2()
+    db.migrate_v11()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
