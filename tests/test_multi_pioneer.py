@@ -234,6 +234,60 @@ def test_get_all_project_responses():
     finally:
         os.unlink(db_path)
 
+
+def test_averaged_project_metrics():
+    db, db_path = get_test_db()
+    try:
+        from backend.metrics import compute_averaged_project_metrics
+        project_id = _create_test_project(db)
+        pioneers = db.list_pioneers(project_id)
+        alice, bob = pioneers[0], pioneers[1]
+        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={
+            "c6_self_assessment": "Significantly better", "c7_analytical_depth": "Exceptional",
+            "c8_decision_readiness": "Yes without caveats",
+            "l13_legacy_c7_depth": "Adequate", "l14_legacy_c8_decision": "Needs significant additional work",
+        })
+        db.create_expert_response_v11(pioneer_id=bob["id"], project_id=project_id, round_number=1, data={
+            "c6_self_assessment": "Somewhat better", "c7_analytical_depth": "Strong",
+            "c8_decision_readiness": "Yes with minor caveats",
+            "l13_legacy_c7_depth": "Strong", "l14_legacy_c8_decision": "Yes with minor caveats",
+        })
+        project = dict(db.get_project(project_id))
+        responses = db.get_all_project_responses(project_id)
+        avg_metrics = compute_averaged_project_metrics(project, responses)
+        assert avg_metrics["quality_score"] is not None
+        assert avg_metrics["output_quality"] is not None
+    finally:
+        os.unlink(db_path)
+
+
+def test_single_response_matches_v10():
+    db, db_path = get_test_db()
+    try:
+        from backend.metrics import compute_project_metrics, compute_averaged_project_metrics
+        project_id = _create_test_project(db)
+        pioneers = db.list_pioneers(project_id)
+        alice = pioneers[0]
+        data = {
+            "c6_self_assessment": "Significantly better", "c7_analytical_depth": "Exceptional",
+            "c8_decision_readiness": "Yes without caveats",
+            "l13_legacy_c7_depth": "Adequate", "l14_legacy_c8_decision": "Needs significant additional work",
+            "b2_research_sources": "Broad systematic synthesis (10+)",
+            "l6_legacy_b2_sources": "A few targeted sources (2-4)",
+        }
+        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=1, data=data)
+        project = dict(db.get_project(project_id))
+        responses = db.get_all_project_responses(project_id)
+        avg_metrics = compute_averaged_project_metrics(project, responses)
+        merged = dict(project)
+        merged.update(dict(responses[0]))
+        v10_metrics = compute_project_metrics(merged)
+        assert avg_metrics["quality_score"] == v10_metrics["quality_score"]
+        assert avg_metrics["output_quality"] == v10_metrics["output_quality"]
+        assert avg_metrics["machine_first_score"] == v10_metrics["machine_first_score"]
+    finally:
+        os.unlink(db_path)
+
 if __name__ == "__main__":
     test_project_status_constants()
     test_pioneer_defaults()
@@ -265,4 +319,8 @@ if __name__ == "__main__":
     print("  PASS test_project_status_transitions")
     test_get_all_project_responses()
     print("  PASS test_get_all_project_responses")
+    test_averaged_project_metrics()
+    print("  PASS test_averaged_project_metrics")
+    test_single_response_matches_v10()
+    print("  PASS test_single_response_matches_v10")
     print("\nAll multi-pioneer tests passed.")

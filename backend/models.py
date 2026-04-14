@@ -38,6 +38,21 @@ class RegisterRequest(BaseModel):
     role: str = "viewer"
 
 
+# ── Pioneers ─────────────────────────────────────────────────────────────────
+
+class PioneerCreate(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    total_rounds: Optional[int] = None
+
+
+class PioneerUpdate(BaseModel):
+    pioneer_name: Optional[str] = None
+    pioneer_email: Optional[EmailStr] = None
+    total_rounds: Optional[int] = None
+    show_previous: Optional[bool] = None
+
+
 # ── Project Categories ───────────────────────────────────────────────────────
 
 class CategoryCreate(BaseModel):
@@ -56,8 +71,9 @@ class ProjectCreate(BaseModel):
     project_name: str
     category_id: int
     client_name: Optional[str] = None
-    pioneer_name: str
-    pioneer_email: Optional[EmailStr] = None
+    pioneers: List[PioneerCreate] = []
+    default_rounds: int = 1
+    show_previous_answers: bool = False
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = "Not yet received"
@@ -95,6 +111,8 @@ class ProjectUpdate(BaseModel):
     client_name: Optional[str] = None
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
+    default_rounds: Optional[int] = None
+    show_previous_answers: Optional[bool] = None
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = None
@@ -189,6 +207,11 @@ class ExpertContextResponse(BaseModel):
     xcsg_calendar_days: Optional[str] = None
     engagement_stage: Optional[str] = None
     already_completed: bool
+    pioneer_id: int
+    current_round: int
+    total_rounds: int
+    show_previous: bool
+    previous_responses: Optional[list] = None
 
 
 # ── Norms ─────────────────────────────────────────────────────────────────────

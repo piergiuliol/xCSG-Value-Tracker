@@ -423,3 +423,49 @@ def compute_summary(complete_projects: list, total_projects: list) -> dict:
 
 def compute_trend_data(complete_projects: list) -> list:
     return [compute_project_metrics(project) for project in complete_projects]
+
+
+
+def compute_averaged_project_metrics(project: dict, responses: list[dict]) -> dict:
+    """Compute project metrics averaged across all pioneer responses.
+
+    - 0 responses: returns metrics from project data alone (no expert fields).
+    - 1 response: merges response into project and computes normally (v1.0 behaviour).
+    - N responses: computes metrics for each merged dict and averages numeric fields.
+    """
+    if not responses:
+        return compute_project_metrics(project)
+
+    if len(responses) == 1:
+        merged = dict(project)
+        merged.update(dict(responses[0]))
+        return compute_project_metrics(merged)
+
+    # Multiple responses — average numeric metric fields across all pioneers.
+    numeric_keys = [
+        "calendar_days", "xcsg_person_days", "legacy_person_days",
+        "effort_ratio", "delivery_speed", "quality_score", "quality_ratio",
+        "output_quality", "legacy_quality", "legacy_quality_score",
+        "xcsg_smoothness", "legacy_smoothness", "rework_efficiency",
+        "productivity_ratio", "xcsg_advantage", "value_multiplier",
+        "outcome_rate_ratio", "xcsg_quality_per_day", "legacy_quality_per_day",
+        "machine_first_score", "senior_led_score", "proprietary_knowledge_score",
+        "overall_xcsg_score", "client_impact", "data_independence",
+        "ai_survival_rate", "reuse_intent_score", "client_pulse_score",
+        "revenue_productivity_xcsg", "revenue_productivity_legacy",
+    ]
+
+    per_response_metrics = []
+    for response in responses:
+        merged = dict(project)
+        merged.update(dict(response))
+        per_response_metrics.append(compute_project_metrics(merged))
+
+    # Start with the first result as a base (preserves non-numeric fields).
+    result = dict(per_response_metrics[0])
+
+    for key in numeric_keys:
+        values = [m.get(key) for m in per_response_metrics]
+        result[key] = average(values)
+
+    return result
