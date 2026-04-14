@@ -167,7 +167,7 @@ def test_submit_expert_response_round_1():
         project_id = _create_test_project(db)
         pioneers = db.list_pioneers(project_id)
         alice = pioneers[0]
-        response_id = db.create_expert_response_v11(
+        response_id = db.create_expert_response(
             pioneer_id=alice["id"], project_id=project_id, round_number=1,
             data={"b1_starting_point": "From AI draft", "c1_specialization": "Deep specialist"},
         )
@@ -184,8 +184,8 @@ def test_submit_multiple_rounds():
         project_id = _create_test_project(db)
         pioneers = db.list_pioneers(project_id)
         alice = pioneers[0]
-        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "From AI draft"})
-        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=2, data={"b1_starting_point": "Mixed"})
+        db.create_expert_response(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "From AI draft"})
+        db.create_expert_response(pioneer_id=alice["id"], project_id=project_id, round_number=2, data={"b1_starting_point": "Mixed"})
         responses = db.get_pioneer_responses(alice["id"])
         assert len(responses) == 2
         assert responses[0]["round_number"] == 1
@@ -203,19 +203,19 @@ def test_project_status_transitions():
         p = db.get_project(project_id)
         assert p["status"] == "pending"
 
-        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "From AI draft"})
+        db.create_expert_response(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "From AI draft"})
         db.update_project_status(project_id)
         assert db.get_project(project_id)["status"] == "partial"
 
-        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=2, data={"b1_starting_point": "Mixed"})
+        db.create_expert_response(pioneer_id=alice["id"], project_id=project_id, round_number=2, data={"b1_starting_point": "Mixed"})
         db.update_project_status(project_id)
         assert db.get_project(project_id)["status"] == "partial"  # Bob hasn't responded
 
-        db.create_expert_response_v11(pioneer_id=bob["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "Mixed"})
+        db.create_expert_response(pioneer_id=bob["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "Mixed"})
         db.update_project_status(project_id)
         assert db.get_project(project_id)["status"] == "partial"  # Bob needs round 2
 
-        db.create_expert_response_v11(pioneer_id=bob["id"], project_id=project_id, round_number=2, data={"b1_starting_point": "From blank page"})
+        db.create_expert_response(pioneer_id=bob["id"], project_id=project_id, round_number=2, data={"b1_starting_point": "From blank page"})
         db.update_project_status(project_id)
         assert db.get_project(project_id)["status"] == "complete"
     finally:
@@ -227,8 +227,8 @@ def test_get_all_project_responses():
         project_id = _create_test_project(db)
         pioneers = db.list_pioneers(project_id)
         alice, bob = pioneers[0], pioneers[1]
-        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "From AI draft"})
-        db.create_expert_response_v11(pioneer_id=bob["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "Mixed"})
+        db.create_expert_response(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "From AI draft"})
+        db.create_expert_response(pioneer_id=bob["id"], project_id=project_id, round_number=1, data={"b1_starting_point": "Mixed"})
         responses = db.get_all_project_responses(project_id)
         assert len(responses) == 2
     finally:
@@ -242,12 +242,12 @@ def test_averaged_project_metrics():
         project_id = _create_test_project(db)
         pioneers = db.list_pioneers(project_id)
         alice, bob = pioneers[0], pioneers[1]
-        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={
+        db.create_expert_response(pioneer_id=alice["id"], project_id=project_id, round_number=1, data={
             "c6_self_assessment": "Significantly better", "c7_analytical_depth": "Exceptional",
             "c8_decision_readiness": "Yes without caveats",
             "l13_legacy_c7_depth": "Adequate", "l14_legacy_c8_decision": "Needs significant additional work",
         })
-        db.create_expert_response_v11(pioneer_id=bob["id"], project_id=project_id, round_number=1, data={
+        db.create_expert_response(pioneer_id=bob["id"], project_id=project_id, round_number=1, data={
             "c6_self_assessment": "Somewhat better", "c7_analytical_depth": "Strong",
             "c8_decision_readiness": "Yes with minor caveats",
             "l13_legacy_c7_depth": "Strong", "l14_legacy_c8_decision": "Yes with minor caveats",
@@ -275,7 +275,7 @@ def test_single_response_matches_v10():
             "b2_research_sources": "Broad systematic synthesis (10+)",
             "l6_legacy_b2_sources": "A few targeted sources (2-4)",
         }
-        db.create_expert_response_v11(pioneer_id=alice["id"], project_id=project_id, round_number=1, data=data)
+        db.create_expert_response(pioneer_id=alice["id"], project_id=project_id, round_number=1, data=data)
         project = dict(db.get_project(project_id))
         responses = db.get_all_project_responses(project_id)
         avg_metrics = compute_averaged_project_metrics(project, responses)

@@ -1015,7 +1015,7 @@ def get_pioneer_responses(pioneer_id: int) -> list:
 
 # ── Expert Responses (v1.1 round-based) ─────────────────────────────────────
 
-def create_expert_response_v11(pioneer_id: int, project_id: int, round_number: int, data: dict) -> int:
+def create_expert_response(pioneer_id: int, project_id: int, round_number: int, data: dict) -> int:
     """Insert an expert response with pioneer_id and round_number."""
     conn = get_connection()
     try:
@@ -1162,69 +1162,6 @@ def get_expert_response(project_id: int) -> Optional[sqlite3.Row]:
     finally:
         conn.close()
 
-
-def create_expert_response(project_id: int, data: dict) -> int:
-    conn = get_connection()
-    try:
-        cur = conn.execute(
-            """INSERT INTO expert_responses
-               (project_id,
-                b1_starting_point, b2_research_sources, b3_assembly_ratio, b4_hypothesis_first, b5_ai_survival, b6_data_analysis_split,
-                c1_specialization, c2_directness, c3_judgment_pct, c6_self_assessment, c7_analytical_depth, c8_decision_readiness,
-                d1_proprietary_data, d2_knowledge_reuse, d3_moat_test, e1_client_decision,
-                f1_feasibility, f2_productization, g1_reuse_intent,
-                l1_legacy_working_days, l2_legacy_team_size, l3_legacy_revision_depth, l4_legacy_scope_expansion,
-                l5_legacy_client_reaction, l6_legacy_b2_sources, l7_legacy_c1_specialization, l8_legacy_c2_directness,
-                l9_legacy_c3_judgment, l10_legacy_d1_proprietary, l11_legacy_d2_reuse, l12_legacy_d3_moat,
-                l13_legacy_c7_depth, l14_legacy_c8_decision, l15_legacy_e1_decision, l16_legacy_b6_data)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                project_id,
-                data.get("b1_starting_point"),
-                data.get("b2_research_sources"),
-                data.get("b3_assembly_ratio"),
-                data.get("b4_hypothesis_first"),
-                data.get("b5_ai_survival"),
-                data.get("b6_data_analysis_split"),
-                data.get("c1_specialization"),
-                data.get("c2_directness"),
-                data.get("c3_judgment_pct"),
-                data.get("c6_self_assessment"),
-                data.get("c7_analytical_depth"),
-                data.get("c8_decision_readiness"),
-                data.get("d1_proprietary_data"),
-                data.get("d2_knowledge_reuse"),
-                data.get("d3_moat_test"),
-                data.get("e1_client_decision"),
-                data.get("f1_feasibility"),
-                data.get("f2_productization"),
-                data.get("g1_reuse_intent"),
-                data.get("l1_legacy_working_days"),
-                data.get("l2_legacy_team_size"),
-                data.get("l3_legacy_revision_depth"),
-                data.get("l4_legacy_scope_expansion"),
-                data.get("l5_legacy_client_reaction"),
-                data.get("l6_legacy_b2_sources"),
-                data.get("l7_legacy_c1_specialization"),
-                data.get("l8_legacy_c2_directness"),
-                data.get("l9_legacy_c3_judgment"),
-                data.get("l10_legacy_d1_proprietary"),
-                data.get("l11_legacy_d2_reuse"),
-                data.get("l12_legacy_d3_moat"),
-                data.get("l13_legacy_c7_depth"),
-                data.get("l14_legacy_c8_decision"),
-                data.get("l15_legacy_e1_decision"),
-                data.get("l16_legacy_b6_data"),
-            ),
-        )
-        conn.execute(
-            "UPDATE projects SET status = 'complete', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (project_id,),
-        )
-        conn.commit()
-        return cur.lastrowid
-    finally:
-        conn.close()
 
 
 # ── Legacy Norms ──────────────────────────────────────────────────────────────

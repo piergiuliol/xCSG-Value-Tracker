@@ -525,19 +525,9 @@ async def get_expert_options():
 
 @app.get("/api/expert/{token}", response_model=ExpertContextResponse)
 async def get_expert_context(token: str):
-    # Try pioneer token first, then fall back to legacy project token
     pioneer = db.get_pioneer_by_token(token)
     if not pioneer:
-        # Fall back to legacy project-level token
-        row = db.get_project_by_token(token)
-        if not row:
-            raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-        # Legacy single-pioneer path: find the first pioneer for this project
-        pioneers = db.list_pioneers(row["id"])
-        if pioneers:
-            pioneer = db.get_pioneer_by_token(pioneers[0]["expert_token"])
-        if not pioneer:
-            raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
+        raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
 
     pioneer_id = pioneer["id"]
     project_id = pioneer["project_id"]
@@ -575,15 +565,10 @@ async def get_expert_context(token: str):
 @app.get("/api/expert/{token}/metrics", response_model=ExpertAssessmentMetrics)
 async def get_expert_metrics(token: str):
     """Return computed flywheel leg scores for a submitted expert assessment."""
-    # Try pioneer token first, fall back to legacy project token
     pioneer = db.get_pioneer_by_token(token)
-    if pioneer:
-        project_id = pioneer["project_id"]
-    else:
-        row = db.get_project_by_token(token)
-        if not row:
-            raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-        project_id = row["id"]
+    if not pioneer:
+        raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
+    project_id = pioneer["project_id"]
 
     project_row = db.get_project(project_id)
     if not project_row:
@@ -607,18 +592,9 @@ async def get_expert_metrics(token: str):
 
 @app.post("/api/expert/{token}", status_code=201)
 async def submit_expert_response(token: str, body: ExpertResponseCreate):
-    # Try pioneer token first, fall back to legacy project token
     pioneer = db.get_pioneer_by_token(token)
     if not pioneer:
-        row = db.get_project_by_token(token)
-        if not row:
-            raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-        # Legacy single-pioneer path
-        pioneers = db.list_pioneers(row["id"])
-        if pioneers:
-            pioneer = db.get_pioneer_by_token(pioneers[0]["expert_token"])
-        if not pioneer:
-            raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
+        raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
 
     pioneer_id = pioneer["id"]
     project_id = pioneer["project_id"]
@@ -630,7 +606,7 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
         return {"already_completed": True, "message": "All assessment rounds have been completed"}
 
     data = body.model_dump()
-    db.create_expert_response_v11(pioneer_id, project_id, current_round, data)
+    db.create_expert_response(pioneer_id, project_id, current_round, data)
     db.update_project_status(project_id)
 
     db.log_activity(
@@ -666,20 +642,8 @@ async def list_norm_aggregates(current_user: dict = Depends(auth.get_current_use
 
 @app.get("/api/dashboard/metrics")
 async def dashboard_metrics(current_user: dict = Depends(auth.get_current_user)):
-    projects_with_responses = db.list_complete_projects()
+    complete = _build_averaged_complete_projects()
     all_projects = db.list_projects()
-    complete = []
-    for p in projects_with_responses:
-        responses = db.get_all_project_responses(p["id"])
-        if responses:
-            avg = mtx.compute_averaged_project_metrics(p, responses)
-            avg["id"] = p["id"]
-            avg["project_name"] = p["project_name"]
-            avg["category_name"] = p["category_name"]
-            avg["pioneer_name"] = p.get("pioneer_name", "")
-            avg["date_started"] = p.get("date_started")
-            avg["date_delivered"] = p.get("date_delivered")
-            complete.append(avg)
     return mtx.compute_dashboard_metrics(complete, all_projects)
 
 

@@ -39,7 +39,7 @@ def average(values: list[Optional[float]]) -> Optional[float]:
 
 
 
-def first_present(data: dict, *keys: str) -> object:
+def coalesce(data: dict, *keys: str) -> object:
     for key in keys:
         if key and data.get(key) is not None:
             return data.get(key)
@@ -117,13 +117,8 @@ def compute_machine_first_score(data: dict) -> Optional[float]:
 
 
 
-def compute_senior_led_score(data: dict) -> Optional[float]:
-    """Senior-Led Gain: per-field ratios averaged. When legacy=0 but xcsg>0, that's max gain."""
-    pairs = [
-        ("c1_specialization", "l7_legacy_c1_specialization", OPTION_SCORES["c1_specialization"]),
-        ("c2_directness", "l8_legacy_c2_directness", OPTION_SCORES["c2_directness"]),
-        ("c3_judgment_pct", "l9_legacy_c3_judgment", OPTION_SCORES["c3_judgment_pct"]),
-    ]
+def _compute_paired_ratio_score(data: dict, pairs: list[tuple[str, str, dict]]) -> Optional[float]:
+    """Compute average ratio across paired xCSG/legacy fields. Caps at 10x when legacy=0."""
     ratios = []
     for xcsg_field, legacy_field, mapping in pairs:
         xcsg_val = score_value(data.get(xcsg_field), mapping)
@@ -134,36 +129,36 @@ def compute_senior_led_score(data: dict) -> Optional[float]:
             else:
                 ratios.append(round2(xcsg_val / legacy_val))
     return average(ratios)
+
+
+
+def compute_senior_led_score(data: dict) -> Optional[float]:
+    """Senior-Led Gain: per-field ratios averaged."""
+    return _compute_paired_ratio_score(data, [
+        ("c1_specialization", "l7_legacy_c1_specialization", OPTION_SCORES["c1_specialization"]),
+        ("c2_directness", "l8_legacy_c2_directness", OPTION_SCORES["c2_directness"]),
+        ("c3_judgment_pct", "l9_legacy_c3_judgment", OPTION_SCORES["c3_judgment_pct"]),
+    ])
 
 
 
 def compute_proprietary_knowledge_score(data: dict) -> Optional[float]:
-    """Knowledge Gain: per-field ratios averaged. When legacy=0 but xcsg>0, that's max gain."""
-    pairs = [
+    """Knowledge Gain: per-field ratios averaged."""
+    return _compute_paired_ratio_score(data, [
         ("d1_proprietary_data", "l10_legacy_d1_proprietary", OPTION_SCORES["d1_proprietary_data"]),
         ("d2_knowledge_reuse", "l11_legacy_d2_reuse", OPTION_SCORES["d2_knowledge_reuse"]),
         ("d3_moat_test", "l12_legacy_d3_moat", OPTION_SCORES["d3_moat_test"]),
-    ]
-    ratios = []
-    for xcsg_field, legacy_field, mapping in pairs:
-        xcsg_val = score_value(data.get(xcsg_field), mapping)
-        legacy_val = score_value(data.get(legacy_field), mapping)
-        if xcsg_val is not None and legacy_val is not None:
-            if legacy_val == 0:
-                ratios.append(10.0 if xcsg_val > 0 else 1.0)
-            else:
-                ratios.append(round2(xcsg_val / legacy_val))
-    return average(ratios)
+    ])
 
 
 
 def compute_ai_survival_rate(data: dict) -> Optional[float]:
-    return score_value(first_present(data, "b5_ai_survival_rate_xcsg", "b5_ai_survival", "b5_ai_survival_rate"), OPTION_SCORES["b5_ai_survival"])
+    return score_value(coalesce(data, "b5_ai_survival_rate_xcsg", "b5_ai_survival", "b5_ai_survival_rate"), OPTION_SCORES["b5_ai_survival"])
 
 
 
 def compute_reuse_intent_score(data: dict) -> Optional[float]:
-    return score_value(first_present(data, "g1_reuse_intent_xcsg", "g1_reuse_intent"), OPTION_SCORES["g1_reuse_intent"])
+    return score_value(coalesce(data, "g1_reuse_intent_xcsg", "g1_reuse_intent"), OPTION_SCORES["g1_reuse_intent"])
 
 
 
@@ -191,8 +186,8 @@ def compute_legacy_quality(data: dict) -> Optional[float]:
 
 def compute_xcsg_smoothness(data: dict) -> Optional[float]:
     return average([
-        score_value(first_present(data, "revision_depth", "xcsg_revision_depth", "c4_revision_depth", "xcsg_revision_rounds"), REVISION_DEPTH_SCORES),
-        score_value(first_present(data, "xcsg_scope_expansion", "scope_expansion"), SCOPE_EXPANSION_SCORES),
+        score_value(coalesce(data, "revision_depth", "xcsg_revision_depth", "c4_revision_depth", "xcsg_revision_rounds"), REVISION_DEPTH_SCORES),
+        score_value(coalesce(data, "xcsg_scope_expansion", "scope_expansion"), SCOPE_EXPANSION_SCORES),
         score_value(data.get("client_pulse"), CLIENT_PULSE_SCORES),
     ])
 
@@ -200,17 +195,17 @@ def compute_xcsg_smoothness(data: dict) -> Optional[float]:
 
 def compute_legacy_smoothness(data: dict) -> Optional[float]:
     return average([
-        score_value(first_present(data, "l3_legacy_revision_depth", "legacy_revision_depth", "legacy_revision_rounds"), REVISION_DEPTH_SCORES),
-        score_value(first_present(data, "l4_legacy_scope_expansion", "legacy_scope_expansion"), SCOPE_EXPANSION_SCORES),
-        score_value(first_present(data, "l5_legacy_client_reaction", "legacy_client_reaction"), CLIENT_PULSE_SCORES),
+        score_value(coalesce(data, "l3_legacy_revision_depth", "legacy_revision_depth", "legacy_revision_rounds"), REVISION_DEPTH_SCORES),
+        score_value(coalesce(data, "l4_legacy_scope_expansion", "legacy_scope_expansion"), SCOPE_EXPANSION_SCORES),
+        score_value(coalesce(data, "l5_legacy_client_reaction", "legacy_client_reaction"), CLIENT_PULSE_SCORES),
     ])
 
 
 
 def compute_project_metrics(data: dict) -> dict:
     calendar_days = compute_calendar_days(data.get("date_started"), data.get("date_delivered"))
-    xcsg_person_days = compute_person_days(first_present(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
-    legacy_person_days = compute_person_days(first_present(data, "l1_legacy_working_days", "legacy_working_days"), first_present(data, "l2_legacy_team_size", "legacy_team_size"))
+    xcsg_person_days = compute_person_days(coalesce(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
+    legacy_person_days = compute_person_days(coalesce(data, "l1_legacy_working_days", "legacy_working_days"), coalesce(data, "l2_legacy_team_size", "legacy_team_size"))
 
     delivery_speed = compute_ratio(legacy_person_days, xcsg_person_days)
     engagement_revenue = parse_number(data.get("engagement_revenue"))
@@ -321,15 +316,15 @@ def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
     deliverable_types = {project.get("deliverable_type") or project.get("category_name") for project in complete_projects if project.get("deliverable_type") or project.get("category_name")}
     avg_effort = average([m["effort_ratio"] for m in metrics_list])
     reuse_rate = round2((sum(1 for m in metrics_list if m["reuse_intent_score"] == 1.0) / len(metrics_list)) * 100) if metrics_list else None
-    d2_reuse_rate = round2((sum(1 for project in complete_projects if first_present(project, "d2_knowledge_reuse_xcsg", "d2_knowledge_reuse") == "Yes directly reused and extended") / len(complete_projects)) * 100) if complete_projects else None
+    d2_reuse_rate = round2((sum(1 for project in complete_projects if coalesce(project, "d2_knowledge_reuse_xcsg", "d2_knowledge_reuse") == "Yes directly reused and extended") / len(complete_projects)) * 100) if complete_projects else None
     client_invisible_quality = any(
-        first_present(project, "xcsg_revision_depth", "c4_revision_depth", "revision_depth", "xcsg_revision_rounds") in {"No revisions needed", "Cosmetic only", "0", "1", 0, 1}
+        coalesce(project, "xcsg_revision_depth", "c4_revision_depth", "revision_depth", "xcsg_revision_rounds") in {"No revisions needed", "Cosmetic only", "0", "1", 0, 1}
         and project.get("client_pulse") != "Below expectations"
         for project in complete_projects
     )
     # Transferability: F2 productization rate + cross-category pioneer count
-    f2_yes_count = sum(1 for project in complete_projects if first_present(project, "f2_productization") in {"Yes largely as-is", "Yes with moderate customization"})
-    f2_total = sum(1 for project in complete_projects if first_present(project, "f2_productization") is not None)
+    f2_yes_count = sum(1 for project in complete_projects if coalesce(project, "f2_productization") in {"Yes largely as-is", "Yes with moderate customization"})
+    f2_total = sum(1 for project in complete_projects if coalesce(project, "f2_productization") is not None)
     f2_rate = round2((f2_yes_count / f2_total) * 100) if f2_total else None
     f2_pass = f2_rate is not None and f2_rate >= 50
 

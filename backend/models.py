@@ -67,6 +67,19 @@ class CategoryUpdate(BaseModel):
 
 # ── Projects ─────────────────────────────────────────────────────────────────
 
+def _validate_project_dates(date_started, date_delivered):
+    """Shared date validation for ProjectCreate and ProjectUpdate."""
+    if date_started and date_delivered:
+        try:
+            start = date.fromisoformat(date_started)
+            end = date.fromisoformat(date_delivered)
+            if end < start:
+                raise ValueError("date_delivered must be on or after date_started")
+        except ValueError as e:
+            if "date_delivered" in str(e):
+                raise
+
+
 class ProjectCreate(BaseModel):
     project_name: str
     category_id: int
@@ -93,15 +106,7 @@ class ProjectCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectCreate":
-        if self.date_started and self.date_delivered:
-            try:
-                start = date.fromisoformat(self.date_started)
-                end = date.fromisoformat(self.date_delivered)
-                if end < start:
-                    raise ValueError("date_delivered must be on or after date_started")
-            except ValueError as e:
-                if "date_delivered" in str(e):
-                    raise
+        _validate_project_dates(self.date_started, self.date_delivered)
         return self
 
 
@@ -132,15 +137,7 @@ class ProjectUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectUpdate":
-        if self.date_started and self.date_delivered:
-            try:
-                start = date.fromisoformat(self.date_started)
-                end = date.fromisoformat(self.date_delivered)
-                if end < start:
-                    raise ValueError("date_delivered must be on or after date_started")
-            except ValueError as e:
-                if "date_delivered" in str(e):
-                    raise
+        _validate_project_dates(self.date_started, self.date_delivered)
         return self
 
 
