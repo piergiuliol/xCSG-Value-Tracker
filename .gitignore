@@ -27,5 +27,10 @@ test-results/
 .env
 *.log
 
-# Claude Code
+# AI assistant configs
 CLAUDE.md
+.github/copilot-instructions.md
+AGENTS.md
+GEMINI.md
+.cursorrules
+.windsurfrules
