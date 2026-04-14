@@ -833,9 +833,12 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
 
     for p in all_p:
         er = er_by_id.get(p["id"], {})
+        # Get pioneer names for this project
+        project_pioneers = db.list_pioneers(p["id"])
+        pioneer_names_str = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers) if project_pioneers else p.get("pioneer_name", "")
         ws1.append([
             p["id"], p["project_name"], p.get("category_name", ""),
-            p.get("pioneer_name", ""), p.get("client_name", ""),
+            pioneer_names_str, p.get("client_name", ""),
             p.get("date_started", ""), p.get("date_delivered", ""),
             p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
             p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
@@ -877,10 +880,13 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         responses = db.get_all_project_responses(p["id"])
         if responses:
             m = mtx.compute_averaged_project_metrics(p, responses)
+            # Get pioneer names for this project
+            comp_pioneers = db.list_pioneers(p["id"])
+            comp_pioneer_names = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in comp_pioneers) if comp_pioneers else p.get("pioneer_name", "")
             ws2.append([
                 m.get("id", p["id"]), m.get("project_name", p["project_name"]),
                 m.get("category_name", p.get("category_name", "")),
-                m.get("pioneer_name", p.get("pioneer_name", "")),
+                comp_pioneer_names,
                 m.get("client_name", p.get("client_name", "")),
                 m.get("xcsg_person_days"), m.get("legacy_person_days"), m.get("effort_ratio"),
                 m.get("xcsg_revisions", p.get("xcsg_revision_rounds", "")),

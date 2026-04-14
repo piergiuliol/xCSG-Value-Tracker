@@ -242,9 +242,14 @@ async function route() {
   const navEl = document.querySelector(`.nav-item[data-route="${routeName}"]`);
   if (navEl) navEl.classList.add('active');
 
+  // Show/hide monitoring nav for admin/analyst
+  const navMonitoring = document.getElementById('navMonitoring');
+  if (navMonitoring) navMonitoring.style.display = (isAdmin() || (state.user && state.user.role === 'analyst')) ? '' : 'none';
+
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
-    projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log'
+    projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log',
+    monitoring: 'Monitoring'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
 
@@ -255,6 +260,7 @@ async function route() {
   else if (hash === '#new') { if (canWrite()) renderNewProject(); else { document.getElementById('mainContent').innerHTML = '<div class="error-state">You do not have permission to create projects.</div>'; } }
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
+  else if (hash === '#monitoring') renderMonitoring();
   else if (hash === '#settings') renderSettings();
   else if (hash === '#norms') renderNormsPage();
   else if (hash === '#activity') renderActivity();
@@ -485,13 +491,17 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     </div>
     <div class="table-wrapper">
     <table class="data-table portfolio-table">
-      <thead><tr><th>Project</th><th>Category</th><th>Pioneer</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain</th><th class="r">Actions</th></tr></thead><tbody>`;
+      <thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain</th><th class="r">Actions</th></tr></thead><tbody>`;
   for (const row of filtered) {
     const m = row.metrics || {};
+    const rowPioneers = row.pioneers || [];
+    const rowPioneerNames = rowPioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
+    const pioneerDisplay = rowPioneerNames.length > 0 ? rowPioneerNames.length + ' pioneer' + (rowPioneerNames.length !== 1 ? 's' : '') : esc(row.pioneer_name || '\u2014');
+    const pioneerTooltip = rowPioneerNames.join(', ') || row.pioneer_name || '';
     html += `<tr>
       <td><strong>${esc(row.project_name)}</strong></td>
       <td>${esc(row.category_name)}</td>
-      <td>${esc(row.pioneer_name)}</td>
+      <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
       <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${fmtRatio(m.delivery_speed)}</td>
       <td class="r" style="color:${metricTone(m.output_quality)};font-weight:700">${fmtRatio(m.output_quality)}</td>
       <td class="r" style="color:${metricTone(m.productivity_ratio)};font-weight:800">${fmtRatio(m.productivity_ratio)}</td>
@@ -643,10 +653,6 @@ async function renderNewProject(existing) {
           <div class="form-group"><label>Category *</label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Pioneer Name *</label><input type="text" id="fPioneer" value="${esc(p.pioneer_name || '')}" required></div>
-          <div class="form-group"><label>Pioneer Email</label><input type="email" id="fEmail" value="${esc(p.pioneer_email || '')}"></div>
-        </div>
-        <div class="form-row">
           <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(p.client_name || '')}"></div>
           <div class="form-group"><label>Client Contact Email</label><input type="email" id="fClientEmail" value="${esc(p.client_contact_email || '')}"></div>
         </div>
@@ -655,6 +661,24 @@ async function renderNewProject(existing) {
           <div class="form-group"><label>Client Pulse</label><select id="fPulse">${optionsHTML(CLIENT_PULSE_OPTIONS, p.client_pulse || 'Not yet received')}</select></div>
         </div>
         <div class="form-group"><label>Description</label><textarea id="fDesc" rows="3">${esc(p.description || '')}</textarea></div>
+      </fieldset>
+
+      <fieldset><legend>Pioneers</legend>
+        <div id="pioneersContainer"></div>
+        <button type="button" class="btn btn-secondary btn-sm" id="addPioneerBtn" style="margin-top:8px">+ Add Pioneer</button>
+        <div class="form-row" style="margin-top:16px">
+          <div class="form-group">
+            <label>Default Rounds</label>
+            <input type="number" id="fDefaultRounds" min="1" max="10" value="${p.default_rounds || 1}" style="width:80px">
+          </div>
+          <div class="form-group">
+            <label>Show Previous Answers</label>
+            <select id="fShowPrevious">
+              <option value="0" ${!p.show_previous_answers ? 'selected' : ''}>No</option>
+              <option value="1" ${p.show_previous_answers ? 'selected' : ''}>Yes</option>
+            </select>
+          </div>
+        </div>
       </fieldset>
 
       <fieldset><legend>Timeline <span id="calendarDaysBadge" class="badge badge-info" style="font-size:11px"></span></legend>
@@ -711,10 +735,52 @@ async function renderNewProject(existing) {
       <div style="display:flex;gap:12px;margin-top:24px;align-items:center">
         ${canWrite() ? `<button type="submit" class="btn btn-primary" id="fSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>` : ''}
         ${isEdit ? '<button type="button" class="btn btn-secondary" onclick="window.location.hash=\'#projects\'">Back to Projects</button>' : ''}
-        ${isEdit && p.expert_token ? `<button type="button" class="btn btn-secondary" onclick="showExpertLink('${esc(p.expert_token)}')">Expert Link</button>` : ''}
         ${isEdit && isAdmin() ? `<button type="button" class="btn btn-danger" onclick="confirmDelete(${p.id}, '${esc(p.project_name)}')">Delete</button>` : ''}
       </div>
     </form>`;
+
+  // Pioneer row management
+  let pioneerIndex = 0;
+  function addPioneerRow(name, email, rounds) {
+    const container = document.getElementById('pioneersContainer');
+    const idx = pioneerIndex++;
+    const row = document.createElement('div');
+    row.className = 'pioneer-row';
+    row.dataset.idx = idx;
+    row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
+      + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
+      + `<div class="form-group" style="flex:0 0 100px"><label>Rounds</label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:80px"></div>`
+      + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
+    container.appendChild(row);
+    row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
+      if (container.querySelectorAll('.pioneer-row').length <= 1) {
+        showToast('At least one pioneer is required', 'error');
+        return;
+      }
+      row.remove();
+    });
+  }
+
+  // Populate pioneers: edit mode uses p.pioneers, new mode starts with one empty row
+  if (isEdit && p.pioneers && p.pioneers.length) {
+    for (const pi of p.pioneers) {
+      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds);
+    }
+  } else if (!isEdit) {
+    addPioneerRow('', '', '');
+  } else {
+    // Edit mode fallback: use legacy pioneer_name if no pioneers array
+    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '');
+  }
+
+  document.getElementById('addPioneerBtn').addEventListener('click', function() {
+    addPioneerRow('', '', '');
+  });
+
+  // Pioneer table for edit mode
+  if (isEdit && p.pioneers && p.pioneers.length) {
+    _renderPioneerTable(p, mc);
+  }
 
   // Calendar days auto-compute
   function updateCalendarDays() {
@@ -758,11 +824,31 @@ async function renderNewProject(existing) {
     e.preventDefault();
     const btn = document.getElementById('fSubmit');
     btn.disabled = true; btn.textContent = isEdit ? 'Saving\u2026' : 'Creating\u2026';
+    // Collect pioneers from rows
+    const pioneerRows = document.querySelectorAll('#pioneersContainer .pioneer-row');
+    const pioneers = [];
+    for (const row of pioneerRows) {
+      const name = row.querySelector('.pioneer-name').value.trim();
+      const email = row.querySelector('.pioneer-email').value.trim() || null;
+      const roundsVal = row.querySelector('.pioneer-rounds').value;
+      const total_rounds = roundsVal ? parseInt(roundsVal) : null;
+      if (name) pioneers.push({ name, email, total_rounds });
+    }
+    if (pioneers.length === 0) {
+      showToast('At least one pioneer is required', 'error');
+      btn.disabled = false;
+      btn.textContent = isEdit ? 'Save Changes' : 'Create Project';
+      return;
+    }
+
     const payload = {
       project_name: document.getElementById('fName').value,
       category_id: parseInt(document.getElementById('fCategory').value),
-      pioneer_name: document.getElementById('fPioneer').value,
-      pioneer_email: document.getElementById('fEmail').value || null,
+      pioneer_name: pioneers[0].name,
+      pioneer_email: pioneers[0].email,
+      pioneers: pioneers,
+      default_rounds: parseInt(document.getElementById('fDefaultRounds').value) || 1,
+      show_previous_answers: document.getElementById('fShowPrevious').value === '1',
       client_name: document.getElementById('fClient').value || null,
       client_contact_email: document.getElementById('fClientEmail').value || null,
       engagement_stage: document.getElementById('fStage').value || null,
@@ -786,7 +872,7 @@ async function renderNewProject(existing) {
         window.location.hash = '#projects';
       } else {
         const result = await apiCall('POST', '/projects', payload);
-        showExpertLink(result.expert_token);
+        showExpertLinks(result.pioneers || []);
         showToast('Project created');
       }
     } catch (err) {
@@ -807,6 +893,123 @@ function showExpertLink(token) {
       <button class="btn btn-primary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('expertLinkInput').value);showToast('Copied!')">Copy Link</button>
       <button class="btn btn-secondary btn-sm" onclick="hideModal()">Close</button>
     </div>`);
+}
+
+function showExpertLinks(pioneers) {
+  if (!pioneers || pioneers.length === 0) {
+    hideModal();
+    window.location.hash = '#projects';
+    return;
+  }
+  if (pioneers.length === 1 && pioneers[0].expert_token) {
+    showExpertLink(pioneers[0].expert_token);
+    return;
+  }
+  let html = '<h3 style="color:var(--navy);margin-bottom:12px">Project Created</h3>';
+  html += '<p style="margin-bottom:16px">Share these expert assessment links with each pioneer:</p>';
+  html += '<div style="max-height:400px;overflow-y:auto">';
+  for (const pi of pioneers) {
+    const link = window.location.origin + '/#expert/' + (pi.expert_token || '');
+    html += '<div style="padding:10px 0;border-bottom:1px solid var(--gray-200)">';
+    html += '<div style="font-weight:600;margin-bottom:4px">' + esc(pi.name || pi.pioneer_name || 'Pioneer') + (pi.email ? ' <span style="color:var(--gray-500);font-weight:400">' + esc(pi.email) + '</span>' : '') + '</div>';
+    html += '<div style="display:flex;gap:8px;align-items:center">';
+    html += '<input type="text" value="' + esc(link) + '" readonly style="flex:1;padding:6px 8px;border:1px solid var(--gray-200);border-radius:4px;font-family:monospace;font-size:12px">';
+    html += '<button class="btn btn-primary btn-sm" onclick="copyToClipboard(\'' + esc(link) + '\')">Copy</button>';
+    html += '</div></div>';
+  }
+  html += '</div>';
+  html += '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">';
+  html += '<button class="btn btn-secondary btn-sm" onclick="hideModal();window.location.hash=\'#projects\'">Done</button>';
+  html += '</div>';
+  showModal(html);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PIONEER TABLE (Project Detail)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function _renderPioneerTable(p, mc) {
+  const pioneers = p.pioneers || [];
+  if (!pioneers.length) return;
+
+  const section = document.createElement('fieldset');
+  section.style.marginTop = '24px';
+  section.innerHTML = '<legend>Pioneers &amp; Assessment Links</legend>';
+
+  let html = '<table class="data-table"><thead><tr><th>Pioneer</th><th>Email</th><th>Round</th><th>Status</th><th>Last Submitted</th><th>Actions</th></tr></thead><tbody>';
+  for (const pi of pioneers) {
+    const totalRounds = pi.total_rounds || p.default_rounds || 1;
+    const responseCount = pi.response_count || 0;
+    const roundLabel = responseCount + ' of ' + totalRounds;
+    let statusBadge;
+    if (responseCount >= totalRounds) {
+      statusBadge = '<span class="badge badge-green">Complete</span>';
+    } else if (responseCount > 0) {
+      statusBadge = '<span class="badge badge-warning">Partial</span>';
+    } else {
+      statusBadge = '<span class="badge badge-orange">Pending</span>';
+    }
+    const lastSubmitted = pi.last_submitted ? formatDateTime(pi.last_submitted) : '\u2014';
+    const link = window.location.origin + '/#expert/' + (pi.expert_token || '');
+    const copyBtn = pi.expert_token ? '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();copyToClipboard(\'' + esc(link) + '\')">Copy Link</button>' : '';
+    const removeBtn = canWrite() && responseCount === 0 ? ' <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePioneer(' + p.id + ',' + pi.id + ',\'' + esc(pi.name || pi.pioneer_name) + '\')">Remove</button>' : '';
+    html += '<tr><td><strong>' + esc(pi.name || pi.pioneer_name || '') + '</strong></td>'
+      + '<td>' + esc(pi.email || pi.pioneer_email || '\u2014') + '</td>'
+      + '<td>' + roundLabel + '</td>'
+      + '<td>' + statusBadge + '</td>'
+      + '<td>' + lastSubmitted + '</td>'
+      + '<td class="actions-cell">' + copyBtn + removeBtn + '</td></tr>';
+  }
+  html += '</tbody></table>';
+  if (canWrite()) {
+    html += '<button class="btn btn-secondary btn-sm" style="margin-top:12px" onclick="showAddPioneerForm(' + p.id + ')">+ Add Pioneer</button>';
+  }
+  section.innerHTML += html;
+
+  // Insert before the form's submit button area
+  const form = mc.querySelector('#projectForm');
+  if (form) form.appendChild(section);
+}
+
+function removePioneer(projectId, pioneerId, name) {
+  showModal('<h3>Remove Pioneer</h3>'
+    + '<p>Are you sure you want to remove <strong>' + esc(name) + '</strong>? This is only possible if they have no submitted responses.</p>'
+    + '<div class="form-actions">'
+    + '<button class="btn btn-danger" onclick="doRemovePioneer(' + projectId + ',' + pioneerId + ')">Remove</button>'
+    + '<button class="btn btn-secondary" onclick="hideModal()">Cancel</button></div>');
+}
+
+async function doRemovePioneer(projectId, pioneerId) {
+  hideModal();
+  try {
+    await apiCall('DELETE', '/projects/' + projectId + '/pioneers/' + pioneerId);
+    showToast('Pioneer removed');
+    renderEditProject(projectId);
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function showAddPioneerForm(projectId) {
+  showModal('<h3>Add Pioneer</h3>'
+    + '<div class="form-group"><label>Name *</label><input type="text" id="addPioneerName" placeholder="Pioneer name"></div>'
+    + '<div class="form-group" style="margin-top:12px"><label>Email</label><input type="email" id="addPioneerEmail" placeholder="Email (optional)"></div>'
+    + '<div class="form-group" style="margin-top:12px"><label>Total Rounds</label><input type="number" id="addPioneerRounds" min="1" max="10" placeholder="Uses project default"></div>'
+    + '<div class="form-actions" style="margin-top:16px">'
+    + '<button class="btn btn-primary" onclick="submitAddPioneer(' + projectId + ')">Add</button>'
+    + '<button class="btn btn-secondary" onclick="hideModal()">Cancel</button></div>');
+}
+
+async function submitAddPioneer(projectId) {
+  const name = document.getElementById('addPioneerName').value.trim();
+  const email = document.getElementById('addPioneerEmail').value.trim() || null;
+  const roundsVal = document.getElementById('addPioneerRounds').value;
+  const total_rounds = roundsVal ? parseInt(roundsVal) : null;
+  if (!name) { showToast('Pioneer name is required', 'error'); return; }
+  hideModal();
+  try {
+    await apiCall('POST', '/projects/' + projectId + '/pioneers', { name, email, total_rounds });
+    showToast('Pioneer added');
+    renderEditProject(projectId);
+  } catch (err) { showToast(err.message, 'error'); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -849,7 +1052,6 @@ async function renderProjects() {
     }
 
     const cats = [...new Set(rows.map(p => p.category_name).filter(Boolean))].sort();
-    const pioneers = [...new Set(rows.map(p => p.pioneer_name).filter(Boolean))].sort();
 
     const fmtScore = (v) => v == null ? '\u2014' : round2(v);
 
@@ -858,46 +1060,62 @@ async function renderProjects() {
         <select id="statusFilter" class="filter-select">
           <option value="">All Status</option>
           <option value="expert_pending">Expert Pending</option>
+          <option value="partial">Partial</option>
           <option value="complete">Complete</option>
         </select>
         <select id="catFilter" class="filter-select">
           <option value="">All Categories</option>
           ${cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
         </select>
-        <select id="pioneerFilter" class="filter-select">
-          <option value="">All Pioneers</option>
-          ${pioneers.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}
-        </select>
         ${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>' : ''}
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
-        <th>Project</th><th>Category</th><th>Working Days</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
+        <th>Project</th><th>Category</th><th>Pioneers</th><th>Responses</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody>`;
 
     for (const p of rows) {
-      const statusBadge = p.status === 'complete'
-        ? '<span class="badge badge-green">Complete</span>'
-        : '<span class="badge badge-orange">Expert Pending</span>';
+      // Compute pioneer info
+      const pioneers = p.pioneers || [];
+      const pioneerCount = pioneers.length;
+      const pioneerNames = pioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
+      const pioneerLabel = pioneerCount + ' pioneer' + (pioneerCount !== 1 ? 's' : '');
+      const pioneerTooltip = pioneerNames.join(', ');
+
+      // Compute response info
+      const defaultRounds = p.default_rounds || 1;
+      const totalExpected = pioneers.reduce((sum, pi) => sum + (pi.total_rounds || defaultRounds), 0);
+      const totalCompleted = pioneers.reduce((sum, pi) => sum + (pi.response_count || 0), 0);
+      const responsesLabel = totalCompleted + ' of ' + totalExpected;
+
+      // Status badge with partial support
+      let statusBadge, effectiveStatus;
+      if (p.status === 'complete') {
+        statusBadge = '<span class="badge badge-green">Complete</span>';
+        effectiveStatus = 'complete';
+      } else if (totalCompleted > 0) {
+        statusBadge = '<span class="badge badge-warning">Partial</span>';
+        effectiveStatus = 'partial';
+      } else {
+        statusBadge = '<span class="badge badge-orange">Expert Pending</span>';
+        effectiveStatus = 'expert_pending';
+      }
+
       const pulseSelect = `<select class="filter-select client-pulse-inline" data-project-id="${p.id}" onchange="updateClientPulse(${p.id}, this.value)">${optionsHTML(CLIENT_PULSE_OPTIONS, p.client_pulse || 'Not yet received')}</select>`;
       const qualityScore = p.metrics ? fmtScore(p.metrics.quality_score) : '\u2014';
-      const workingDays = p.working_days || '\u2014';
-      const linkSvg = '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
       const trashSvg = '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
-      const expertBtn = p.status !== 'complete' && p.expert_token
-        ? `<button class="btn-icon" title="Copy expert link" onclick="event.stopPropagation();copyToClipboard('${window.location.origin}${window.location.pathname}#expert/${p.expert_token}')">${linkSvg}</button>`
-        : '';
       const _isAdmin = isAdmin();
       const deleteBtn = _isAdmin
         ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${p.id},'${esc(p.project_name)}')">${trashSvg}</button>`
         : '';
-      html += `<tr class="clickable-row" data-status="${p.status}" data-cat="${esc(p.category_name)}" data-pioneer="${esc(p.pioneer_name)}" onclick="window.location.hash='#edit/${p.id}'">
+      html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" onclick="window.location.hash='#edit/${p.id}'">
         <td>${esc(p.project_name)}</td>
         <td>${esc(p.category_name || '\u2014')}</td>
-        <td>${workingDays}</td>
+        <td title="${esc(pioneerTooltip)}">${esc(pioneerLabel)}</td>
+        <td>${responsesLabel}</td>
         <td>${qualityScore}</td>
         <td onclick="event.stopPropagation()">${pulseSelect}</td>
         <td>${statusBadge}</td>
-        <td class="actions-cell">${expertBtn}${deleteBtn}</td>
+        <td class="actions-cell">${deleteBtn}</td>
       </tr>`;
     }
     html += '</tbody></table></div>';
@@ -907,18 +1125,15 @@ async function renderProjects() {
     function applyProjectFilters() {
       const sf = document.getElementById('statusFilter')?.value || '';
       const cf = document.getElementById('catFilter')?.value || '';
-      const pf = document.getElementById('pioneerFilter')?.value || '';
       document.querySelectorAll('#projectTable tbody tr').forEach(tr => {
         const show =
           (!sf || tr.dataset.status === sf) &&
-          (!cf || tr.dataset.cat === cf) &&
-          (!pf || tr.dataset.pioneer === pf);
+          (!cf || tr.dataset.cat === cf);
         tr.style.display = show ? '' : 'none';
       });
     }
     document.getElementById('statusFilter')?.addEventListener('change', applyProjectFilters);
     document.getElementById('catFilter')?.addEventListener('change', applyProjectFilters);
-    document.getElementById('pioneerFilter')?.addEventListener('change', applyProjectFilters);
 
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load: ${esc(err.message)}</div>`;
@@ -1231,6 +1446,10 @@ function renderDashboardCharts(dashboard, allProjects) {
    EXPERT FORM — 27-field Accordion (standalone, no auth)
    ═══════════════════════════════════════════════════════════════════════════ */
 
+function _expertLocalStorageKey(token) {
+  return 'xcsg_expert_' + token;
+}
+
 function _expertSaveToStorage(token, formData) {
   try { localStorage.setItem(_expertLocalStorageKey(token), JSON.stringify(formData)); } catch {}
 }
@@ -1304,6 +1523,36 @@ async function renderExpert(token) {
     html += '<div class="context-item"><span class="label">Team Size</span><span class="value">' + esc(ctx.xcsg_team_size) + '</span></div>';
     html += '<div class="context-item"><span class="label">Calendar Days</span><span class="value">' + esc(ctx.xcsg_calendar_days || '\u2014') + '</span></div>';
     html += '</div></div>';
+
+    // Round info header (only show if multi-round)
+    if (ctx.total_rounds > 1) {
+      const remaining = Math.max(ctx.total_rounds - ctx.current_round, 0);
+      html += '<div class="expert-round-info">'
+        + '<strong>Round ' + ctx.current_round + ' of ' + ctx.total_rounds + '</strong>'
+        + '<span style="color:var(--gray-500);margin-left:8px">(' + remaining + ' remaining after this)</span>'
+        + '</div>';
+    }
+
+    // Previous responses (if enabled and available)
+    if (ctx.show_previous && ctx.previous_responses && ctx.previous_responses.length) {
+      html += '<details class="previous-responses"><summary>View Your Previous Responses (' + ctx.previous_responses.length + ' round' + (ctx.previous_responses.length > 1 ? 's' : '') + ')</summary>';
+      html += '<div class="prev-content">';
+      for (let ri = 0; ri < ctx.previous_responses.length; ri++) {
+        const prev = ctx.previous_responses[ri];
+        html += '<div style="margin-bottom:16px"><strong style="color:var(--navy)">Round ' + (ri + 1) + '</strong></div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:12px">';
+        const fieldDefs = schema ? schema.fields : {};
+        for (const [key, val] of Object.entries(prev)) {
+          if (key === 'id' || key === 'pioneer_id' || key === 'project_id' || key === 'round_number' || key === 'created_at' || val == null || val === '') continue;
+          const fd = fieldDefs[key];
+          const label = fd ? fd.label : key;
+          html += '<div><span style="font-size:12px;color:var(--gray-500)">' + esc(label) + '</span><br><span style="font-size:13px">' + esc(String(val)) + '</span></div>';
+        }
+        html += '</div>';
+        if (ri < ctx.previous_responses.length - 1) html += '<hr style="border:none;border-top:1px solid var(--gray-200);margin:8px 0">';
+      }
+      html += '</div></details>';
+    }
 
     // Sticky progress bar
     html += '<div class="accordion-progress-bar"><div class="accordion-progress-inner">';
@@ -1421,6 +1670,15 @@ async function renderExpert(token) {
         _expertClearStorage(token);
         if (result.already_completed) {
           ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>';
+        } else if (result.rounds_remaining && result.rounds_remaining > 0) {
+          // More rounds remaining
+          ec.innerHTML = '<div class="expert-thankyou">'
+            + '<div class="thankyou-icon">&#10003;</div>'
+            + '<h2>Round ' + result.current_round + ' of ' + result.total_rounds + ' Complete</h2>'
+            + '<p>Your responses for this round have been recorded.</p>'
+            + '<p style="margin-top:12px;color:var(--gray-600)">' + result.rounds_remaining + ' round' + (result.rounds_remaining > 1 ? 's' : '') + ' remaining. Use this same link for your next round.</p>'
+            + '<button class="btn btn-primary" style="margin-top:20px" onclick="renderExpert(\'' + esc(token) + '\')">Start Next Round</button>'
+            + '</div>';
         } else {
           const m = result.metrics || {};
           const fmtX = v => v != null ? (Math.round(v * 100) / 100) + '\xd7' : '\u2014';
@@ -1533,6 +1791,61 @@ function _expertToggleAccordion(sectionKey) {
     const hdr = document.querySelector('.accordion-header[data-section="' + sectionKey + '"]');
     if (sec) sec.classList.add('open');
     if (hdr) hdr.classList.add('open');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MONITORING PAGE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function renderMonitoring() {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Loading monitoring data\u2026</div>';
+  try {
+    const data = await apiCall('GET', '/monitoring');
+    const projects = data.projects || [];
+
+    // KPI cards
+    let html = '<div class="metrics-grid" style="margin-bottom:24px">';
+    html += '<div class="metric-tile"><div class="metric-tile-icon">\ud83d\udccb</div><div class="metric-tile-value" style="color:var(--navy)">' + data.total_projects + '</div><div class="metric-tile-label">Total Projects</div></div>';
+    html += '<div class="metric-tile"><div class="metric-tile-icon">\u23f3</div><div class="metric-tile-value" style="color:var(--warning)">' + data.total_pending_responses + '</div><div class="metric-tile-label">Pending Responses</div></div>';
+    html += '<div class="metric-tile"><div class="metric-tile-icon">\u2705</div><div class="metric-tile-value" style="color:var(--success)">' + data.completion_rate + '%</div><div class="metric-tile-label">Completion Rate</div></div>';
+    html += '</div>';
+
+    // Filter
+    html += '<div style="display:flex;gap:12px;margin-bottom:16px;align-items:center"><select id="monitoringStatusFilter" class="filter-select"><option value="">All Status</option><option value="expert_pending">Expert Pending</option><option value="partial">Partial</option><option value="complete">Complete</option></select></div>';
+
+    // Table
+    html += '<div class="card"><table class="data-table" id="monitoringTable"><thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th>Responses</th><th>Status</th></tr></thead><tbody>';
+    for (const p of projects) {
+      let statusBadge;
+      if (p.status === 'complete') {
+        statusBadge = '<span class="badge badge-green">Complete</span>';
+      } else if (p.responses_completed > 0) {
+        statusBadge = '<span class="badge badge-warning">Partial</span>';
+      } else {
+        statusBadge = '<span class="badge badge-orange">Pending</span>';
+      }
+      const effectiveStatus = p.status === 'complete' ? 'complete' : (p.responses_completed > 0 ? 'partial' : 'expert_pending');
+      html += '<tr class="monitoring-row clickable" data-status="' + effectiveStatus + '" onclick="window.location.hash=\'#edit/' + p.id + '\'">'
+        + '<td><strong>' + esc(p.project_name) + '</strong></td>'
+        + '<td>' + esc(p.category_name || '\u2014') + '</td>'
+        + '<td>' + p.pioneer_count + ' pioneer' + (p.pioneer_count !== 1 ? 's' : '') + '</td>'
+        + '<td>' + p.responses_completed + ' of ' + p.responses_expected + '</td>'
+        + '<td>' + statusBadge + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    mc.innerHTML = html;
+
+    // Client-side filter
+    document.getElementById('monitoringStatusFilter').addEventListener('change', function() {
+      const v = this.value;
+      document.querySelectorAll('#monitoringTable tbody tr').forEach(tr => {
+        tr.style.display = (!v || tr.dataset.status === v) ? '' : 'none';
+      });
+    });
+  } catch (err) {
+    mc.innerHTML = '<div class="error-state">Failed to load monitoring data: ' + esc(err.message) + '</div>';
   }
 }
 

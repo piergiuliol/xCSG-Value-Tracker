@@ -3611,3 +3611,60 @@ input.expert-input:focus {
     height: 8px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MULTI-PIONEER STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Pioneer rows in project form */
+.pioneer-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.pioneer-row .form-group {
+  flex: 1;
+}
+.pioneer-row .pioneer-remove-btn {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* Monitoring page */
+.monitoring-row.clickable {
+  cursor: pointer;
+}
+.monitoring-row.clickable:hover {
+  background: var(--gray-50);
+}
+
+/* badge-warning and badge-info already defined above */
+
+/* Expert round info */
+.expert-round-info {
+  text-align: center;
+  padding: 12px;
+  background: #EBF5FB;
+  border-radius: var(--radius);
+  margin: 16px 0;
+}
+
+/* Previous responses */
+.previous-responses {
+  margin: 16px 0;
+}
+.previous-responses summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--navy);
+  padding: 8px 0;
+}
+.previous-responses .prev-content {
+  padding: 12px;
+  background: var(--gray-50);
+  border-radius: var(--radius);
+  margin-top: 8px;
+}
