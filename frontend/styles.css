@@ -3616,6 +3616,18 @@ input.expert-input:focus {
    MULTI-PIONEER STYLES
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* Field hints and help text */
+.field-hint {
+  cursor: help;
+  color: var(--blue);
+  font-size: 14px;
+  margin-left: 4px;
+  position: relative;
+}
+.field-hint:hover {
+  color: var(--navy);
+}
+
 /* Pioneer rows in project form */
 .pioneer-row {
   display: flex;

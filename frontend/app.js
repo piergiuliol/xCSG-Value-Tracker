@@ -650,7 +650,7 @@ async function renderNewProject(existing) {
       <fieldset><legend>Project Info</legend>
         <div class="form-row">
           <div class="form-group"><label>Project Name *</label><input type="text" id="fName" value="${esc(p.project_name || '')}" required></div>
-          <div class="form-group"><label>Category *</label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
+          <div class="form-group"><label>Category * <span class="field-hint" title="Deliverable type. Used for category norms, benchmarking, and the scaling gate &quot;Multi-engagement&quot; (at least 2 types required).">&#9432;</span></label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(p.client_name || '')}"></div>
@@ -664,19 +664,22 @@ async function renderNewProject(existing) {
       </fieldset>
 
       <fieldset><legend>Pioneers</legend>
+        <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Each pioneer receives a unique assessment link. They independently evaluate the deliverable by comparing xCSG vs legacy methods across six dimensions (machine-first, senior-led, knowledge, client impact, value creation, honest signal).</p>
         <div id="pioneersContainer"></div>
         <button type="button" class="btn btn-secondary btn-sm" id="addPioneerBtn" style="margin-top:8px">+ Add Pioneer</button>
         <div class="form-row" style="margin-top:16px">
           <div class="form-group">
-            <label>Default Rounds</label>
-            <input type="number" id="fDefaultRounds" min="1" max="10" value="${p.default_rounds || 1}" style="width:80px">
+            <label>Default Rounds <span class="field-hint" title="Number of times each pioneer will be surveyed. Set per-pioneer overrides in the Rounds column above.">&#9432;</span></label>
+            <input type="number" id="fDefaultRounds" min="1" max="10" value="${p.default_rounds || 1}" style="width:100px">
+            <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">How many survey rounds per pioneer</span>
           </div>
           <div class="form-group">
-            <label>Show Previous Answers</label>
+            <label>Show Previous Answers <span class="field-hint" title="When enabled, pioneers see their prior round responses (read-only) when starting a new round. Useful for longitudinal tracking.">&#9432;</span></label>
             <select id="fShowPrevious">
               <option value="0" ${!p.show_previous_answers ? 'selected' : ''}>No</option>
               <option value="1" ${p.show_previous_answers ? 'selected' : ''}>Yes</option>
             </select>
+            <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Let pioneers view their previous responses</span>
           </div>
         </div>
       </fieldset>
@@ -689,21 +692,22 @@ async function renderNewProject(existing) {
       </fieldset>
 
       <fieldset><legend>xCSG Performance</legend>
+        <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Actual delivery metrics for this project using the xCSG approach. Team Size and Revision Rounds are required. Calendar Days auto-compute from dates if left blank. These feed into Delivery Speed = Legacy person-days \u00F7 xCSG person-days.</p>
         <div class="form-row">
           <div class="form-group">
-            <label>Calendar Days</label>
+            <label>Calendar Days <span class="field-hint" title="Total elapsed calendar days for xCSG delivery. Auto-computed from dates if left blank.">&#9432;</span></label>
             <input type="number" id="fXDays" min="1" max="365" step="1" value="${esc(p.xcsg_calendar_days || '')}" placeholder="e.g. 5">
             <span class="field-warn" id="warnXDays"></span>
           </div>
           <div class="form-group">
-            <label>Team Size *</label>
+            <label>Team Size * <span class="field-hint" title="Number of people on the xCSG delivery team. Used to compute person-days (working days × team size).">&#9432;</span></label>
             <input type="number" id="fXTeam" min="1" max="50" step="1" value="${esc(p.xcsg_team_size || '')}" required placeholder="e.g. 2">
             <span class="field-warn" id="warnXTeam"></span>
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Revision Rounds *</label>
+            <label>Revision Rounds * <span class="field-hint" title="How many revision cycles the xCSG deliverable went through. Feeds into the Rework Efficiency metric.">&#9432;</span></label>
             <input type="number" id="fRevisions" min="0" max="20" step="1" value="${esc(p.xcsg_revision_rounds || '')}" required placeholder="e.g. 1">
             <span class="field-warn" id="warnRevisions"></span>
           </div>
@@ -713,6 +717,7 @@ async function renderNewProject(existing) {
       </fieldset>
 
       <fieldset><legend>Legacy Comparables</legend>
+        <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Estimated delivery metrics if this project had been done using traditional methods. Pre-filled from category norms when available. The expert survey (Section L) provides more detailed legacy estimates \u2014 expert data takes precedence over these values when computing metrics.</p>
         <div class="form-row">
           <div class="form-group">
             <label>Calendar Days</label>
@@ -749,7 +754,7 @@ async function renderNewProject(existing) {
     row.dataset.idx = idx;
     row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
       + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
-      + `<div class="form-group" style="flex:0 0 100px"><label>Rounds</label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:80px"></div>`
+      + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" title="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Proj. default" style="width:110px"></div>`
       + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
     container.appendChild(row);
     row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
