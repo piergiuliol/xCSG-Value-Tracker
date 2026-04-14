@@ -176,6 +176,20 @@ NORMS_COLUMNS = [
     {"key": "total_projects", "label": "Total Projects", "format": "int"},
 ]
 
+# ── Project status values ──────────────────────────────────────────────────
+PROJECT_STATUS_PENDING = "pending"
+PROJECT_STATUS_PARTIAL = "partial"
+PROJECT_STATUS_COMPLETE = "complete"
+
+# ── Pioneer defaults ───────────────────────────────────────────────────────
+DEFAULT_ROUNDS = 1
+MAX_ROUNDS_PER_PIONEER = 10
+MAX_PIONEERS_PER_PROJECT = 20
+SHOW_PREVIOUS_ANSWERS_DEFAULT = False
+
+# ── Monitoring filters ─────────────────────────────────────────────────────
+MONITORING_STATUS_OPTIONS = ["pending", "partial", "complete"]
+
 # ── Helper: build the /api/schema response ──────────────────────────────────
 
 def build_schema_response() -> dict:
@@ -190,4 +204,8 @@ def build_schema_response() -> dict:
         },
         "metrics": METRICS,
         "norms_columns": NORMS_COLUMNS,
+        "project_statuses": MONITORING_STATUS_OPTIONS,
+        "default_rounds": DEFAULT_ROUNDS,
+        "max_rounds": MAX_ROUNDS_PER_PIONEER,
+        "max_pioneers": MAX_PIONEERS_PER_PROJECT,
     }
