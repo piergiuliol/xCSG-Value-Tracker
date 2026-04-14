@@ -479,7 +479,10 @@ async function handleLogin(e) {
    ROUTING
    ═══════════════════════════════════════════════════════════════════════ */
 
+let _routeCounter = 0;
+
 async function route() {
+  const thisRoute = ++_routeCounter;
   const hash = window.location.hash || '#portfolio';
 
   if (hash.startsWith('#expert/') || hash.startsWith('#assess/')) {
@@ -493,6 +496,7 @@ async function route() {
   showScreen('app');
 
   await Promise.all([loadCategories(), loadSchema()]);
+  if (thisRoute !== _routeCounter) return; // stale route — newer navigation happened
 
   // Hide write-only UI for viewers
   const navNew = document.getElementById('navNew');
@@ -579,12 +583,14 @@ function _computeLocalMetrics(projects) {
 async function renderPortfolio() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading portfolio\u2026</div>';
+  const myRoute = _routeCounter;
 
   try {
     const [dashboard, allProjects] = await Promise.all([
       apiCall('GET', '/dashboard/metrics'),
       apiCall('GET', '/projects'),
     ]);
+    if (myRoute !== _routeCounter) return; // stale — user navigated away
 
     _dashboardCache = dashboard;
     _projectsCache = allProjects;
@@ -1311,8 +1317,10 @@ async function renderEditProject(id) {
 async function renderProjects() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading projects\u2026</div>';
+  const myRoute = _routeCounter;
   try {
     const rows = await apiCall('GET', '/projects');
+    if (myRoute !== _routeCounter) return;
     if (!rows || rows.length === 0) {
       mc.innerHTML = `<div class="empty-state"><h3>No projects yet</h3><p>Create your first one to get started.</p><a href="#new" class="btn btn-primary">New Project</a></div>`;
       return;
