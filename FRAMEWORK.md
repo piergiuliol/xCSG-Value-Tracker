@@ -47,6 +47,38 @@ Admins can set default legacy estimates per project category (e.g., "Landscape A
 
 The norms dashboard shows computed aggregates (average speed, quality, value gain per category) derived from actual completed projects — not from the manually entered defaults.
 
+## Multi-Pioneer Assessment
+
+Projects can have multiple pioneers, each independently assessed over multiple rounds.
+
+### How it works
+
+- PMO assigns one or more pioneers when creating a project
+- Each pioneer gets their own unique assessment link
+- PMO sets a default number of rounds per project, with optional per-pioneer override
+- The same link works for all rounds — the system tracks which round the pioneer is on
+- PMO can optionally allow pioneers to see their previous answers
+
+### Metrics computation
+
+All expert responses for a project (across all pioneers and all rounds) are averaged:
+
+1. Each individual response is scored using the same formulas as a single-response project
+2. The per-response metrics are averaged to produce project-level metrics
+3. Dashboard, norms, and scaling gates use these averaged project-level metrics
+
+A project with 1 pioneer and 1 response computes identically to the original single-response model.
+
+### Project status
+
+| Status | Condition |
+|--------|-----------|
+| Pending | No responses received |
+| Partial | At least 1 response, but not all pioneers x rounds completed |
+| Complete | Every pioneer has completed all their rounds |
+
+Metrics are available on the dashboard as soon as the first response is submitted (partial status).
+
 ## Core Metrics
 
 All ratios compare xCSG to legacy. Values above 1.0x mean xCSG outperforms.
