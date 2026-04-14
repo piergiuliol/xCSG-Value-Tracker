@@ -201,8 +201,8 @@ def compute_xcsg_smoothness(data: dict) -> Optional[float]:
 def compute_legacy_smoothness(data: dict) -> Optional[float]:
     return average([
         score_value(first_present(data, "l3_legacy_revision_depth", "legacy_revision_depth", "legacy_revision_rounds"), REVISION_DEPTH_SCORES),
-        score_value(first_present(data, "legacy_scope_expansion", "l4_legacy_scope_expansion"), SCOPE_EXPANSION_SCORES),
-        score_value(first_present(data, "legacy_client_reaction", "l5_legacy_client_reaction"), CLIENT_PULSE_SCORES),
+        score_value(first_present(data, "l4_legacy_scope_expansion", "legacy_scope_expansion"), SCOPE_EXPANSION_SCORES),
+        score_value(first_present(data, "l5_legacy_client_reaction", "legacy_client_reaction"), CLIENT_PULSE_SCORES),
     ])
 
 
@@ -210,7 +210,7 @@ def compute_legacy_smoothness(data: dict) -> Optional[float]:
 def compute_project_metrics(data: dict) -> dict:
     calendar_days = compute_calendar_days(data.get("date_started"), data.get("date_delivered"))
     xcsg_person_days = compute_person_days(first_present(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
-    legacy_person_days = compute_person_days(first_present(data, "legacy_working_days", "l1_legacy_working_days"), first_present(data, "legacy_team_size", "l2_legacy_team_size"))
+    legacy_person_days = compute_person_days(first_present(data, "l1_legacy_working_days", "legacy_working_days"), first_present(data, "l2_legacy_team_size", "legacy_team_size"))
 
     delivery_speed = compute_ratio(legacy_person_days, xcsg_person_days)
     engagement_revenue = parse_number(data.get("engagement_revenue"))
