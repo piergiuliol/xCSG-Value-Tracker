@@ -76,7 +76,9 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS expert_responses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER UNIQUE NOT NULL,
+                project_id INTEGER NOT NULL,
+                pioneer_id INTEGER,
+                round_number INTEGER DEFAULT 1,
                 b1_starting_point TEXT,
                 b2_research_sources TEXT,
                 b3_assembly_ratio TEXT,
@@ -113,7 +115,8 @@ def init_db() -> None:
                 l15_legacy_e1_decision TEXT,
                 l16_legacy_b6_data TEXT,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(pioneer_id, round_number)
             );
 
             CREATE TABLE IF NOT EXISTS legacy_norms (
@@ -320,7 +323,8 @@ def migrate_v11() -> None:
                 l15_legacy_e1_decision TEXT,
                 l16_legacy_b6_data TEXT,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(pioneer_id, round_number)
             )""")
 
             # Copy existing data (determine which columns exist in the old table)
@@ -376,6 +380,12 @@ def migrate_v11() -> None:
                     "UPDATE expert_responses SET pioneer_id = ? WHERE project_id = ? AND pioneer_id IS NULL",
                     (pioneer_id, project_id),
                 )
+
+        # Clean up any responses that couldn't be linked to a pioneer
+        conn.execute("DELETE FROM expert_responses WHERE pioneer_id IS NULL")
+
+        # Add unique index for pioneer_id + round_number
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_er_pioneer_round ON expert_responses(pioneer_id, round_number) WHERE pioneer_id IS NOT NULL")
 
         # Update expert_pending status to pending
         conn.execute("UPDATE projects SET status = 'pending' WHERE status = 'expert_pending'")
@@ -951,6 +961,12 @@ def update_pioneer(pioneer_id: int, data: dict) -> bool:
         return False
     conn = get_connection()
     try:
+        if "total_rounds" in fields and fields["total_rounds"] is not None:
+            completed = conn.execute(
+                "SELECT COUNT(*) FROM expert_responses WHERE pioneer_id = ?", (pioneer_id,)
+            ).fetchone()[0]
+            if fields["total_rounds"] < completed:
+                raise ValueError(f"Cannot set rounds below {completed} (already completed)")
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [pioneer_id]
         conn.execute(f"UPDATE project_pioneers SET {set_clause} WHERE id = ?", values)

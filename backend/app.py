@@ -37,7 +37,7 @@ from backend.models import (
     TrendData,
     UserInfo,
 )
-from backend.schema import EXPERT_FIELDS, build_schema_response
+from backend.schema import EXPERT_FIELDS, MAX_PIONEERS_PER_PROJECT, MAX_ROUNDS_PER_PIONEER, build_schema_response
 
 
 # ── Expert field options (derived from schema.py) ────────────────────────────
@@ -319,6 +319,14 @@ async def create_project(
     if not cat:
         raise HTTPException(status_code=400, detail="Invalid category_id")
 
+    if len(body.pioneers) > MAX_PIONEERS_PER_PROJECT:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
+    if body.default_rounds > MAX_ROUNDS_PER_PIONEER:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_ROUNDS_PER_PIONEER} rounds per pioneer")
+    for p in body.pioneers:
+        if p.total_rounds is not None and p.total_rounds > MAX_ROUNDS_PER_PIONEER:
+            raise HTTPException(status_code=400, detail=f"Maximum {MAX_ROUNDS_PER_PIONEER} rounds per pioneer")
+
     data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
     data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds} for p in body.pioneers]
@@ -440,6 +448,9 @@ async def add_project_pioneer(
     row = db.get_project(project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
+    current_count = len(db.list_pioneers(project_id))
+    if current_count >= MAX_PIONEERS_PER_PROJECT:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
     pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds)
     pioneers = db.list_pioneers(project_id)
     new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
@@ -465,7 +476,10 @@ async def update_project_pioneer(
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
-    db.update_pioneer(pioneer_id, data)
+    try:
+        db.update_pioneer(pioneer_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     pioneers = db.list_pioneers(project_id)
     updated = next((p for p in pioneers if p["id"] == pioneer_id), None)
     if not updated:
@@ -824,42 +838,68 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         cell.font = header_font
         cell.fill = header_fill
 
-    # Build expert response lookup: use first response per project for raw data export
-    er_by_id = {}
-    for p in all_p:
-        er = db.get_expert_response(p["id"])
-        if er:
-            er_by_id[p["id"]] = dict(er)
+    # Build expert response lookup: all responses per project for raw data export
+    responses_by_project = {}
+    for p_item in all_p:
+        responses_by_project[p_item["id"]] = db.get_all_project_responses(p_item["id"])
 
     for p in all_p:
-        er = er_by_id.get(p["id"], {})
+        responses = responses_by_project.get(p["id"], [])
         # Get pioneer names for this project
         project_pioneers = db.list_pioneers(p["id"])
-        pioneer_names_str = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers) if project_pioneers else p.get("pioneer_name", "")
-        ws1.append([
-            p["id"], p["project_name"], p.get("category_name", ""),
-            pioneer_names_str, p.get("client_name", ""),
-            p.get("date_started", ""), p.get("date_delivered", ""),
-            p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
-            p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
-            p.get("legacy_revision_rounds", ""),
-            p["status"], p["created_at"],
-            # B
-            er.get("b1_starting_point_xcsg", ""), er.get("b1_starting_point_legacy", ""),
-            er.get("b2_research_sources_xcsg", ""), er.get("b2_research_sources_legacy", ""),
-            er.get("b3_assembly_ratio_xcsg", ""), er.get("b3_assembly_ratio_legacy", ""),
-            er.get("b4_hypothesis_first_xcsg", ""), er.get("b4_hypothesis_first_legacy", ""),
-            # C
-            er.get("c1_specialization", ""), er.get("c2_directness", ""), er.get("c3_judgment_pct", ""),
-            er.get("c4_senior_hours", ""), er.get("c5_junior_hours", ""),
-            # D
-            er.get("d1_proprietary_data_xcsg", ""), er.get("d1_proprietary_data_legacy", ""),
-            er.get("d2_knowledge_reuse_xcsg", ""), er.get("d2_knowledge_reuse_legacy", ""),
-            er.get("d3_moat_test_xcsg", ""), er.get("d3_moat_test_legacy", ""),
-            # F
-            er.get("f1_feasibility_xcsg", ""), er.get("f1_feasibility_legacy", ""),
-            er.get("f2_productization_xcsg", ""), er.get("f2_productization_legacy", ""),
-        ])
+        pioneer_lookup = {pp["id"]: pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers}
+        if not responses:
+            # No responses yet — output one row with project info only
+            pioneer_names_str = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers) if project_pioneers else p.get("pioneer_name", "")
+            ws1.append([
+                p["id"], p["project_name"], p.get("category_name", ""),
+                pioneer_names_str, p.get("client_name", ""),
+                p.get("date_started", ""), p.get("date_delivered", ""),
+                p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
+                p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                p.get("legacy_revision_rounds", ""),
+                p["status"], p["created_at"],
+                "", "", "", "", "", "", "", "",
+                "", "", "", "", "",
+                "", "", "", "", "", "",
+                "", "", "", "",
+            ])
+        else:
+            for er in responses:
+                pioneer_name = pioneer_lookup.get(er.get("pioneer_id"), p.get("pioneer_name", ""))
+                ws1.append([
+                    p["id"], p["project_name"], p.get("category_name", ""),
+                    pioneer_name, p.get("client_name", ""),
+                    p.get("date_started", ""), p.get("date_delivered", ""),
+                    p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
+                    p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                    p.get("legacy_revision_rounds", ""),
+                    p["status"], p["created_at"],
+                    # B
+                    er.get("b1_starting_point_xcsg", er.get("b1_starting_point", "")),
+                    er.get("b1_starting_point_legacy", ""),
+                    er.get("b2_research_sources_xcsg", er.get("b2_research_sources", "")),
+                    er.get("b2_research_sources_legacy", ""),
+                    er.get("b3_assembly_ratio_xcsg", er.get("b3_assembly_ratio", "")),
+                    er.get("b3_assembly_ratio_legacy", ""),
+                    er.get("b4_hypothesis_first_xcsg", er.get("b4_hypothesis_first", "")),
+                    er.get("b4_hypothesis_first_legacy", ""),
+                    # C
+                    er.get("c1_specialization", ""), er.get("c2_directness", ""), er.get("c3_judgment_pct", ""),
+                    er.get("c4_senior_hours", ""), er.get("c5_junior_hours", ""),
+                    # D
+                    er.get("d1_proprietary_data_xcsg", er.get("d1_proprietary_data", "")),
+                    er.get("d1_proprietary_data_legacy", ""),
+                    er.get("d2_knowledge_reuse_xcsg", er.get("d2_knowledge_reuse", "")),
+                    er.get("d2_knowledge_reuse_legacy", ""),
+                    er.get("d3_moat_test_xcsg", er.get("d3_moat_test", "")),
+                    er.get("d3_moat_test_legacy", ""),
+                    # F
+                    er.get("f1_feasibility_xcsg", er.get("f1_feasibility", "")),
+                    er.get("f1_feasibility_legacy", ""),
+                    er.get("f2_productization_xcsg", er.get("f2_productization", "")),
+                    er.get("f2_productization_legacy", ""),
+                ])
 
     # ── Sheet 2: Computed Metrics ──
     ws2 = wb.create_sheet("Computed Metrics")

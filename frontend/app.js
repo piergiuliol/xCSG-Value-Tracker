@@ -1334,7 +1334,7 @@ async function renderProjects() {
       <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
         <select id="statusFilter" class="filter-select">
           <option value="">All Status</option>
-          <option value="expert_pending">Expert Pending</option>
+          <option value="pending">Expert Pending</option>
           <option value="partial">Partial</option>
           <option value="complete">Complete</option>
         </select>
@@ -1372,7 +1372,7 @@ async function renderProjects() {
         effectiveStatus = 'partial';
       } else {
         statusBadge = '<span class="badge badge-orange">Expert Pending</span>';
-        effectiveStatus = 'expert_pending';
+        effectiveStatus = 'pending';
       }
 
       const pulseSelect = `<select class="filter-select client-pulse-inline" data-project-id="${p.id}" onchange="updateClientPulse(${p.id}, this.value)">${optionsHTML(CLIENT_PULSE_OPTIONS, p.client_pulse || 'Not yet received')}</select>`;
@@ -1721,18 +1721,18 @@ function renderDashboardCharts(dashboard, allProjects) {
    EXPERT FORM — 27-field Accordion (standalone, no auth)
    ═══════════════════════════════════════════════════════════════════════════ */
 
-function _expertLocalStorageKey(token) {
-  return 'xcsg_expert_' + token;
+function _expertLocalStorageKey(token, round) {
+  return 'xcsg_expert_' + token + '_r' + (round || 1);
 }
 
-function _expertSaveToStorage(token, formData) {
-  try { localStorage.setItem(_expertLocalStorageKey(token), JSON.stringify(formData)); } catch {}
+function _expertSaveToStorage(token, round, formData) {
+  try { localStorage.setItem(_expertLocalStorageKey(token, round), JSON.stringify(formData)); } catch {}
 }
-function _expertLoadFromStorage(token) {
-  try { const raw = localStorage.getItem(_expertLocalStorageKey(token)); return raw ? JSON.parse(raw) : null; } catch { return null; }
+function _expertLoadFromStorage(token, round) {
+  try { const raw = localStorage.getItem(_expertLocalStorageKey(token, round)); return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
-function _expertClearStorage(token) {
-  try { localStorage.removeItem(_expertLocalStorageKey(token)); } catch {}
+function _expertClearStorage(token, round) {
+  try { localStorage.removeItem(_expertLocalStorageKey(token, round)); } catch {}
 }
 
 // Section metadata for accordion
@@ -1779,7 +1779,8 @@ async function renderExpert(token) {
     }
 
     // Restore from localStorage
-    const saved = _expertLoadFromStorage(token);
+    const currentRound = ctx.current_round || 1;
+    const saved = _expertLoadFromStorage(token, currentRound);
 
     // Build HTML
     let html = '';
@@ -1902,11 +1903,11 @@ async function renderExpert(token) {
     for (let i = 0; i < allFields.length; i++) {
       const el = allFields[i];
       el.addEventListener('change', function() {
-        _expertSaveToStorage(token, _expertGetFieldValues());
+        _expertSaveToStorage(token, currentRound, _expertGetFieldValues());
         _expertUpdateProgress(totalFields);
       });
       el.addEventListener('input', function() {
-        _expertSaveToStorage(token, _expertGetFieldValues());
+        _expertSaveToStorage(token, currentRound, _expertGetFieldValues());
         _expertUpdateProgress(totalFields);
       });
       el.addEventListener('focus', function() {
@@ -1942,7 +1943,7 @@ async function renderExpert(token) {
 
       try {
         const result = await apiCall('POST', '/expert/' + token, payload);
-        _expertClearStorage(token);
+        _expertClearStorage(token, currentRound);
         if (result.already_completed) {
           ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>';
         } else if (result.rounds_remaining && result.rounds_remaining > 0) {
@@ -2088,7 +2089,7 @@ async function renderMonitoring() {
     html += '</div>';
 
     // Filter
-    html += '<div style="display:flex;gap:12px;margin-bottom:16px;align-items:center"><select id="monitoringStatusFilter" class="filter-select"><option value="">All Status</option><option value="expert_pending">Expert Pending</option><option value="partial">Partial</option><option value="complete">Complete</option></select></div>';
+    html += '<div style="display:flex;gap:12px;margin-bottom:16px;align-items:center"><select id="monitoringStatusFilter" class="filter-select"><option value="">All Status</option><option value="pending">Expert Pending</option><option value="partial">Partial</option><option value="complete">Complete</option></select></div>';
 
     // Table
     html += '<div class="card"><table class="data-table" id="monitoringTable"><thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th>Responses</th><th>Status</th></tr></thead><tbody>';
@@ -2101,7 +2102,7 @@ async function renderMonitoring() {
       } else {
         statusBadge = '<span class="badge badge-orange">Pending</span>';
       }
-      const effectiveStatus = p.status === 'complete' ? 'complete' : (p.responses_completed > 0 ? 'partial' : 'expert_pending');
+      const effectiveStatus = p.status === 'complete' ? 'complete' : (p.responses_completed > 0 ? 'partial' : 'pending');
       html += '<tr class="monitoring-row clickable" data-status="' + effectiveStatus + '" onclick="window.location.hash=\'#edit/' + p.id + '\'">'
         + '<td><strong>' + esc(p.project_name) + '</strong></td>'
         + '<td>' + esc(p.category_name || '\u2014') + '</td>'
