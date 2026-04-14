@@ -84,6 +84,267 @@ function gaugeHTML(score, size) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   METRIC_DETAILS — single source of truth for methodology + side panel
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const METRIC_DETAILS = {
+  delivery_speed: {
+    label: 'Delivery Speed', icon: '\u26A1', format: 'ratio', section: 'core',
+    what: 'How much faster xCSG delivers compared to legacy methods. Measures total effort in person-days.',
+    formula: 'Legacy person-days \u00F7 xCSG person-days',
+    formulaDetail: 'Person-days = working days \u00D7 team size',
+    sources: {
+      xcsg: 'Working days \u00D7 Team size (project configuration)',
+      legacy: 'L1 (legacy working days) \u00D7 L2 (legacy team size) from expert survey',
+      note: 'Expert survey data takes precedence over project configuration.'
+    },
+    example: {
+      rows: [
+        ['Working days', '5', '15'],
+        ['Team size', '2', '3'],
+        ['Person-days', '10', '45'],
+      ],
+      result: '4.5\u00D7',
+      resultLabel: 'Delivery Speed'
+    },
+    howToRead: '4.5\u00D7 means xCSG delivered in less than a quarter of the effort. Values above 1\u00D7 indicate xCSG advantage.'
+  },
+  output_quality: {
+    label: 'Output Quality', icon: '\u2B50', format: 'ratio', section: 'core',
+    what: 'xCSG output quality relative to legacy, based on expert self-assessment, analytical depth, and decision readiness.',
+    formula: 'xCSG quality score \u00F7 Legacy quality score',
+    formulaDetail: 'Quality = average of scored quality dimensions. Exceptional=1.0, Strong=0.75, Adequate=0.4, Superficial=0.1',
+    sources: {
+      xcsg: 'Average of C6 (self-assessment), C7 (analytical depth), C8 (decision readiness)',
+      legacy: 'Average of L13 (legacy analytical depth), L14 (legacy decision readiness)',
+      note: 'Each option maps to a 0\u20131 score; the ratio compares the two averages.'
+    },
+    example: {
+      rows: [
+        ['Quality components', 'C6=1.0, C7=0.75, C8=1.0', 'L13=0.4, L14=0.2'],
+        ['Average quality', '0.92', '0.30'],
+      ],
+      result: '3.07\u00D7',
+      resultLabel: 'Output Quality'
+    },
+    howToRead: '3.07\u00D7 means xCSG output quality is roughly three times higher. Values above 1\u00D7 indicate better quality.'
+  },
+  productivity_ratio: {
+    label: 'xCSG Value Gain', icon: '\uD83C\uDFAF', format: 'ratio', section: 'core',
+    what: 'The primary metric. Compares quality per unit of effort between xCSG and legacy delivery.',
+    formula: '(xCSG quality \u00F7 xCSG person-days) \u00F7 (Legacy quality \u00F7 Legacy person-days)',
+    formulaDetail: 'Quality per person-day ratio \u2014 how much value is produced per unit of effort.',
+    sources: {
+      xcsg: 'Quality score (avg of C6, C7, C8) \u00F7 person-days (working days \u00D7 team size)',
+      legacy: 'Quality score (avg of L13, L14) \u00F7 person-days (L1 \u00D7 L2)',
+      note: 'This is the ratio of ratios: combines speed and quality into one number.'
+    },
+    example: {
+      rows: [
+        ['Quality score', '0.92', '0.30'],
+        ['Person-days', '10', '45'],
+        ['Quality / person-day', '0.092', '0.0067'],
+      ],
+      result: '13.8\u00D7',
+      resultLabel: 'xCSG Value Gain'
+    },
+    howToRead: '13.8\u00D7 means xCSG produces nearly 14 times more quality per unit of effort. This is the single most important metric.'
+  },
+  rework_efficiency: {
+    label: 'Rework Efficiency', icon: '\uD83D\uDD27', format: 'ratio', section: 'core',
+    what: 'How smoothly xCSG delivers compared to legacy. Combines revision depth, scope expansion, and client reaction.',
+    formula: 'xCSG smoothness \u00F7 Legacy smoothness',
+    formulaDetail: 'Smoothness = average of revision depth score, scope expansion score, and client pulse score.',
+    sources: {
+      xcsg: 'Revision depth, scope expansion, client pulse (project fields)',
+      legacy: 'L3 (legacy revision depth), L4 (legacy scope expansion), L5 (legacy client reaction)',
+      note: 'Higher smoothness scores mean fewer revisions and better client reception.'
+    },
+    example: {
+      rows: [
+        ['Revision depth', '1.0 (none)', '0.55 (moderate)'],
+        ['Scope expansion', '0.0 (no)', '0.0 (no)'],
+        ['Client pulse', '0.6 (met)', '0.6 (met)'],
+        ['Average smoothness', '0.53', '0.38'],
+      ],
+      result: '1.39\u00D7',
+      resultLabel: 'Rework Efficiency'
+    },
+    howToRead: '1.39\u00D7 means xCSG delivery was smoother with less rework. Above 1\u00D7 = xCSG advantage.'
+  },
+  machine_first_score: {
+    label: 'Machine-First Gain', icon: '\uD83E\uDD16', format: 'ratio', section: 'flywheel',
+    what: 'Breadth of knowledge synthesis in xCSG vs legacy. Measures how many sources were synthesized.',
+    formula: 'B2 score \u00F7 L6 score',
+    formulaDetail: 'B2: "How many knowledge sources synthesized?" Scoring: Single source=0.25, Few (2\u20134)=0.5, Multiple (5\u201310)=0.75, Broad (10+)=1.0',
+    sources: {
+      xcsg: 'B2 \u2014 Knowledge sources synthesized (xCSG approach)',
+      legacy: 'L6 \u2014 Same question for legacy approach',
+      note: 'Directly compares the breadth of AI-augmented research vs traditional.'
+    },
+    example: {
+      rows: [
+        ['Sources synthesized', 'Broad (10+) = 1.0', 'Few (2\u20134) = 0.5'],
+      ],
+      result: '2.0\u00D7',
+      resultLabel: 'Machine-First Gain'
+    },
+    howToRead: '2.0\u00D7 means xCSG synthesized twice as many knowledge sources. Higher = more automation leverage.'
+  },
+  senior_led_score: {
+    label: 'Senior-Led Gain', icon: '\uD83D\uDC54', format: 'ratio', section: 'flywheel',
+    what: 'Average of three ratios measuring senior expert involvement depth in xCSG vs legacy.',
+    formula: 'Average of 3 ratios: C1/L7, C2/L8, C3/L9',
+    formulaDetail: 'C1: Specialization (Deep=1.0, Adjacent=0.5, Generalist=0.0). C2: Directness (Authored=1.0, Co-authored=0.5, Reviewed=0.0). C3: Judgment % (>75%=1.0, 50\u201375%=0.75, 25\u201350%=0.5, <25%=0.25). When legacy=0 but xCSG>0, ratio caps at 10\u00D7.',
+    sources: {
+      xcsg: 'C1 (specialization), C2 (directness), C3 (judgment %)',
+      legacy: 'L7 (legacy specialization), L8 (legacy directness), L9 (legacy judgment %)',
+      note: 'Each pair is compared as a ratio, then the three ratios are averaged.'
+    },
+    example: {
+      rows: [
+        ['Specialization (C1/L7)', 'Deep = 1.0', 'Generalist = 0.0 \u2192 10\u00D7 cap'],
+        ['Directness (C2/L8)', 'Authored = 1.0', 'Co-authored = 0.5 \u2192 2\u00D7'],
+        ['Judgment (C3/L9)', '>75% = 1.0', '<25% = 0.25 \u2192 4\u00D7'],
+      ],
+      result: '5.33\u00D7',
+      resultLabel: 'Senior-Led Gain (avg of 10, 2, 4)'
+    },
+    howToRead: '5.33\u00D7 means senior experts were far more deeply involved in xCSG. Higher = more expert-driven work.'
+  },
+  proprietary_knowledge_score: {
+    label: 'Knowledge Gain', icon: '\uD83C\uDFF0', format: 'ratio', section: 'flywheel',
+    what: 'Proprietary knowledge advantage. Averages three ratios: proprietary data use, knowledge reuse, and competitive moat.',
+    formula: 'Average of 3 ratios: D1/L10, D2/L11, D3/L12',
+    formulaDetail: 'D1: Proprietary data (Yes=1.0, No=0.0). D2: Knowledge reuse (Reused & extended=1.0, Useful context=0.5, From scratch=0.0). D3: Moat test (Proprietary decisive=1.0, Partially=0.5, All public=0.0). Same 10\u00D7 cap when legacy=0.',
+    sources: {
+      xcsg: 'D1 (proprietary data), D2 (knowledge reuse), D3 (moat test)',
+      legacy: 'L10 (legacy proprietary data), L11 (legacy reuse), L12 (legacy moat)',
+      note: 'Measures how hard the deliverable would be to replicate without xCSG.'
+    },
+    example: {
+      rows: [
+        ['Proprietary data (D1/L10)', 'Yes = 1.0', 'No = 0.0 \u2192 10\u00D7 cap'],
+        ['Knowledge reuse (D2/L11)', 'Extended = 1.0', 'Scratch = 0.0 \u2192 10\u00D7 cap'],
+        ['Moat test (D3/L12)', 'Decisive = 1.0', 'Public = 0.0 \u2192 10\u00D7 cap'],
+      ],
+      result: '10.0\u00D7',
+      resultLabel: 'Knowledge Gain (avg of 10, 10, 10)'
+    },
+    howToRead: '10.0\u00D7 means xCSG had a massive proprietary knowledge advantage. Higher = harder to replicate.'
+  },
+  client_impact: {
+    label: 'Client Impact', icon: '\uD83D\uDCA5', format: 'ratio', section: 'flywheel',
+    what: 'Did xCSG work drive client decisions more effectively than legacy would have?',
+    formula: 'E1 score \u00F7 L15 score (capped at 10\u00D7)',
+    formulaDetail: 'E1: Informed decision=1.0, Referenced=0.6, Too early=null (excluded), No=0.1.',
+    sources: {
+      xcsg: 'E1 \u2014 Did the deliverable inform a client decision?',
+      legacy: 'L15 \u2014 Would the traditional version have driven the same decision?',
+      note: 'Ratio is capped at 10\u00D7. "Too early to tell" responses are excluded.'
+    },
+    example: {
+      rows: [
+        ['Decision influence', 'Informed decision = 1.0', 'No = 0.1'],
+      ],
+      result: '10.0\u00D7',
+      resultLabel: 'Client Impact (capped)'
+    },
+    howToRead: '10.0\u00D7 (capped) means xCSG drove significantly more client action. Higher = stronger decision influence.'
+  },
+  data_independence: {
+    label: 'Data Independence', icon: '\uD83D\uDCCA', format: 'ratio', section: 'flywheel',
+    what: 'How efficiently xCSG uses data compared to legacy. Less time on sourcing, more on analysis and insight.',
+    formula: 'B6 score \u00F7 L16 score',
+    formulaDetail: 'B6: <25% on data=1.0, 25\u201350%=0.75, 50\u201375%=0.4, >75% on data=0.1.',
+    sources: {
+      xcsg: 'B6 \u2014 What % of effort went to data sourcing vs analysis?',
+      legacy: 'L16 \u2014 What % of time would traditional delivery spend on data sourcing?',
+      note: 'Higher = more time on insight generation rather than data collection.'
+    },
+    example: {
+      rows: [
+        ['Data sourcing effort', '<25% = 1.0', '>75% = 0.1'],
+      ],
+      result: '10.0\u00D7',
+      resultLabel: 'Data Independence'
+    },
+    howToRead: '10.0\u00D7 means xCSG spent far less time on data collection. Higher = more insight per data effort.'
+  },
+  reuse_intent_avg: {
+    label: 'Reuse Intent', icon: '\uD83D\uDD04', format: 'pct', section: 'signal',
+    what: 'Expert loyalty signal. Would they choose the xCSG approach again for this type of deliverable?',
+    formula: 'Average of G1 scores across all experts',
+    formulaDetail: '"Yes without hesitation" = 100%, "Yes with reservations" = 50%, "No" = 0%.',
+    sources: {
+      xcsg: 'G1 \u2014 Would you choose the xCSG approach again?',
+      legacy: 'N/A (this is a forward-looking signal metric)',
+      note: 'Aggregated across all expert responses for the portfolio.'
+    },
+    example: {
+      rows: [
+        ['Expert 1', 'Yes without hesitation', '100%'],
+        ['Expert 2', 'Yes with reservations', '50%'],
+        ['Expert 3', 'Yes without hesitation', '100%'],
+      ],
+      result: '83%',
+      resultLabel: 'Reuse Intent (average)'
+    },
+    howToRead: '83% means most experts would enthusiastically reuse xCSG. Target: 70%+ for the adoption confidence scaling gate.'
+  },
+  ai_survival_avg: {
+    label: 'AI Survival', icon: '\uD83C\uDF0D', format: 'pct', section: 'signal',
+    what: 'How much of the initial AI-generated draft survived into the final deliverable unchanged.',
+    formula: 'Average of B5 scores across all experts',
+    formulaDetail: '">75%" = 100%, "50\u201375%" = 75%, "25\u201350%" = 50%, "<25%" = 25%.',
+    sources: {
+      xcsg: 'B5 \u2014 What % of the AI draft survived into the final deliverable?',
+      legacy: 'N/A (legacy does not use AI drafts)',
+      note: 'Higher = AI produced better starting material that required less rework.'
+    },
+    example: {
+      rows: [
+        ['Expert 1', '>75%', '100%'],
+        ['Expert 2', '50\u201375%', '75%'],
+      ],
+      result: '88%',
+      resultLabel: 'AI Survival (average)'
+    },
+    howToRead: '88% means most AI-generated content survived review. Higher = better AI starting quality.'
+  },
+  client_pulse_avg: {
+    label: 'Client Pulse', icon: '\u2764', format: 'pct', section: 'signal',
+    what: 'How clients rated the deliverable. An aggregate satisfaction signal.',
+    formula: 'Average of client pulse scores across all projects',
+    formulaDetail: '"Exceeded expectations" = 100%, "Met expectations" = 60%, "Below expectations" = 10%.',
+    sources: {
+      xcsg: 'Client Pulse field on each project',
+      legacy: 'N/A (this is the actual client reaction to xCSG delivery)',
+      note: 'Set by the PMO team based on client feedback, not by expert survey.'
+    },
+    example: {
+      rows: [
+        ['Project Alpha', 'Exceeded expectations', '100%'],
+        ['Project Beta', 'Met expectations', '60%'],
+      ],
+      result: '80%',
+      resultLabel: 'Client Pulse (average)'
+    },
+    howToRead: '80% means clients are generally very satisfied. Target: consistent "exceeded" or "met" ratings.'
+  },
+};
+
+const SCALING_GATE_DETAILS = [
+  { name: 'Multi-engagement', threshold: '\u22652 deliverable types completed', description: 'Proves xCSG works across different deliverable types, not just one niche.' },
+  { name: 'Effort reduction', threshold: 'Avg delivery speed >1.3\u00D7', description: 'Average delivery speed ratio across all completed projects must exceed 1.3\u00D7.' },
+  { name: 'Client-invisible quality', threshold: '\u22651 project with low revisions + no negative client pulse', description: 'At least one project with minimal rework and no negative client feedback.' },
+  { name: 'Transferability', threshold: 'F2 productization \u226550% AND \u22652 pioneers across 2+ categories', description: 'Deliverables can be reused, and multiple people across categories can deliver.' },
+  { name: 'Flywheel validation', threshold: 'Recent 5 avg Value Gain \u2265 first 5 (need 6+ projects)', description: 'The model is improving over time \u2014 recent projects outperform earlier ones.' },
+  { name: 'Compounding', threshold: 'D2 knowledge reuse rate \u226540%', description: 'At least 40% of projects reuse prior knowledge assets, showing compounding returns.' },
+  { name: 'Adoption confidence', threshold: 'G1 "Yes without hesitation" \u226570%', description: 'At least 70% of experts would choose xCSG again without hesitation.' },
+];
+
+/* ═══════════════════════════════════════════════════════════════════════
    UTILITIES
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -249,7 +510,7 @@ async function route() {
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
     projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log',
-    monitoring: 'Monitoring'
+    monitoring: 'Monitoring', methodology: 'How Scores Work'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
 
@@ -264,6 +525,7 @@ async function route() {
   else if (hash === '#settings') renderSettings();
   else if (hash === '#norms') renderNormsPage();
   else if (hash === '#activity') renderActivity();
+  else if (hash === '#methodology') renderMethodology();
   else renderPortfolio();
 }
 
@@ -383,19 +645,19 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
 
   // ── KPI GRID ──
   const kpis = [
-    { label: 'Delivery Speed', value: localMetrics.average_effort_ratio, fmt: fmtRatio, icon: '\u26a1', tip: 'How much faster xCSG delivers vs legacy. Calculated as legacy person-days \xf7 xCSG person-days. 2\xd7 = xCSG took half the effort.' },
-    { label: 'Output Quality', value: localMetrics.average_quality_ratio, fmt: fmtRatio, icon: '\u2b50', tip: 'xCSG output quality \xf7 legacy quality. Based on analytical depth, decision readiness, and self-assessment. 1.5\xd7 = 50% better quality.' },
-    { label: 'Rework Efficiency', value: localMetrics.rework_efficiency_avg, fmt: fmtRatio, icon: '\ud83d\udd27', tip: 'xCSG revision/rework burden vs legacy. Combines revision depth, scope changes, and client reaction. Higher = smoother delivery.' },
-    { label: 'Machine-First Gain', value: localMetrics.machine_first_avg, fmt: fmtRatio, icon: '\ud83e\udd16', tip: 'xCSG knowledge synthesis breadth vs legacy. From single-source to broad systematic synthesis. Higher = more automation leverage.' },
-    { label: 'Senior-Led Gain', value: localMetrics.senior_led_avg, fmt: fmtRatio, icon: '\ud83d\udc54', tip: 'Senior expert involvement in xCSG vs legacy. Averages specialization depth, directness of authorship, and judgment time. Higher = more expert-driven.' },
-    { label: 'Knowledge Gain', value: localMetrics.proprietary_knowledge_avg, fmt: fmtRatio, icon: '\ud83c\udff0', tip: 'Proprietary knowledge advantage. Averages proprietary data use, knowledge reuse, and competitive moat vs legacy. Higher = harder to replicate.' },
-    { label: 'Client Impact', value: localMetrics.client_impact_avg, fmt: fmtRatio, icon: '\ud83d\udca5', tip: 'Did xCSG work drive client decisions more than legacy would have? Ratio of decision influence scores, capped at 10\xd7.' },
-    { label: 'Data Independence', value: localMetrics.data_independence_avg, fmt: fmtRatio, icon: '\ud83d\udcca', tip: 'How efficiently xCSG uses data vs legacy. Less time on sourcing, more on analysis. Higher = more insight per data effort.' },
+    { label: 'Delivery Speed', key: 'delivery_speed', value: localMetrics.average_effort_ratio, fmt: fmtRatio, icon: '\u26a1', tip: 'How much faster xCSG delivers vs legacy. Calculated as legacy person-days \xf7 xCSG person-days. 2\xd7 = xCSG took half the effort.' },
+    { label: 'Output Quality', key: 'output_quality', value: localMetrics.average_quality_ratio, fmt: fmtRatio, icon: '\u2b50', tip: 'xCSG output quality \xf7 legacy quality. Based on analytical depth, decision readiness, and self-assessment. 1.5\xd7 = 50% better quality.' },
+    { label: 'Rework Efficiency', key: 'rework_efficiency', value: localMetrics.rework_efficiency_avg, fmt: fmtRatio, icon: '\ud83d\udd27', tip: 'xCSG revision/rework burden vs legacy. Combines revision depth, scope changes, and client reaction. Higher = smoother delivery.' },
+    { label: 'Machine-First Gain', key: 'machine_first_score', value: localMetrics.machine_first_avg, fmt: fmtRatio, icon: '\ud83e\udd16', tip: 'xCSG knowledge synthesis breadth vs legacy. From single-source to broad systematic synthesis. Higher = more automation leverage.' },
+    { label: 'Senior-Led Gain', key: 'senior_led_score', value: localMetrics.senior_led_avg, fmt: fmtRatio, icon: '\ud83d\udc54', tip: 'Senior expert involvement in xCSG vs legacy. Averages specialization depth, directness of authorship, and judgment time. Higher = more expert-driven.' },
+    { label: 'Knowledge Gain', key: 'proprietary_knowledge_score', value: localMetrics.proprietary_knowledge_avg, fmt: fmtRatio, icon: '\ud83c\udff0', tip: 'Proprietary knowledge advantage. Averages proprietary data use, knowledge reuse, and competitive moat vs legacy. Higher = harder to replicate.' },
+    { label: 'Client Impact', key: 'client_impact', value: localMetrics.client_impact_avg, fmt: fmtRatio, icon: '\ud83d\udca5', tip: 'Did xCSG work drive client decisions more than legacy would have? Ratio of decision influence scores, capped at 10\xd7.' },
+    { label: 'Data Independence', key: 'data_independence', value: localMetrics.data_independence_avg, fmt: fmtRatio, icon: '\ud83d\udcca', tip: 'How efficiently xCSG uses data vs legacy. Less time on sourcing, more on analysis. Higher = more insight per data effort.' },
   ];
   const signals = [
-    { label: 'Reuse Intent', value: localMetrics.reuse_intent_avg, fmt: fmtPct, icon: '\ud83d\udd04', tip: 'Expert loyalty signal. Would they choose xCSG again? 100% = all said "yes without hesitation", 50% = mixed, 0% = all said no.' },
-    { label: 'AI Survival', value: localMetrics.ai_survival_avg, fmt: fmtPct, icon: '\ud83c\udf0d', tip: 'How much of the initial AI-generated draft made it into the final deliverable unchanged. Higher = AI produced better starting material.' },
-    { label: 'Client Pulse', value: localMetrics.client_pulse_avg, fmt: fmtPct, icon: '\u2764', tip: 'How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below.' },
+    { label: 'Reuse Intent', key: 'reuse_intent_avg', value: localMetrics.reuse_intent_avg, fmt: fmtPct, icon: '\ud83d\udd04', tip: 'Expert loyalty signal. Would they choose xCSG again? 100% = all said "yes without hesitation", 50% = mixed, 0% = all said no.' },
+    { label: 'AI Survival', key: 'ai_survival_avg', value: localMetrics.ai_survival_avg, fmt: fmtPct, icon: '\ud83c\udf0d', tip: 'How much of the initial AI-generated draft made it into the final deliverable unchanged. Higher = AI produced better starting material.' },
+    { label: 'Client Pulse', key: 'client_pulse_avg', value: localMetrics.client_pulse_avg, fmt: fmtPct, icon: '\u2764', tip: 'How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below.' },
   ];
 
   html += `<div class="metrics-grid">`;
@@ -403,14 +665,14 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     html += `<div class="metric-tile" title="${k.tip}">
       <div class="metric-tile-icon">${k.icon}</div>
       <div class="metric-tile-value" style="color:${metricTone(k.value)}">${k.fmt(k.value)}</div>
-      <div class="metric-tile-label">${k.label}</div>
+      <div class="metric-tile-label">${k.label} ${infoIcon(k.key)}</div>
     </div>`;
   }
   for (const s of signals) {
     html += `<div class="metric-tile metric-tile-signal" title="${s.tip}">
       <div class="metric-tile-icon">${s.icon}</div>
       <div class="metric-tile-value" style="color:${metricTone(s.value)}">${s.fmt(s.value)}</div>
-      <div class="metric-tile-label">${s.label}</div>
+      <div class="metric-tile-label">${s.label} ${infoIcon(s.key)}</div>
     </div>`;
   }
   html += `</div>`;
@@ -491,7 +753,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     </div>
     <div class="table-wrapper">
     <table class="data-table portfolio-table">
-      <thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain</th><th class="r">Actions</th></tr></thead><tbody>`;
+      <thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th><th class="r">Actions</th></tr></thead><tbody>`;
   for (const row of filtered) {
     const m = row.metrics || {};
     const rowPioneers = row.pioneers || [];
@@ -562,11 +824,11 @@ function renderExpertAssessment(er, metrics) {
     </div>
     <div class="assessment-overall-metrics">
       <div class="assessment-metric-chip ${metrics.effort_ratio >= 2 ? 'chip-green' : metrics.effort_ratio >= 1 ? 'chip-amber' : 'chip-red'}" title="Legacy person-days \xf7 xCSG person-days. >1x means xCSG delivered faster.">
-        <span class="chip-value">${fmtRatio(metrics.effort_ratio)}</span><span class="chip-label">Effort Ratio</span></div>
+        <span class="chip-value">${fmtRatio(metrics.effort_ratio)}</span><span class="chip-label">Effort Ratio ${infoIcon('delivery_speed')}</span></div>
       <div class="assessment-metric-chip ${metrics.quality_score >= 0.7 ? 'chip-green' : metrics.quality_score >= 0.4 ? 'chip-amber' : 'chip-red'}" title="Average of self-assessment, analytical depth, and decision readiness (0-1 scale).">
-        <span class="chip-value">${fmtScore(metrics.quality_score)}</span><span class="chip-label">Quality Score</span></div>
+        <span class="chip-value">${fmtScore(metrics.quality_score)}</span><span class="chip-label">Quality Score ${infoIcon('output_quality')}</span></div>
       <div class="assessment-metric-chip ${metrics.outcome_rate_ratio >= 2 ? 'chip-green' : metrics.outcome_rate_ratio >= 1 ? 'chip-amber' : 'chip-red'}" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">
-        <span class="chip-value">${fmtRatio(metrics.outcome_rate_ratio)}</span><span class="chip-label">xCSG Value Gain</span></div>
+        <span class="chip-value">${fmtRatio(metrics.outcome_rate_ratio)}</span><span class="chip-label">xCSG Value Gain ${infoIcon('productivity_ratio')}</span></div>
     </div>
   </div>`;
 
@@ -1700,19 +1962,19 @@ async function renderExpert(token) {
 
             + '<div class="accordion-metric">'
             + '<div class="accordion-metric-value" style="color:' + scoreColor(m.machine_first_score) + '">' + fmtX(m.machine_first_score) + '</div>'
-            + '<div class="accordion-metric-label">Machine-First Gain</div>'
+            + '<div class="accordion-metric-label">Machine-First Gain ' + infoIcon('machine_first_score') + '</div>'
             + '<div class="accordion-metric-explain">Breadth of knowledge synthesis: xCSG vs legacy. Compares your B2 answer (sources synthesized) against your L6 answer (what legacy would have used).</div>'
             + '</div>'
 
             + '<div class="accordion-metric">'
             + '<div class="accordion-metric-value" style="color:' + scoreColor(m.senior_led_score) + '">' + fmtX(m.senior_led_score) + '</div>'
-            + '<div class="accordion-metric-label">Senior-Led Gain</div>'
+            + '<div class="accordion-metric-label">Senior-Led Gain ' + infoIcon('senior_led_score') + '</div>'
             + '<div class="accordion-metric-explain">Average of three comparisons: specialization depth (C1 vs L7), directness of authorship (C2 vs L8), and expert judgment time (C3 vs L9).</div>'
             + '</div>'
 
             + '<div class="accordion-metric">'
             + '<div class="accordion-metric-value" style="color:' + scoreColor(m.proprietary_knowledge_score) + '">' + fmtX(m.proprietary_knowledge_score) + '</div>'
-            + '<div class="accordion-metric-label">Knowledge Gain</div>'
+            + '<div class="accordion-metric-label">Knowledge Gain ' + infoIcon('proprietary_knowledge_score') + '</div>'
             + '<div class="accordion-metric-explain">Average of three comparisons: proprietary data use (D1 vs L10), knowledge reuse (D2 vs L11), and competitive moat (D3 vs L12).</div>'
             + '</div>'
 
@@ -2003,9 +2265,9 @@ function buildNormsAggregatesTable(rows, cats) {
           <thead>
             <tr>
               <th>Category</th>
-              <th title="Average delivery speed ratio across completed projects. >1\xd7 means xCSG is faster.">Avg Speed (xCSG/Legacy)</th>
-              <th title="Average output quality ratio. >1\xd7 means xCSG output is higher quality.">Avg Quality (xCSG/Legacy)</th>
-              <th title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain</th>
+              <th title="Average delivery speed ratio across completed projects. >1\xd7 means xCSG is faster.">Avg Speed ${infoIcon('delivery_speed')}</th>
+              <th title="Average output quality ratio. >1\xd7 means xCSG output is higher quality.">Avg Quality ${infoIcon('output_quality')}</th>
+              <th title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th>
               <th title="Number of expert questionnaires submitted for this category.">Completed Surveys</th>
               <th title="All projects (including pending) in this category.">Total Projects</th>
             </tr>
@@ -2252,6 +2514,283 @@ async function renderActivity() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   METHODOLOGY PAGE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function _metricAccordionHTML(key, detail, open) {
+  const exRows = detail.example.rows.map(r => {
+    const isSignal = detail.format === 'pct';
+    if (isSignal) {
+      return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="r">${esc(r[2])}</td></tr>`;
+    }
+    return `<tr><td>${esc(r[0])}</td><td class="r">${esc(r[1])}</td><td class="r">${esc(r[2])}</td></tr>`;
+  }).join('');
+
+  const isSignal = detail.format === 'pct';
+  const exHeader = isSignal
+    ? '<tr><th>Source</th><th>Response</th><th class="r">Score</th></tr>'
+    : '<tr><th></th><th class="r">xCSG</th><th class="r">Legacy</th></tr>';
+
+  return `<div class="meth-accordion-item ${open ? 'meth-open' : ''}" data-metric="${esc(key)}">
+    <div class="meth-accordion-header" onclick="toggleMethodAccordion(this)">
+      <div class="meth-accordion-left">
+        <span class="meth-icon">${detail.icon}</span>
+        <span class="meth-label">${esc(detail.label)}</span>
+        <span class="meth-format-badge">${detail.format === 'pct' ? '%' : 'N\u00D7'}</span>
+      </div>
+      <span class="meth-chevron">\u25BC</span>
+    </div>
+    <div class="meth-accordion-body">
+      <div class="meth-detail-section">
+        <div class="meth-detail-title">What it measures</div>
+        <p>${esc(detail.what)}</p>
+      </div>
+      <div class="meth-detail-section">
+        <div class="meth-detail-title">Formula</div>
+        <div class="meth-formula-box">${esc(detail.formula)}</div>
+        <p class="meth-formula-note">${esc(detail.formulaDetail)}</p>
+      </div>
+      <div class="meth-detail-section">
+        <div class="meth-detail-title">Data sources</div>
+        <ul class="meth-sources-list">
+          <li><strong>xCSG:</strong> ${esc(detail.sources.xcsg)}</li>
+          <li><strong>Legacy:</strong> ${esc(detail.sources.legacy)}</li>
+        </ul>
+        <p class="meth-sources-note">${esc(detail.sources.note)}</p>
+      </div>
+      <div class="meth-detail-section">
+        <div class="meth-detail-title">Worked example</div>
+        <table class="meth-example-table">
+          <thead>${exHeader}</thead>
+          <tbody>${exRows}</tbody>
+          <tfoot><tr><td colspan="3" class="meth-example-result"><strong>${esc(detail.example.resultLabel)}:</strong> <span class="meth-result-value">${esc(detail.example.result)}</span></td></tr></tfoot>
+        </table>
+      </div>
+      <div class="meth-detail-section meth-how-to-read">
+        <div class="meth-detail-title">How to read</div>
+        <p>${esc(detail.howToRead)}</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function toggleMethodAccordion(header) {
+  const item = header.closest('.meth-accordion-item');
+  if (!item) return;
+  item.classList.toggle('meth-open');
+}
+
+function renderMethodology() {
+  const mc = document.getElementById('mainContent');
+
+  let html = '<div class="methodology-page">';
+
+  // Overview
+  html += `<div class="meth-section">
+    <div class="meth-section-header">
+      <div class="meth-section-icon">\uD83D\uDCD6</div>
+      <div><h2 class="meth-section-title">Overview</h2></div>
+    </div>
+    <p class="meth-intro">The tracker compares xCSG (AI-augmented) delivery against traditional (legacy) methods across multiple dimensions. All ratios >1\u00D7 mean xCSG outperforms. Signal metrics are shown as percentages. Scaling gates are binary pass/fail milestones that validate readiness to scale.</p>
+  </div>`;
+
+  // Core Metrics
+  const coreKeys = ['delivery_speed', 'output_quality', 'productivity_ratio', 'rework_efficiency'];
+  html += `<div class="meth-section">
+    <div class="meth-section-header">
+      <div class="meth-section-icon">\uD83C\uDFAF</div>
+      <div><h2 class="meth-section-title">Core Metrics</h2><p class="meth-section-subtitle">Speed, quality, value gain, and rework efficiency</p></div>
+    </div>`;
+  for (const key of coreKeys) html += _metricAccordionHTML(key, METRIC_DETAILS[key], false);
+  html += '</div>';
+
+  // Flywheel Metrics
+  const flywheelKeys = ['machine_first_score', 'senior_led_score', 'proprietary_knowledge_score', 'client_impact', 'data_independence'];
+  html += `<div class="meth-section">
+    <div class="meth-section-header">
+      <div class="meth-section-icon">\uD83D\uDD04</div>
+      <div><h2 class="meth-section-title">Flywheel Metrics</h2><p class="meth-section-subtitle">Machine-first, senior-led, knowledge, client impact, data independence</p></div>
+    </div>`;
+  for (const key of flywheelKeys) html += _metricAccordionHTML(key, METRIC_DETAILS[key], false);
+  html += '</div>';
+
+  // Signal Metrics
+  const signalKeys = ['reuse_intent_avg', 'ai_survival_avg', 'client_pulse_avg'];
+  html += `<div class="meth-section">
+    <div class="meth-section-header">
+      <div class="meth-section-icon">\uD83D\uDCE1</div>
+      <div><h2 class="meth-section-title">Signal Metrics</h2><p class="meth-section-subtitle">Forward-looking indicators displayed as percentages</p></div>
+    </div>`;
+  for (const key of signalKeys) html += _metricAccordionHTML(key, METRIC_DETAILS[key], false);
+  html += '</div>';
+
+  // Scaling Gates
+  html += `<div class="meth-section">
+    <div class="meth-section-header">
+      <div class="meth-section-icon">\uD83D\uDE80</div>
+      <div><h2 class="meth-section-title">Scaling Gates</h2><p class="meth-section-subtitle">7 binary milestones that validate readiness to scale</p></div>
+    </div>
+    <div class="meth-gates-list">`;
+  for (let i = 0; i < SCALING_GATE_DETAILS.length; i++) {
+    const g = SCALING_GATE_DETAILS[i];
+    html += `<div class="meth-gate-item">
+      <div class="meth-gate-number">${i + 1}</div>
+      <div class="meth-gate-content">
+        <div class="meth-gate-name">${esc(g.name)}</div>
+        <div class="meth-gate-threshold">${esc(g.threshold)}</div>
+        <div class="meth-gate-desc">${esc(g.description)}</div>
+      </div>
+    </div>`;
+  }
+  html += '</div></div>';
+
+  // How Scores Are Computed
+  html += `<div class="meth-section">
+    <div class="meth-section-header">
+      <div class="meth-section-icon">\u2699\uFE0F</div>
+      <div><h2 class="meth-section-title">How Scores Are Computed</h2><p class="meth-section-subtitle">From survey responses to ratios</p></div>
+    </div>
+    <div class="meth-scoring-explainer">
+      <div class="meth-scoring-step">
+        <div class="meth-step-num">1</div>
+        <div><strong>Expert responds</strong> \u2014 Each expert picks an option for each survey question (e.g., "Exceptional", "Strong", "Adequate", "Superficial").</div>
+      </div>
+      <div class="meth-scoring-step">
+        <div class="meth-step-num">2</div>
+        <div><strong>Option \u2192 Score</strong> \u2014 Each option maps to a numeric score between 0.0 and 1.0 (defined in the schema). Higher = better.</div>
+      </div>
+      <div class="meth-scoring-step">
+        <div class="meth-step-num">3</div>
+        <div><strong>Scores averaged</strong> \u2014 Where a metric uses multiple fields (e.g., Output Quality uses C6 + C7 + C8), scores are averaged within each side (xCSG, legacy).</div>
+      </div>
+      <div class="meth-scoring-step">
+        <div class="meth-step-num">4</div>
+        <div><strong>Ratio computed</strong> \u2014 The xCSG score is divided by the legacy score. A result of 2\u00D7 means xCSG scored twice as high. Ratios are capped at 10\u00D7 when the legacy score is zero but xCSG is nonzero.</div>
+      </div>
+      <div class="meth-scoring-step">
+        <div class="meth-step-num">5</div>
+        <div><strong>Portfolio aggregation</strong> \u2014 Dashboard KPIs show the average ratio across all completed projects. Signal metrics are averaged as percentages.</div>
+      </div>
+    </div>
+  </div>`;
+
+  html += '</div>';
+  mc.innerHTML = html;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   METRIC SIDE PANEL
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function _metricPanelContentHTML(key) {
+  const detail = METRIC_DETAILS[key];
+  if (!detail) return '<p>Metric details not available.</p>';
+
+  const isSignal = detail.format === 'pct';
+  const exHeader = isSignal
+    ? '<tr><th>Source</th><th>Response</th><th class="r">Score</th></tr>'
+    : '<tr><th></th><th class="r">xCSG</th><th class="r">Legacy</th></tr>';
+  const exRows = detail.example.rows.map(r => {
+    if (isSignal) {
+      return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="r">${esc(r[2])}</td></tr>`;
+    }
+    return `<tr><td>${esc(r[0])}</td><td class="r">${esc(r[1])}</td><td class="r">${esc(r[2])}</td></tr>`;
+  }).join('');
+
+  return `
+    <div class="panel-metric-header">
+      <span class="panel-metric-icon">${detail.icon}</span>
+      <span class="panel-metric-label">${esc(detail.label)}</span>
+      <span class="meth-format-badge">${detail.format === 'pct' ? '%' : 'N\u00D7'}</span>
+    </div>
+    <div class="meth-detail-section">
+      <div class="meth-detail-title">What it measures</div>
+      <p>${esc(detail.what)}</p>
+    </div>
+    <div class="meth-detail-section">
+      <div class="meth-detail-title">Formula</div>
+      <div class="meth-formula-box">${esc(detail.formula)}</div>
+      <p class="meth-formula-note">${esc(detail.formulaDetail)}</p>
+    </div>
+    <div class="meth-detail-section">
+      <div class="meth-detail-title">Data sources</div>
+      <ul class="meth-sources-list">
+        <li><strong>xCSG:</strong> ${esc(detail.sources.xcsg)}</li>
+        <li><strong>Legacy:</strong> ${esc(detail.sources.legacy)}</li>
+      </ul>
+      <p class="meth-sources-note">${esc(detail.sources.note)}</p>
+    </div>
+    <div class="meth-detail-section">
+      <div class="meth-detail-title">Worked example</div>
+      <table class="meth-example-table">
+        <thead>${exHeader}</thead>
+        <tbody>${exRows}</tbody>
+        <tfoot><tr><td colspan="3" class="meth-example-result"><strong>${esc(detail.example.resultLabel)}:</strong> <span class="meth-result-value">${esc(detail.example.result)}</span></td></tr></tfoot>
+      </table>
+    </div>
+    <div class="meth-detail-section meth-how-to-read">
+      <div class="meth-detail-title">How to read</div>
+      <p>${esc(detail.howToRead)}</p>
+    </div>
+    <a href="#methodology" class="panel-view-all" onclick="closeMetricPanel()">View all metrics \u2192</a>
+  `;
+}
+
+function openMetricPanel(metricKey) {
+  let panel = document.getElementById('metricSidePanel');
+  let backdrop = document.getElementById('metricPanelBackdrop');
+  if (!panel) {
+    // Create panel and backdrop
+    backdrop = document.createElement('div');
+    backdrop.id = 'metricPanelBackdrop';
+    backdrop.className = 'metric-panel-backdrop';
+    backdrop.addEventListener('click', closeMetricPanel);
+    document.body.appendChild(backdrop);
+
+    panel = document.createElement('div');
+    panel.id = 'metricSidePanel';
+    panel.className = 'metric-side-panel';
+    panel.innerHTML = '<button class="panel-close-btn" onclick="closeMetricPanel()">\u00D7</button><div class="panel-content" id="panelContent"></div>';
+    document.body.appendChild(panel);
+  }
+
+  const content = document.getElementById('panelContent');
+  if (content) content.innerHTML = _metricPanelContentHTML(metricKey);
+
+  requestAnimationFrame(() => {
+    backdrop.classList.add('active');
+    panel.classList.add('active');
+  });
+}
+
+function closeMetricPanel() {
+  const panel = document.getElementById('metricSidePanel');
+  const backdrop = document.getElementById('metricPanelBackdrop');
+  if (panel) panel.classList.remove('active');
+  if (backdrop) backdrop.classList.remove('active');
+}
+
+// Map KPI labels to metric keys for info icons
+const LABEL_TO_METRIC_KEY = {
+  'Delivery Speed': 'delivery_speed',
+  'Output Quality': 'output_quality',
+  'xCSG Value Gain': 'productivity_ratio',
+  'Rework Efficiency': 'rework_efficiency',
+  'Machine-First Gain': 'machine_first_score',
+  'Senior-Led Gain': 'senior_led_score',
+  'Knowledge Gain': 'proprietary_knowledge_score',
+  'Client Impact': 'client_impact',
+  'Data Independence': 'data_independence',
+  'Reuse Intent': 'reuse_intent_avg',
+  'AI Survival': 'ai_survival_avg',
+  'Client Pulse': 'client_pulse_avg',
+};
+
+function infoIcon(metricKey) {
+  return `<span class="metric-info-btn" data-metric="${esc(metricKey)}" onclick="event.stopPropagation();openMetricPanel('${esc(metricKey)}')" title="How this metric works">\u2139</span>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    EXPORT
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -2280,6 +2819,11 @@ async function exportExcel() {
 
 document.getElementById('globalModal')?.addEventListener('click', function (e) {
   if (e.target === this) hideModal();
+});
+
+// Close metric panel on Escape
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closeMetricPanel();
 });
 
 document.querySelectorAll('.nav-item[data-route]').forEach(el => {

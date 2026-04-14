@@ -3680,3 +3680,512 @@ input.expert-input:focus {
   border-radius: var(--radius);
   margin-top: 8px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   "HOW SCORES WORK" TOPBAR LINK
+   ═══════════════════════════════════════════════════════════════════════════ */
+.topbar-help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--gray-500);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 400;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+.topbar-help-link:hover {
+  color: var(--navy);
+  background: var(--blue-pale);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   METRIC INFO ICON (inline)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.metric-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--gray-200);
+  color: var(--gray-600);
+  font-size: 10px;
+  font-weight: 700;
+  font-style: normal;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  vertical-align: middle;
+  margin-left: 3px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.metric-info-btn:hover {
+  background: var(--blue);
+  color: #fff;
+}
+/* Inside table headers — keep it inline */
+th .metric-info-btn {
+  vertical-align: middle;
+}
+/* Inside metric tiles — subtle positioning */
+.metric-tile-label .metric-info-btn {
+  margin-left: 4px;
+}
+/* Inside assessment chips */
+.chip-label .metric-info-btn {
+  margin-left: 3px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   METRIC SIDE PANEL
+   ═══════════════════════════════════════════════════════════════════════════ */
+.metric-panel-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.25);
+  z-index: 900;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.metric-panel-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.metric-side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 45%;
+  max-width: 600px;
+  min-width: 340px;
+  background: #fff;
+  z-index: 910;
+  box-shadow: -8px 0 40px rgba(0,0,0,0.15);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.metric-side-panel.active {
+  transform: translateX(0);
+}
+
+.panel-close-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--gray-500);
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.15s, color 0.15s;
+  z-index: 2;
+}
+.panel-close-btn:hover {
+  background: var(--gray-100);
+  color: var(--gray-700);
+}
+
+.panel-content {
+  padding: 32px 28px;
+  flex: 1;
+}
+
+.panel-metric-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--gray-200);
+}
+.panel-metric-icon {
+  font-size: 28px;
+}
+.panel-metric-label {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.panel-view-all {
+  display: block;
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid var(--gray-200);
+  color: var(--navy);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.panel-view-all:hover {
+  color: var(--blue);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   METHODOLOGY PAGE
+   ═══════════════════════════════════════════════════════════════════════════ */
+.methodology-page {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.meth-section {
+  margin-bottom: 32px;
+}
+
+.meth-section-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.meth-section-icon {
+  font-size: 24px;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+.meth-section-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0;
+}
+.meth-section-subtitle {
+  font-size: 13px;
+  color: var(--gray-500);
+  margin: 2px 0 0;
+}
+
+.meth-intro {
+  font-size: 14px;
+  color: var(--gray-600);
+  line-height: 1.7;
+  background: var(--blue-pale);
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--blue);
+}
+
+/* Methodology accordion */
+.meth-accordion-item {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+.meth-accordion-item:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.meth-accordion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.meth-accordion-header:hover {
+  background: var(--gray-50);
+}
+
+.meth-accordion-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.meth-icon {
+  font-size: 20px;
+}
+.meth-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-800);
+}
+.meth-format-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--gray-100);
+  color: var(--gray-500);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.meth-chevron {
+  font-size: 12px;
+  color: var(--gray-400);
+  transition: transform 0.25s;
+}
+.meth-open .meth-chevron {
+  transform: rotate(180deg);
+}
+
+.meth-accordion-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.16, 1, 0.3, 1), padding 0.25s;
+  padding: 0 20px;
+}
+.meth-open .meth-accordion-body {
+  max-height: 1200px;
+  padding: 0 20px 20px;
+}
+
+/* Shared detail section styles (used in both methodology page and panel) */
+.meth-detail-section {
+  margin-bottom: 18px;
+}
+.meth-detail-section:last-child {
+  margin-bottom: 0;
+}
+.meth-detail-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--gray-500);
+  margin-bottom: 6px;
+}
+.meth-detail-section p {
+  font-size: 14px;
+  color: var(--gray-700);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.meth-formula-box {
+  background: var(--navy);
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Roboto Mono', 'Courier New', monospace;
+  margin-bottom: 6px;
+}
+.meth-formula-note {
+  font-size: 12px !important;
+  color: var(--gray-500) !important;
+}
+
+.meth-sources-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 6px;
+}
+.meth-sources-list li {
+  font-size: 13px;
+  color: var(--gray-700);
+  padding: 4px 0 4px 16px;
+  position: relative;
+  line-height: 1.5;
+}
+.meth-sources-list li::before {
+  content: '\2022';
+  position: absolute;
+  left: 0;
+  color: var(--blue);
+  font-weight: 700;
+}
+.meth-sources-note {
+  font-size: 12px !important;
+  color: var(--gray-500) !important;
+  font-style: italic;
+}
+
+/* Example table */
+.meth-example-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.meth-example-table th {
+  background: var(--gray-50);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--gray-600);
+  font-size: 12px;
+  border-bottom: 1px solid var(--gray-200);
+}
+.meth-example-table th.r,
+.meth-example-table td.r {
+  text-align: right;
+}
+.meth-example-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gray-100);
+  color: var(--gray-700);
+}
+.meth-example-table tbody tr:last-child td {
+  border-bottom: 1px solid var(--gray-200);
+}
+.meth-example-result {
+  background: var(--blue-pale);
+  text-align: center !important;
+  padding: 10px 12px !important;
+  font-size: 14px;
+}
+.meth-result-value {
+  color: var(--navy);
+  font-weight: 800;
+  font-size: 16px;
+}
+
+/* How to read section */
+.meth-how-to-read {
+  background: var(--gray-50);
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--blue);
+}
+
+/* Scaling gates list */
+.meth-gates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.meth-gate-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+}
+.meth-gate-number {
+  width: 28px;
+  height: 28px;
+  background: var(--navy);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.meth-gate-content {
+  flex: 1;
+}
+.meth-gate-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-800);
+  margin-bottom: 2px;
+}
+.meth-gate-threshold {
+  font-size: 13px;
+  color: var(--navy);
+  font-weight: 500;
+  margin-bottom: 4px;
+  font-family: 'Roboto Mono', 'Courier New', monospace;
+}
+.meth-gate-desc {
+  font-size: 13px;
+  color: var(--gray-500);
+  line-height: 1.5;
+}
+
+/* Scoring explainer */
+.meth-scoring-explainer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.meth-scoring-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  font-size: 14px;
+  color: var(--gray-700);
+  line-height: 1.6;
+}
+.meth-step-num {
+  width: 26px;
+  height: 26px;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Print styles for methodology page */
+@media print {
+  .methodology-page {
+    max-width: 100%;
+  }
+  .meth-accordion-body {
+    max-height: none !important;
+    padding: 0 20px 20px !important;
+    overflow: visible !important;
+  }
+  .meth-chevron {
+    display: none;
+  }
+  .metric-info-btn {
+    display: none;
+  }
+  .topbar-help-link {
+    display: none;
+  }
+  .metric-side-panel,
+  .metric-panel-backdrop {
+    display: none !important;
+  }
+  .sidebar {
+    display: none !important;
+  }
+  .main {
+    margin-left: 0 !important;
+  }
+  .topbar {
+    position: relative !important;
+  }
+}
+
+/* Responsive: side panel full width on small screens */
+@media (max-width: 768px) {
+  .metric-side-panel {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
