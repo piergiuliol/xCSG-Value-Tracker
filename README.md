@@ -4,6 +4,8 @@ A web application for tracking and measuring the value of xCSG (AI-augmented con
 
 Internal users create projects and share assessment links with experts. Experts complete a structured survey comparing xCSG vs legacy approaches. The system computes performance metrics and displays them on a portfolio dashboard.
 
+For the measurement methodology, metrics, and scoring details, see [FRAMEWORK.md](FRAMEWORK.md).
+
 ## Deployment
 
 ### Requirements
