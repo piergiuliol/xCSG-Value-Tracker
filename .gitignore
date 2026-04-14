@@ -27,6 +27,13 @@ test-results/
 .env
 *.log
 
+# Internal docs (specs, plans)
+docs/
+
+# Playwright snapshots
+*.yml
+!docker-compose.yml
+
 # AI assistant configs
 CLAUDE.md
 .github/copilot-instructions.md

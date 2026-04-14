@@ -28,6 +28,8 @@ from backend.models import (
     LoginRequest,
     LoginResponse,
     MetricsSummary,
+    PioneerCreate,
+    PioneerUpdate,
     ProjectCreate,
     ProjectUpdate,
     RegisterRequest,
@@ -35,7 +37,7 @@ from backend.models import (
     TrendData,
     UserInfo,
 )
-from backend.schema import EXPERT_FIELDS, build_schema_response
+from backend.schema import EXPERT_FIELDS, MAX_PIONEERS_PER_PROJECT, MAX_ROUNDS_PER_PIONEER, build_schema_response
 
 
 # ── Expert field options (derived from schema.py) ────────────────────────────
@@ -101,6 +103,7 @@ async def startup_event():
     db.init_db()
     db.migrate()
     db.migrate_v2()
+    db.migrate_v11()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -294,14 +297,14 @@ async def list_projects(
     enriched_projects = []
     for project in projects:
         result = dict(project)
-        expert_response = db.get_expert_response(project["id"])
-        result["metrics"] = None
-        if expert_response:
-            er_dict = dict(expert_response)
-            merged = dict(project)
-            merged.update({k: v for k, v in er_dict.items() if k != "id"})
-            result["metrics"] = mtx.compute_project_metrics(merged)
-            result["reuse_intent"] = er_dict.get("g1_reuse_intent")
+        result["pioneers"] = db.list_pioneers(project["id"])
+        responses = db.get_all_project_responses(project["id"])
+        if responses:
+            result["metrics"] = mtx.compute_averaged_project_metrics(dict(project), responses)
+            result["response_count"] = len(responses)
+        else:
+            result["metrics"] = None
+            result["response_count"] = 0
         enriched_projects.append(result)
 
     return enriched_projects
@@ -316,8 +319,17 @@ async def create_project(
     if not cat:
         raise HTTPException(status_code=400, detail="Invalid category_id")
 
+    if len(body.pioneers) > MAX_PIONEERS_PER_PROJECT:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
+    if body.default_rounds > MAX_ROUNDS_PER_PIONEER:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_ROUNDS_PER_PIONEER} rounds per pioneer")
+    for p in body.pioneers:
+        if p.total_rounds is not None and p.total_rounds > MAX_ROUNDS_PER_PIONEER:
+            raise HTTPException(status_code=400, detail=f"Maximum {MAX_ROUNDS_PER_PIONEER} rounds per pioneer")
+
     data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
+    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds} for p in body.pioneers]
 
     norm = db.get_norm_by_category(body.category_id)
     if norm:
@@ -331,13 +343,15 @@ async def create_project(
 
     project_id = db.create_project(data)
     row = db.get_project(project_id)
+    result = dict(row)
+    result["pioneers"] = db.list_pioneers(project_id)
     db.log_activity(
         current_user["sub"],
         "project_created",
         project_id=project_id,
         details=f"Created project '{data['project_name']}' ({cat['name']})",
     )
-    return dict(row)
+    return result
 
 
 @app.get("/api/projects/{project_id}")
@@ -349,14 +363,14 @@ async def get_project(
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
     result = dict(row)
-    er = db.get_expert_response(project_id)
-    if er:
-        result["expert_response"] = dict(er)
-        merged = dict(row)
-        merged.update({k: v for k, v in dict(er).items() if k != "id"})
-        result["metrics"] = mtx.compute_project_metrics(merged)
+    result["pioneers"] = db.list_pioneers(project_id)
+    responses = db.get_all_project_responses(project_id)
+    if responses:
+        result["metrics"] = mtx.compute_averaged_project_metrics(dict(row), responses)
+        result["response_count"] = len(responses)
     else:
         result["metrics"] = None
+        result["response_count"] = 0
     return result
 
 
@@ -412,6 +426,87 @@ async def patch_deliverable(
     return dict(db.get_project(project_id))
 
 
+# ── Pioneer Management ──────────────────────────────────────────────────────
+
+@app.get("/api/projects/{project_id}/pioneers")
+async def list_project_pioneers(
+    project_id: int,
+    current_user: dict = Depends(auth.get_current_user),
+):
+    row = db.get_project(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return db.list_pioneers(project_id)
+
+
+@app.post("/api/projects/{project_id}/pioneers", status_code=201)
+async def add_project_pioneer(
+    project_id: int,
+    body: PioneerCreate,
+    current_user: dict = Depends(auth.get_current_user_analyst),
+):
+    row = db.get_project(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    current_count = len(db.list_pioneers(project_id))
+    if current_count >= MAX_PIONEERS_PER_PROJECT:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
+    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds)
+    pioneers = db.list_pioneers(project_id)
+    new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
+    db.log_activity(
+        current_user["sub"],
+        "pioneer_added",
+        project_id=project_id,
+        details=f"Added pioneer '{body.name}' to project #{project_id}",
+    )
+    return new_pioneer
+
+
+@app.put("/api/projects/{project_id}/pioneers/{pioneer_id}")
+async def update_project_pioneer(
+    project_id: int,
+    pioneer_id: int,
+    body: PioneerUpdate,
+    current_user: dict = Depends(auth.get_current_user_analyst),
+):
+    row = db.get_project(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    try:
+        db.update_pioneer(pioneer_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    pioneers = db.list_pioneers(project_id)
+    updated = next((p for p in pioneers if p["id"] == pioneer_id), None)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+    return updated
+
+
+@app.delete("/api/projects/{project_id}/pioneers/{pioneer_id}", status_code=204)
+async def delete_project_pioneer(
+    project_id: int,
+    pioneer_id: int,
+    current_user: dict = Depends(auth.get_current_user_analyst),
+):
+    row = db.get_project(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    success = db.remove_pioneer(pioneer_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Cannot remove pioneer with existing responses")
+    db.log_activity(
+        current_user["sub"],
+        "pioneer_removed",
+        project_id=project_id,
+        details=f"Removed pioneer #{pioneer_id} from project #{project_id}",
+    )
+
+
 # ── Schema (NO auth — public) ────────────────────────────────────────────────
 
 @app.get("/api/schema")
@@ -430,44 +525,60 @@ async def get_expert_options():
 
 @app.get("/api/expert/{token}", response_model=ExpertContextResponse)
 async def get_expert_context(token: str):
-    row = db.get_project_by_token(token)
-    if not row:
+    pioneer = db.get_pioneer_by_token(token)
+    if not pioneer:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-    already_done = row["status"] == "complete"
+
+    pioneer_id = pioneer["id"]
+    project_id = pioneer["project_id"]
+    responses = db.get_pioneer_responses(pioneer_id)
+    current_round = len(responses) + 1
+    total_rounds = pioneer.get("total_rounds") or pioneer.get("default_rounds") or 1
+    show_previous = bool(pioneer.get("show_previous") if pioneer.get("show_previous") is not None else pioneer.get("show_previous_answers"))
+    already_completed = current_round > total_rounds
+
+    previous_responses = None
+    if show_previous and responses:
+        previous_responses = responses
+
     return ExpertContextResponse(
-        project_id=row["id"],
-        project_name=row["project_name"],
-        category_name=row["category_name"],
-        description=row["description"],
-        client_name=row["client_name"],
-        pioneer_name=row["pioneer_name"],
-        date_started=row["date_started"],
-        date_delivered=row["date_delivered"],
-        xcsg_team_size=row["xcsg_team_size"],
-        xcsg_calendar_days=row["xcsg_calendar_days"],
-        engagement_stage=dict(row).get("engagement_stage"),
-        already_completed=already_done,
+        project_id=project_id,
+        project_name=pioneer["project_name"],
+        category_name=pioneer["category_name"],
+        description=pioneer.get("description"),
+        client_name=pioneer.get("client_name"),
+        pioneer_name=pioneer["pioneer_name"],
+        date_started=pioneer.get("date_started"),
+        date_delivered=pioneer.get("date_delivered"),
+        xcsg_team_size=pioneer["xcsg_team_size"],
+        xcsg_calendar_days=pioneer.get("xcsg_calendar_days"),
+        engagement_stage=pioneer.get("engagement_stage"),
+        already_completed=already_completed,
+        pioneer_id=pioneer_id,
+        current_round=current_round,
+        total_rounds=total_rounds,
+        show_previous=show_previous,
+        previous_responses=previous_responses,
     )
 
 
 @app.get("/api/expert/{token}/metrics", response_model=ExpertAssessmentMetrics)
 async def get_expert_metrics(token: str):
     """Return computed flywheel leg scores for a submitted expert assessment."""
-    row = db.get_project_by_token(token)
-    if not row:
+    pioneer = db.get_pioneer_by_token(token)
+    if not pioneer:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-    if row["status"] != "complete":
+    project_id = pioneer["project_id"]
+
+    project_row = db.get_project(project_id)
+    if not project_row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    responses = db.get_all_project_responses(project_id)
+    if not responses:
         raise HTTPException(status_code=404, detail="Assessment not yet submitted")
 
-    er = db.get_expert_response(row["id"])
-    if not er:
-        raise HTTPException(status_code=404, detail="No response found")
-
-    er_dict = dict(er)
-    project_row = db.get_project(row["id"])
-    merged = dict(project_row)
-    merged.update(er_dict)
-    metrics = mtx.compute_project_metrics(merged)
+    metrics = mtx.compute_averaged_project_metrics(dict(project_row), responses)
     return ExpertAssessmentMetrics(
         machine_first_score=metrics.get("machine_first_score"),
         senior_led_score=metrics.get("senior_led_score"),
@@ -481,27 +592,43 @@ async def get_expert_metrics(token: str):
 
 @app.post("/api/expert/{token}", status_code=201)
 async def submit_expert_response(token: str, body: ExpertResponseCreate):
-    row = db.get_project_by_token(token)
-    if not row:
+    pioneer = db.get_pioneer_by_token(token)
+    if not pioneer:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-    if row["status"] == "complete":
-        return {"already_completed": True, "message": "This assessment has already been submitted"}
+
+    pioneer_id = pioneer["id"]
+    project_id = pioneer["project_id"]
+    existing_responses = db.get_pioneer_responses(pioneer_id)
+    current_round = len(existing_responses) + 1
+    total_rounds = pioneer.get("total_rounds") or pioneer.get("default_rounds") or 1
+
+    if current_round > total_rounds:
+        return {"already_completed": True, "message": "All assessment rounds have been completed"}
+
     data = body.model_dump()
-    db.create_expert_response(row["id"], data)
+    db.create_expert_response(pioneer_id, project_id, current_round, data)
+    db.update_project_status(project_id)
+
     db.log_activity(
         1,
         "expert_submitted",
-        project_id=row["id"],
-        details=f"Expert assessment submitted for '{row['project_name']}' (pioneer: {row['pioneer_name']})",
+        project_id=project_id,
+        details=f"Expert assessment submitted for '{pioneer['project_name']}' (pioneer: {pioneer['pioneer_name']}, round {current_round}/{total_rounds})",
     )
 
     # Compute and return metrics on successful submission
-    er = db.get_expert_response(row["id"])
-    project_row = db.get_project(row["id"])
-    merged = dict(project_row)
-    merged.update(dict(er))
-    metrics = mtx.compute_project_metrics(merged)
-    return {"success": True, "message": "Assessment submitted successfully", "metrics": metrics}
+    project_row = db.get_project(project_id)
+    responses = db.get_all_project_responses(project_id)
+    metrics = mtx.compute_averaged_project_metrics(dict(project_row), responses)
+    rounds_remaining = max(total_rounds - current_round, 0)
+    return {
+        "success": True,
+        "message": "Assessment submitted successfully",
+        "metrics": metrics,
+        "current_round": current_round,
+        "total_rounds": total_rounds,
+        "rounds_remaining": rounds_remaining,
+    }
 
 
 # ── Legacy Norms ──────────────────────────────────────────────────────────────
@@ -515,7 +642,7 @@ async def list_norm_aggregates(current_user: dict = Depends(auth.get_current_use
 
 @app.get("/api/dashboard/metrics")
 async def dashboard_metrics(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_projects()
+    complete = _build_averaged_complete_projects()
     all_projects = db.list_projects()
     return mtx.compute_dashboard_metrics(complete, all_projects)
 
@@ -529,17 +656,31 @@ async def project_metrics(
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    expert_response = db.get_expert_response(project_id)
-    merged = dict(row)
-    if expert_response:
-        merged.update({k: v for k, v in dict(expert_response).items() if k != "id"})
+    responses = db.get_all_project_responses(project_id)
+    return mtx.compute_averaged_project_metrics(dict(row), responses)
 
-    return mtx.compute_project_metrics(merged)
+
+def _build_averaged_complete_projects() -> list:
+    """Build list of averaged metrics dicts for all projects with responses."""
+    projects_with_responses = db.list_complete_projects()
+    result = []
+    for p in projects_with_responses:
+        responses = db.get_all_project_responses(p["id"])
+        if responses:
+            avg = mtx.compute_averaged_project_metrics(p, responses)
+            avg["id"] = p["id"]
+            avg["project_name"] = p["project_name"]
+            avg["category_name"] = p["category_name"]
+            avg["pioneer_name"] = p.get("pioneer_name", "")
+            avg["date_started"] = p.get("date_started")
+            avg["date_delivered"] = p.get("date_delivered")
+            result.append(avg)
+    return result
 
 
 @app.get("/api/metrics/summary", response_model=MetricsSummary)
 async def metrics_summary(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_projects()
+    complete = _build_averaged_complete_projects()
     all_p = db.list_projects()
     summary = mtx.compute_summary(complete, all_p)
     return MetricsSummary(**summary)
@@ -547,21 +688,19 @@ async def metrics_summary(current_user: dict = Depends(auth.get_current_user)):
 
 @app.get("/api/metrics/projects")
 async def metrics_projects(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_projects()
-    return [mtx.compute_project_metrics(d) for d in complete]
+    return _build_averaged_complete_projects()
 
 
 @app.get("/api/metrics/trends", response_model=TrendData)
 async def metrics_trends(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_projects()
-    points = mtx.compute_trend_data(complete)
+    complete = _build_averaged_complete_projects()
     from backend.models import TrendPoint
-    return TrendData(points=[TrendPoint(**p) for p in points])
+    return TrendData(points=[TrendPoint(**p) for p in complete])
 
 
 @app.get("/api/metrics/scaling-gates", response_model=ScalingGates)
 async def metrics_scaling_gates(current_user: dict = Depends(auth.get_current_user)):
-    complete = db.list_complete_projects()
+    complete = _build_averaged_complete_projects()
     gates = mtx.compute_scaling_gates(complete)
     from backend.models import ScalingGate
     passed = sum(1 for g in gates if g["status"] == "pass")
@@ -585,23 +724,53 @@ async def list_activity(
     return {"items": rows, "total": total, "limit": limit, "offset": offset}
 
 
+# ── Monitoring ───────────────────────────────────────────────────────────────
+
+@app.get("/api/monitoring")
+async def get_monitoring(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    current_user: dict = Depends(auth.get_current_user),
+):
+    projects = db.list_projects(status_filter=status_filter)
+    results = []
+    total_pending = 0
+    for p in projects:
+        pioneers = db.list_pioneers(p["id"])
+        default_rounds = p.get("default_rounds", 1) or 1
+        total_expected = sum((pp.get("total_rounds") or default_rounds) for pp in pioneers)
+        total_completed = sum(pp.get("response_count", 0) for pp in pioneers)
+        total_pending += max(total_expected - total_completed, 0)
+        results.append({
+            "id": p["id"],
+            "project_name": p["project_name"],
+            "category_name": p.get("category_name", ""),
+            "status": p["status"],
+            "pioneer_count": len(pioneers),
+            "responses_completed": total_completed,
+            "responses_expected": total_expected,
+        })
+    total_projects = len(results)
+    complete_count = sum(1 for r in results if r["status"] == "complete")
+    return {
+        "projects": results,
+        "total_projects": total_projects,
+        "total_pending_responses": total_pending,
+        "completion_rate": round(complete_count / total_projects * 100, 1) if total_projects else 0,
+    }
+
+
 # ── Export ────────────────────────────────────────────────────────────────────
 
-@app.get("/api/export/excel")
-async def export_excel(current_user: dict = Depends(auth.get_current_user)):
-    try:
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
-    except ImportError:
-        raise HTTPException(status_code=500, detail="openpyxl not installed")
+def _build_export_workbook(all_projects: list, complete_projects: list):
+    """Build the Excel export workbook with Raw Data and Computed Metrics sheets."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
 
     wb = openpyxl.Workbook()
 
     # ── Sheet 1: Raw Data ──
     ws1 = wb.active
     ws1.title = "Raw Data"
-    all_p = db.list_projects()
-    complete = db.list_complete_projects()
 
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="121F6B")
@@ -628,34 +797,68 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         cell.font = header_font
         cell.fill = header_fill
 
-    er_by_id = {d["id"]: d for d in complete}
+    # Build expert response lookup: all responses per project for raw data export
+    responses_by_project = {}
+    for p_item in all_projects:
+        responses_by_project[p_item["id"]] = db.get_all_project_responses(p_item["id"])
 
-    for p in all_p:
-        er = er_by_id.get(p["id"], {})
-        ws1.append([
-            p["id"], p["project_name"], p.get("category_name", ""),
-            p["pioneer_name"], p.get("client_name", ""),
-            p.get("date_started", ""), p.get("date_delivered", ""),
-            p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
-            p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
-            p.get("legacy_revision_rounds", ""),
-            p["status"], p["created_at"],
-            # B
-            er.get("b1_starting_point_xcsg", ""), er.get("b1_starting_point_legacy", ""),
-            er.get("b2_research_sources_xcsg", ""), er.get("b2_research_sources_legacy", ""),
-            er.get("b3_assembly_ratio_xcsg", ""), er.get("b3_assembly_ratio_legacy", ""),
-            er.get("b4_hypothesis_first_xcsg", ""), er.get("b4_hypothesis_first_legacy", ""),
-            # C
-            er.get("c1_specialization", ""), er.get("c2_directness", ""), er.get("c3_judgment_pct", ""),
-            er.get("c4_senior_hours", ""), er.get("c5_junior_hours", ""),
-            # D
-            er.get("d1_proprietary_data_xcsg", ""), er.get("d1_proprietary_data_legacy", ""),
-            er.get("d2_knowledge_reuse_xcsg", ""), er.get("d2_knowledge_reuse_legacy", ""),
-            er.get("d3_moat_test_xcsg", ""), er.get("d3_moat_test_legacy", ""),
-            # F
-            er.get("f1_feasibility_xcsg", ""), er.get("f1_feasibility_legacy", ""),
-            er.get("f2_productization_xcsg", ""), er.get("f2_productization_legacy", ""),
-        ])
+    for p in all_projects:
+        responses = responses_by_project.get(p["id"], [])
+        # Get pioneer names for this project
+        project_pioneers = db.list_pioneers(p["id"])
+        pioneer_lookup = {pp["id"]: pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers}
+        if not responses:
+            # No responses yet — output one row with project info only
+            pioneer_names_str = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers) if project_pioneers else p.get("pioneer_name", "")
+            ws1.append([
+                p["id"], p["project_name"], p.get("category_name", ""),
+                pioneer_names_str, p.get("client_name", ""),
+                p.get("date_started", ""), p.get("date_delivered", ""),
+                p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
+                p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                p.get("legacy_revision_rounds", ""),
+                p["status"], p["created_at"],
+                "", "", "", "", "", "", "", "",
+                "", "", "", "", "",
+                "", "", "", "", "", "",
+                "", "", "", "",
+            ])
+        else:
+            for er in responses:
+                pioneer_name = pioneer_lookup.get(er.get("pioneer_id"), p.get("pioneer_name", ""))
+                ws1.append([
+                    p["id"], p["project_name"], p.get("category_name", ""),
+                    pioneer_name, p.get("client_name", ""),
+                    p.get("date_started", ""), p.get("date_delivered", ""),
+                    p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
+                    p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                    p.get("legacy_revision_rounds", ""),
+                    p["status"], p["created_at"],
+                    # B
+                    er.get("b1_starting_point_xcsg", er.get("b1_starting_point", "")),
+                    er.get("b1_starting_point_legacy", ""),
+                    er.get("b2_research_sources_xcsg", er.get("b2_research_sources", "")),
+                    er.get("b2_research_sources_legacy", ""),
+                    er.get("b3_assembly_ratio_xcsg", er.get("b3_assembly_ratio", "")),
+                    er.get("b3_assembly_ratio_legacy", ""),
+                    er.get("b4_hypothesis_first_xcsg", er.get("b4_hypothesis_first", "")),
+                    er.get("b4_hypothesis_first_legacy", ""),
+                    # C
+                    er.get("c1_specialization", ""), er.get("c2_directness", ""), er.get("c3_judgment_pct", ""),
+                    er.get("c4_senior_hours", ""), er.get("c5_junior_hours", ""),
+                    # D
+                    er.get("d1_proprietary_data_xcsg", er.get("d1_proprietary_data", "")),
+                    er.get("d1_proprietary_data_legacy", ""),
+                    er.get("d2_knowledge_reuse_xcsg", er.get("d2_knowledge_reuse", "")),
+                    er.get("d2_knowledge_reuse_legacy", ""),
+                    er.get("d3_moat_test_xcsg", er.get("d3_moat_test", "")),
+                    er.get("d3_moat_test_legacy", ""),
+                    # F
+                    er.get("f1_feasibility_xcsg", er.get("f1_feasibility", "")),
+                    er.get("f1_feasibility_legacy", ""),
+                    er.get("f2_productization_xcsg", er.get("f2_productization", "")),
+                    er.get("f2_productization_legacy", ""),
+                ])
 
     # ── Sheet 2: Computed Metrics ──
     ws2 = wb.create_sheet("Computed Metrics")
@@ -671,21 +874,45 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         cell.font = header_font
         cell.fill = header_fill
 
-    metrics_list = [mtx.compute_project_metrics(d) for d in complete]
-    for m in metrics_list:
-        ws2.append([
-            m["id"], m["project_name"], m["category_name"],
-            m["pioneer_name"], m.get("client_name", ""),
-            m["xcsg_person_days"], m["legacy_person_days"], m["effort_ratio"],
-            m["xcsg_revisions"], m["legacy_revisions"], m["quality_ratio"], m["value_multiplier"],
-            m.get("machine_first_score", ""), m.get("senior_led_score", ""),
-            m.get("proprietary_knowledge_score", ""), m["created_at"],
-        ])
+    # Use averaged metrics for the computed metrics sheet
+    for p in complete_projects:
+        responses = db.get_all_project_responses(p["id"])
+        if responses:
+            m = mtx.compute_averaged_project_metrics(p, responses)
+            # Get pioneer names for this project
+            comp_pioneers = db.list_pioneers(p["id"])
+            comp_pioneer_names = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in comp_pioneers) if comp_pioneers else p.get("pioneer_name", "")
+            ws2.append([
+                m.get("id", p["id"]), m.get("project_name", p["project_name"]),
+                m.get("category_name", p.get("category_name", "")),
+                comp_pioneer_names,
+                m.get("client_name", p.get("client_name", "")),
+                m.get("xcsg_person_days"), m.get("legacy_person_days"), m.get("effort_ratio"),
+                m.get("xcsg_revisions", p.get("xcsg_revision_rounds", "")),
+                m.get("legacy_revisions", p.get("legacy_revision_rounds", "")),
+                m.get("quality_ratio"), m.get("value_multiplier"),
+                m.get("machine_first_score", ""), m.get("senior_led_score", ""),
+                m.get("proprietary_knowledge_score", ""), m.get("created_at", p.get("created_at", "")),
+            ])
 
     for ws in [ws1, ws2]:
         for col in ws.columns:
             max_len = max((len(str(cell.value or "")) for cell in col), default=0)
             ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
+
+    return wb
+
+
+@app.get("/api/export/excel")
+async def export_excel(current_user: dict = Depends(auth.get_current_user)):
+    try:
+        import openpyxl
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed")
+
+    all_p = db.list_projects()
+    complete = db.list_complete_projects()
+    wb = _build_export_workbook(all_p, complete)
 
     tmp = tempfile.NamedTemporaryFile(
         suffix=".xlsx", prefix="xCSG_Export_", delete=False, dir="/tmp"

@@ -38,6 +38,21 @@ class RegisterRequest(BaseModel):
     role: str = "viewer"
 
 
+# ── Pioneers ─────────────────────────────────────────────────────────────────
+
+class PioneerCreate(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    total_rounds: Optional[int] = None
+
+
+class PioneerUpdate(BaseModel):
+    pioneer_name: Optional[str] = None
+    pioneer_email: Optional[EmailStr] = None
+    total_rounds: Optional[int] = None
+    show_previous: Optional[bool] = None
+
+
 # ── Project Categories ───────────────────────────────────────────────────────
 
 class CategoryCreate(BaseModel):
@@ -52,12 +67,26 @@ class CategoryUpdate(BaseModel):
 
 # ── Projects ─────────────────────────────────────────────────────────────────
 
+def _validate_project_dates(date_started, date_delivered):
+    """Shared date validation for ProjectCreate and ProjectUpdate."""
+    if date_started and date_delivered:
+        try:
+            start = date.fromisoformat(date_started)
+            end = date.fromisoformat(date_delivered)
+            if end < start:
+                raise ValueError("date_delivered must be on or after date_started")
+        except ValueError as e:
+            if "date_delivered" in str(e):
+                raise
+
+
 class ProjectCreate(BaseModel):
     project_name: str
     category_id: int
     client_name: Optional[str] = None
-    pioneer_name: str
-    pioneer_email: Optional[EmailStr] = None
+    pioneers: List[PioneerCreate] = []
+    default_rounds: int = 1
+    show_previous_answers: bool = False
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = "Not yet received"
@@ -77,15 +106,7 @@ class ProjectCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectCreate":
-        if self.date_started and self.date_delivered:
-            try:
-                start = date.fromisoformat(self.date_started)
-                end = date.fromisoformat(self.date_delivered)
-                if end < start:
-                    raise ValueError("date_delivered must be on or after date_started")
-            except ValueError as e:
-                if "date_delivered" in str(e):
-                    raise
+        _validate_project_dates(self.date_started, self.date_delivered)
         return self
 
 
@@ -95,6 +116,8 @@ class ProjectUpdate(BaseModel):
     client_name: Optional[str] = None
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
+    default_rounds: Optional[int] = None
+    show_previous_answers: Optional[bool] = None
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = None
@@ -114,15 +137,7 @@ class ProjectUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectUpdate":
-        if self.date_started and self.date_delivered:
-            try:
-                start = date.fromisoformat(self.date_started)
-                end = date.fromisoformat(self.date_delivered)
-                if end < start:
-                    raise ValueError("date_delivered must be on or after date_started")
-            except ValueError as e:
-                if "date_delivered" in str(e):
-                    raise
+        _validate_project_dates(self.date_started, self.date_delivered)
         return self
 
 
@@ -189,6 +204,11 @@ class ExpertContextResponse(BaseModel):
     xcsg_calendar_days: Optional[str] = None
     engagement_stage: Optional[str] = None
     already_completed: bool
+    pioneer_id: int
+    current_round: int
+    total_rounds: int
+    show_previous: bool
+    previous_responses: Optional[list] = None
 
 
 # ── Norms ─────────────────────────────────────────────────────────────────────

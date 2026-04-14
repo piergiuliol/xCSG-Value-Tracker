@@ -39,7 +39,7 @@ def average(values: list[Optional[float]]) -> Optional[float]:
 
 
 
-def first_present(data: dict, *keys: str) -> object:
+def coalesce(data: dict, *keys: str) -> object:
     for key in keys:
         if key and data.get(key) is not None:
             return data.get(key)
@@ -117,13 +117,8 @@ def compute_machine_first_score(data: dict) -> Optional[float]:
 
 
 
-def compute_senior_led_score(data: dict) -> Optional[float]:
-    """Senior-Led Gain: per-field ratios averaged. When legacy=0 but xcsg>0, that's max gain."""
-    pairs = [
-        ("c1_specialization", "l7_legacy_c1_specialization", OPTION_SCORES["c1_specialization"]),
-        ("c2_directness", "l8_legacy_c2_directness", OPTION_SCORES["c2_directness"]),
-        ("c3_judgment_pct", "l9_legacy_c3_judgment", OPTION_SCORES["c3_judgment_pct"]),
-    ]
+def _compute_paired_ratio_score(data: dict, pairs: list[tuple[str, str, dict]]) -> Optional[float]:
+    """Compute average ratio across paired xCSG/legacy fields. Caps at 10x when legacy=0."""
     ratios = []
     for xcsg_field, legacy_field, mapping in pairs:
         xcsg_val = score_value(data.get(xcsg_field), mapping)
@@ -134,36 +129,36 @@ def compute_senior_led_score(data: dict) -> Optional[float]:
             else:
                 ratios.append(round2(xcsg_val / legacy_val))
     return average(ratios)
+
+
+
+def compute_senior_led_score(data: dict) -> Optional[float]:
+    """Senior-Led Gain: per-field ratios averaged."""
+    return _compute_paired_ratio_score(data, [
+        ("c1_specialization", "l7_legacy_c1_specialization", OPTION_SCORES["c1_specialization"]),
+        ("c2_directness", "l8_legacy_c2_directness", OPTION_SCORES["c2_directness"]),
+        ("c3_judgment_pct", "l9_legacy_c3_judgment", OPTION_SCORES["c3_judgment_pct"]),
+    ])
 
 
 
 def compute_proprietary_knowledge_score(data: dict) -> Optional[float]:
-    """Knowledge Gain: per-field ratios averaged. When legacy=0 but xcsg>0, that's max gain."""
-    pairs = [
+    """Knowledge Gain: per-field ratios averaged."""
+    return _compute_paired_ratio_score(data, [
         ("d1_proprietary_data", "l10_legacy_d1_proprietary", OPTION_SCORES["d1_proprietary_data"]),
         ("d2_knowledge_reuse", "l11_legacy_d2_reuse", OPTION_SCORES["d2_knowledge_reuse"]),
         ("d3_moat_test", "l12_legacy_d3_moat", OPTION_SCORES["d3_moat_test"]),
-    ]
-    ratios = []
-    for xcsg_field, legacy_field, mapping in pairs:
-        xcsg_val = score_value(data.get(xcsg_field), mapping)
-        legacy_val = score_value(data.get(legacy_field), mapping)
-        if xcsg_val is not None and legacy_val is not None:
-            if legacy_val == 0:
-                ratios.append(10.0 if xcsg_val > 0 else 1.0)
-            else:
-                ratios.append(round2(xcsg_val / legacy_val))
-    return average(ratios)
+    ])
 
 
 
 def compute_ai_survival_rate(data: dict) -> Optional[float]:
-    return score_value(first_present(data, "b5_ai_survival_rate_xcsg", "b5_ai_survival", "b5_ai_survival_rate"), OPTION_SCORES["b5_ai_survival"])
+    return score_value(coalesce(data, "b5_ai_survival_rate_xcsg", "b5_ai_survival", "b5_ai_survival_rate"), OPTION_SCORES["b5_ai_survival"])
 
 
 
 def compute_reuse_intent_score(data: dict) -> Optional[float]:
-    return score_value(first_present(data, "g1_reuse_intent_xcsg", "g1_reuse_intent"), OPTION_SCORES["g1_reuse_intent"])
+    return score_value(coalesce(data, "g1_reuse_intent_xcsg", "g1_reuse_intent"), OPTION_SCORES["g1_reuse_intent"])
 
 
 
@@ -191,8 +186,8 @@ def compute_legacy_quality(data: dict) -> Optional[float]:
 
 def compute_xcsg_smoothness(data: dict) -> Optional[float]:
     return average([
-        score_value(first_present(data, "revision_depth", "xcsg_revision_depth", "c4_revision_depth", "xcsg_revision_rounds"), REVISION_DEPTH_SCORES),
-        score_value(first_present(data, "xcsg_scope_expansion", "scope_expansion"), SCOPE_EXPANSION_SCORES),
+        score_value(coalesce(data, "revision_depth", "xcsg_revision_depth", "c4_revision_depth", "xcsg_revision_rounds"), REVISION_DEPTH_SCORES),
+        score_value(coalesce(data, "xcsg_scope_expansion", "scope_expansion"), SCOPE_EXPANSION_SCORES),
         score_value(data.get("client_pulse"), CLIENT_PULSE_SCORES),
     ])
 
@@ -200,47 +195,86 @@ def compute_xcsg_smoothness(data: dict) -> Optional[float]:
 
 def compute_legacy_smoothness(data: dict) -> Optional[float]:
     return average([
-        score_value(first_present(data, "l3_legacy_revision_depth", "legacy_revision_depth", "legacy_revision_rounds"), REVISION_DEPTH_SCORES),
-        score_value(first_present(data, "l4_legacy_scope_expansion", "legacy_scope_expansion"), SCOPE_EXPANSION_SCORES),
-        score_value(first_present(data, "l5_legacy_client_reaction", "legacy_client_reaction"), CLIENT_PULSE_SCORES),
+        score_value(coalesce(data, "l3_legacy_revision_depth", "legacy_revision_depth", "legacy_revision_rounds"), REVISION_DEPTH_SCORES),
+        score_value(coalesce(data, "l4_legacy_scope_expansion", "legacy_scope_expansion"), SCOPE_EXPANSION_SCORES),
+        score_value(coalesce(data, "l5_legacy_client_reaction", "legacy_client_reaction"), CLIENT_PULSE_SCORES),
     ])
 
 
 
-def compute_project_metrics(data: dict) -> dict:
+def _compute_effort_metrics(data: dict) -> dict:
+    """Compute delivery speed and person-day metrics."""
     calendar_days = compute_calendar_days(data.get("date_started"), data.get("date_delivered"))
-    xcsg_person_days = compute_person_days(first_present(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
-    legacy_person_days = compute_person_days(first_present(data, "l1_legacy_working_days", "legacy_working_days"), first_present(data, "l2_legacy_team_size", "legacy_team_size"))
-
+    xcsg_person_days = compute_person_days(coalesce(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
+    legacy_person_days = compute_person_days(coalesce(data, "l1_legacy_working_days", "legacy_working_days"), coalesce(data, "l2_legacy_team_size", "legacy_team_size"))
     delivery_speed = compute_ratio(legacy_person_days, xcsg_person_days)
     engagement_revenue = parse_number(data.get("engagement_revenue"))
     revenue_productivity_xcsg = round2(engagement_revenue / xcsg_person_days) if engagement_revenue is not None and xcsg_person_days else None
     revenue_productivity_legacy = round2(engagement_revenue / legacy_person_days) if engagement_revenue is not None and legacy_person_days else None
+    return {
+        "calendar_days": calendar_days, "xcsg_person_days": xcsg_person_days,
+        "legacy_person_days": legacy_person_days, "delivery_speed": delivery_speed,
+        "effort_ratio": delivery_speed,
+        "revenue_productivity_xcsg": revenue_productivity_xcsg,
+        "revenue_productivity_legacy": revenue_productivity_legacy,
+    }
+
+
+def _compute_quality_metrics(data: dict, xcsg_person_days, legacy_person_days) -> dict:
+    """Compute quality scores and value gain."""
     quality_score = compute_quality_score(data)
     legacy_quality = compute_legacy_quality(data)
     output_quality = compute_ratio(quality_score, legacy_quality)
+    xcsg_qpd = round2(quality_score / xcsg_person_days) if quality_score is not None and xcsg_person_days else None
+    legacy_qpd = round2(legacy_quality / legacy_person_days) if legacy_quality is not None and legacy_person_days else None
+    productivity_ratio = compute_ratio(xcsg_qpd, legacy_qpd)
+    return {
+        "quality_score": quality_score, "legacy_quality": legacy_quality, "legacy_quality_score": legacy_quality,
+        "quality_ratio": output_quality, "output_quality": output_quality,
+        "xcsg_quality_per_day": xcsg_qpd, "legacy_quality_per_day": legacy_qpd,
+        "productivity_ratio": productivity_ratio, "xcsg_advantage": productivity_ratio,
+        "value_multiplier": productivity_ratio, "outcome_rate_ratio": productivity_ratio,
+    }
 
-    # Productivity = quality per person-day, xCSG vs legacy
-    xcsg_quality_per_day = round2(quality_score / xcsg_person_days) if quality_score is not None and xcsg_person_days else None
-    legacy_quality_per_day = round2(legacy_quality / legacy_person_days) if legacy_quality is not None and legacy_person_days else None
-    productivity_ratio = compute_ratio(xcsg_quality_per_day, legacy_quality_per_day)
 
+def _compute_smoothness_metrics(data: dict) -> dict:
+    """Compute rework efficiency metrics."""
     xcsg_smoothness = compute_xcsg_smoothness(data)
     legacy_smoothness = compute_legacy_smoothness(data)
     rework_efficiency = compute_ratio(xcsg_smoothness, legacy_smoothness)
+    return {"xcsg_smoothness": xcsg_smoothness, "legacy_smoothness": legacy_smoothness, "rework_efficiency": rework_efficiency}
 
-    machine_first_score = compute_machine_first_score(data)
-    senior_led_score = compute_senior_led_score(data)
-    proprietary_knowledge_score = compute_proprietary_knowledge_score(data)
+
+def _compute_flywheel_metrics(data: dict) -> dict:
+    """Compute flywheel pillar scores."""
+    mf = compute_machine_first_score(data)
+    sl = compute_senior_led_score(data)
+    pk = compute_proprietary_knowledge_score(data)
     raw_impact = score_pair_ratio(data, "e1_client_decision", "l15_legacy_e1_decision", E1_CLIENT_DECISION_SCORES)
-    client_impact = min(raw_impact, 10.0) if raw_impact is not None else None
-    data_independence = score_pair_ratio(data, "b6_data_analysis_split", "l16_legacy_b6_data", B6_DATA_ANALYSIS_SCORES)
+    ci = min(raw_impact, 10.0) if raw_impact is not None else None
+    di = score_pair_ratio(data, "b6_data_analysis_split", "l16_legacy_b6_data", B6_DATA_ANALYSIS_SCORES)
+    return {
+        "machine_first_score": mf, "senior_led_score": sl, "proprietary_knowledge_score": pk,
+        "overall_xcsg_score": average([mf, sl, pk]),
+        "client_impact": ci, "data_independence": di,
+    }
 
-    ai_survival_rate = compute_ai_survival_rate(data)
-    reuse_intent_score = compute_reuse_intent_score(data)
-    client_pulse_score = compute_client_pulse_score(data)
-    overall_xcsg_score = average([machine_first_score, senior_led_score, proprietary_knowledge_score])
-    has_expert_response = data.get("project_id") is not None or data.get("b1_starting_point") is not None
+
+def _compute_signal_metrics(data: dict) -> dict:
+    """Compute signal percentage metrics."""
+    return {
+        "ai_survival_rate": compute_ai_survival_rate(data),
+        "reuse_intent_score": compute_reuse_intent_score(data),
+        "client_pulse_score": compute_client_pulse_score(data),
+    }
+
+
+def compute_project_metrics(data: dict) -> dict:
+    effort = _compute_effort_metrics(data)
+    quality = _compute_quality_metrics(data, effort["xcsg_person_days"], effort["legacy_person_days"])
+    smoothness = _compute_smoothness_metrics(data)
+    flywheel = _compute_flywheel_metrics(data)
+    signals = _compute_signal_metrics(data)
 
     return {
         "id": data.get("id"),
@@ -250,40 +284,11 @@ def compute_project_metrics(data: dict) -> dict:
         "pioneer_name": data.get("pioneer_name", ""),
         "client_name": data.get("client_name"),
         "created_at": data.get("created_at", ""),
-        "has_expert_response": has_expert_response,
-        "calendar_days": calendar_days,
-        "xcsg_person_days": xcsg_person_days,
-        "legacy_person_days": legacy_person_days,
-        "effort_ratio": delivery_speed,
-        "delivery_speed": delivery_speed,
-        "quality_score": quality_score,
-        "quality_ratio": output_quality,
-        "output_quality": output_quality,
-        "legacy_quality": legacy_quality,
-        "legacy_quality_score": legacy_quality,
-        "xcsg_smoothness": xcsg_smoothness,
-        "legacy_smoothness": legacy_smoothness,
-        "rework_efficiency": rework_efficiency,
+        "has_expert_response": data.get("project_id") is not None or data.get("b1_starting_point") is not None,
         "outcome_rate_xcsg": None,
         "outcome_rate_legacy": None,
-        "outcome_rate_ratio": productivity_ratio,
-        "revenue_productivity_xcsg": revenue_productivity_xcsg,
-        "revenue_productivity_legacy": revenue_productivity_legacy,
-        "productivity_ratio": productivity_ratio,
-        "xcsg_quality_per_day": xcsg_quality_per_day,
-        "legacy_quality_per_day": legacy_quality_per_day,
-        "client_impact": client_impact,
-        "data_independence": data_independence,
-        "xcsg_advantage": productivity_ratio,
-        "value_multiplier": productivity_ratio,
-        "machine_first_score": machine_first_score,
-        "senior_led_score": senior_led_score,
-        "proprietary_knowledge_score": proprietary_knowledge_score,
-        "overall_xcsg_score": overall_xcsg_score,
-        "ai_survival_rate": ai_survival_rate,
-        "reuse_intent_score": reuse_intent_score,
-        "client_pulse_score": client_pulse_score,
         "legacy_overridden": bool(data.get("legacy_overridden", 0)),
+        **effort, **quality, **smoothness, **flywheel, **signals,
     }
 
 
@@ -311,19 +316,25 @@ def projects_to_next_checkpoint(completed_projects: int) -> int:
 
 
 def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
-    metrics_list = [compute_project_metrics(project) for project in complete_projects]
+    # Accept pre-computed metrics dicts (from averaged computation) or raw project dicts
+    metrics_list = []
+    for project in complete_projects:
+        if "delivery_speed" in project and "machine_first_score" in project:
+            metrics_list.append(project)  # already computed
+        else:
+            metrics_list.append(compute_project_metrics(project))
     deliverable_types = {project.get("deliverable_type") or project.get("category_name") for project in complete_projects if project.get("deliverable_type") or project.get("category_name")}
     avg_effort = average([m["effort_ratio"] for m in metrics_list])
     reuse_rate = round2((sum(1 for m in metrics_list if m["reuse_intent_score"] == 1.0) / len(metrics_list)) * 100) if metrics_list else None
-    d2_reuse_rate = round2((sum(1 for project in complete_projects if first_present(project, "d2_knowledge_reuse_xcsg", "d2_knowledge_reuse") == "Yes directly reused and extended") / len(complete_projects)) * 100) if complete_projects else None
+    d2_reuse_rate = round2((sum(1 for project in complete_projects if coalesce(project, "d2_knowledge_reuse_xcsg", "d2_knowledge_reuse") == "Yes directly reused and extended") / len(complete_projects)) * 100) if complete_projects else None
     client_invisible_quality = any(
-        first_present(project, "xcsg_revision_depth", "c4_revision_depth", "revision_depth", "xcsg_revision_rounds") in {"No revisions needed", "Cosmetic only", "0", "1", 0, 1}
+        coalesce(project, "xcsg_revision_depth", "c4_revision_depth", "revision_depth", "xcsg_revision_rounds") in {"No revisions needed", "Cosmetic only", "0", "1", 0, 1}
         and project.get("client_pulse") != "Below expectations"
         for project in complete_projects
     )
     # Transferability: F2 productization rate + cross-category pioneer count
-    f2_yes_count = sum(1 for project in complete_projects if first_present(project, "f2_productization") in {"Yes largely as-is", "Yes with moderate customization"})
-    f2_total = sum(1 for project in complete_projects if first_present(project, "f2_productization") is not None)
+    f2_yes_count = sum(1 for project in complete_projects if coalesce(project, "f2_productization") in {"Yes largely as-is", "Yes with moderate customization"})
+    f2_total = sum(1 for project in complete_projects if coalesce(project, "f2_productization") is not None)
     f2_rate = round2((f2_yes_count / f2_total) * 100) if f2_total else None
     f2_pass = f2_rate is not None and f2_rate >= 50
 
@@ -340,8 +351,12 @@ def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
     sorted_for_flywheel = sorted(complete_projects, key=lambda p: p.get("date_delivered") or p.get("date_started") or "")
     flywheel_first = sorted_for_flywheel[:5]
     flywheel_recent = sorted_for_flywheel[-5:] if len(sorted_for_flywheel) >= 10 else sorted_for_flywheel[5:]
-    flywheel_first_avg = average([compute_project_metrics(p)["xcsg_advantage"] for p in flywheel_first]) if flywheel_first else None
-    flywheel_recent_avg = average([compute_project_metrics(p)["xcsg_advantage"] for p in flywheel_recent]) if flywheel_recent else None
+    def _get_advantage(p):
+        if "xcsg_advantage" in p:
+            return p["xcsg_advantage"]
+        return compute_project_metrics(p)["xcsg_advantage"]
+    flywheel_first_avg = average([_get_advantage(p) for p in flywheel_first]) if flywheel_first else None
+    flywheel_recent_avg = average([_get_advantage(p) for p in flywheel_recent]) if flywheel_recent else None
     if flywheel_first_avg is not None and flywheel_recent_avg is not None:
         flywheel_pass = flywheel_recent_avg >= flywheel_first_avg
         flywheel_detail = f"First 5 avg: {round2(flywheel_first_avg)}x \u2192 Recent {len(flywheel_recent)} avg: {round2(flywheel_recent_avg)}x"
@@ -362,7 +377,13 @@ def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
 
 
 def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[dict]) -> dict:
-    metrics_list = [compute_project_metrics(project) for project in complete_projects]
+    # Accept pre-computed metrics dicts (from averaged computation) or raw project dicts
+    metrics_list = []
+    for project in complete_projects:
+        if "delivery_speed" in project and "machine_first_score" in project:
+            metrics_list.append(project)  # already computed
+        else:
+            metrics_list.append(compute_project_metrics(project))
     completed_count = len(metrics_list)
     total_count = len(all_projects)
     scaling_gates = compute_scaling_gates(complete_projects)
@@ -422,4 +443,56 @@ def compute_summary(complete_projects: list, total_projects: list) -> dict:
 
 
 def compute_trend_data(complete_projects: list) -> list:
-    return [compute_project_metrics(project) for project in complete_projects]
+    result = []
+    for project in complete_projects:
+        if "delivery_speed" in project and "machine_first_score" in project:
+            result.append(project)
+        else:
+            result.append(compute_project_metrics(project))
+    return result
+
+
+
+def compute_averaged_project_metrics(project: dict, responses: list[dict]) -> dict:
+    """Compute project metrics averaged across all pioneer responses.
+
+    - 0 responses: returns metrics from project data alone (no expert fields).
+    - 1 response: merges response into project and computes normally (v1.0 behaviour).
+    - N responses: computes metrics for each merged dict and averages numeric fields.
+    """
+    if not responses:
+        return compute_project_metrics(project)
+
+    if len(responses) == 1:
+        merged = dict(project)
+        merged.update(dict(responses[0]))
+        return compute_project_metrics(merged)
+
+    # Multiple responses — average numeric metric fields across all pioneers.
+    numeric_keys = [
+        "calendar_days", "xcsg_person_days", "legacy_person_days",
+        "effort_ratio", "delivery_speed", "quality_score", "quality_ratio",
+        "output_quality", "legacy_quality", "legacy_quality_score",
+        "xcsg_smoothness", "legacy_smoothness", "rework_efficiency",
+        "productivity_ratio", "xcsg_advantage", "value_multiplier",
+        "outcome_rate_ratio", "xcsg_quality_per_day", "legacy_quality_per_day",
+        "machine_first_score", "senior_led_score", "proprietary_knowledge_score",
+        "overall_xcsg_score", "client_impact", "data_independence",
+        "ai_survival_rate", "reuse_intent_score", "client_pulse_score",
+        "revenue_productivity_xcsg", "revenue_productivity_legacy",
+    ]
+
+    per_response_metrics = []
+    for response in responses:
+        merged = dict(project)
+        merged.update(dict(response))
+        per_response_metrics.append(compute_project_metrics(merged))
+
+    # Start with the first result as a base (preserves non-numeric fields).
+    result = dict(per_response_metrics[0])
+
+    for key in numeric_keys:
+        values = [m.get(key) for m in per_response_metrics]
+        result[key] = average(values)
+
+    return result

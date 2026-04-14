@@ -13,7 +13,7 @@ export default defineConfig({
     actionTimeout: 10_000,
   },
   webServer: {
-    command: 'cd .. && rm -f data/tracker.db && /usr/bin/python3 -m uvicorn backend.app:app --host 0.0.0.0 --port 8077',
+    command: 'cd .. && rm -f data/tracker.db && .venv/bin/python -m uvicorn backend.app:app --host 0.0.0.0 --port 8077',
     port: 8077,
     reuseExistingServer: true,
     timeout: 30_000,

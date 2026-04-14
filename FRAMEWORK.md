@@ -4,11 +4,12 @@ How the tracker measures whether AI-augmented consulting (xCSG) outperforms trad
 
 ## How It Works
 
-1. An internal user creates a project with timeline, team size, and category
+1. An internal user creates a project with timeline, team size, category, and assigns one or more pioneers
 2. Legacy defaults (calendar days, team size, revision rounds) are pre-filled from category norms
-3. The expert who completed the deliverable fills a structured survey comparing xCSG vs legacy
-4. The system computes metrics automatically from survey responses
+3. Each pioneer receives a unique assessment link and independently fills a structured survey comparing xCSG vs legacy
+4. The system computes metrics from all responses, averaged across pioneers and rounds
 5. Results feed into a portfolio dashboard with KPIs, charts, and scaling gates
+6. PMO monitors response progress via the Monitoring page
 
 ## Survey Structure
 
@@ -46,6 +47,38 @@ Admins can set default legacy estimates per project category (e.g., "Landscape A
 2. **Override tracking** — if the internal user changes the pre-filled values, the system flags it as overridden
 
 The norms dashboard shows computed aggregates (average speed, quality, value gain per category) derived from actual completed projects — not from the manually entered defaults.
+
+## Multi-Pioneer Assessment
+
+Projects can have multiple pioneers, each independently assessed over multiple rounds.
+
+### How it works
+
+- PMO assigns one or more pioneers when creating a project
+- Each pioneer gets their own unique assessment link
+- PMO sets a default number of rounds per project, with optional per-pioneer override
+- The same link works for all rounds — the system tracks which round the pioneer is on
+- PMO can optionally allow pioneers to see their previous answers
+
+### Metrics computation
+
+All expert responses for a project (across all pioneers and all rounds) are averaged:
+
+1. Each individual response is scored using the same formulas as a single-response project
+2. The per-response metrics are averaged to produce project-level metrics
+3. Dashboard, norms, and scaling gates use these averaged project-level metrics
+
+A project with 1 pioneer and 1 response computes identically to the original single-response model.
+
+### Project status
+
+| Status | Condition |
+|--------|-----------|
+| Pending | No responses received |
+| Partial | At least 1 response, but not all pioneers x rounds completed |
+| Complete | Every pioneer has completed all their rounds |
+
+Metrics are available on the dashboard as soon as the first response is submitted (partial status).
 
 ## Core Metrics
 
