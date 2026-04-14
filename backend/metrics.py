@@ -311,7 +311,13 @@ def projects_to_next_checkpoint(completed_projects: int) -> int:
 
 
 def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
-    metrics_list = [compute_project_metrics(project) for project in complete_projects]
+    # Accept pre-computed metrics dicts (from averaged computation) or raw project dicts
+    metrics_list = []
+    for project in complete_projects:
+        if "delivery_speed" in project and "machine_first_score" in project:
+            metrics_list.append(project)  # already computed
+        else:
+            metrics_list.append(compute_project_metrics(project))
     deliverable_types = {project.get("deliverable_type") or project.get("category_name") for project in complete_projects if project.get("deliverable_type") or project.get("category_name")}
     avg_effort = average([m["effort_ratio"] for m in metrics_list])
     reuse_rate = round2((sum(1 for m in metrics_list if m["reuse_intent_score"] == 1.0) / len(metrics_list)) * 100) if metrics_list else None
@@ -340,8 +346,12 @@ def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
     sorted_for_flywheel = sorted(complete_projects, key=lambda p: p.get("date_delivered") or p.get("date_started") or "")
     flywheel_first = sorted_for_flywheel[:5]
     flywheel_recent = sorted_for_flywheel[-5:] if len(sorted_for_flywheel) >= 10 else sorted_for_flywheel[5:]
-    flywheel_first_avg = average([compute_project_metrics(p)["xcsg_advantage"] for p in flywheel_first]) if flywheel_first else None
-    flywheel_recent_avg = average([compute_project_metrics(p)["xcsg_advantage"] for p in flywheel_recent]) if flywheel_recent else None
+    def _get_advantage(p):
+        if "xcsg_advantage" in p:
+            return p["xcsg_advantage"]
+        return compute_project_metrics(p)["xcsg_advantage"]
+    flywheel_first_avg = average([_get_advantage(p) for p in flywheel_first]) if flywheel_first else None
+    flywheel_recent_avg = average([_get_advantage(p) for p in flywheel_recent]) if flywheel_recent else None
     if flywheel_first_avg is not None and flywheel_recent_avg is not None:
         flywheel_pass = flywheel_recent_avg >= flywheel_first_avg
         flywheel_detail = f"First 5 avg: {round2(flywheel_first_avg)}x \u2192 Recent {len(flywheel_recent)} avg: {round2(flywheel_recent_avg)}x"
@@ -362,7 +372,13 @@ def compute_scaling_gates(complete_projects: list[dict]) -> list[dict]:
 
 
 def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[dict]) -> dict:
-    metrics_list = [compute_project_metrics(project) for project in complete_projects]
+    # Accept pre-computed metrics dicts (from averaged computation) or raw project dicts
+    metrics_list = []
+    for project in complete_projects:
+        if "delivery_speed" in project and "machine_first_score" in project:
+            metrics_list.append(project)  # already computed
+        else:
+            metrics_list.append(compute_project_metrics(project))
     completed_count = len(metrics_list)
     total_count = len(all_projects)
     scaling_gates = compute_scaling_gates(complete_projects)
@@ -422,7 +438,13 @@ def compute_summary(complete_projects: list, total_projects: list) -> dict:
 
 
 def compute_trend_data(complete_projects: list) -> list:
-    return [compute_project_metrics(project) for project in complete_projects]
+    result = []
+    for project in complete_projects:
+        if "delivery_speed" in project and "machine_first_score" in project:
+            result.append(project)
+        else:
+            result.append(compute_project_metrics(project))
+    return result
 
 
 

@@ -803,9 +803,11 @@ def list_projects(
     try:
         query = """SELECT DISTINCT p.*, pc.name as category_name
                    FROM projects p
-                   JOIN project_categories pc ON p.category_id = pc.id
-                   WHERE 1=1"""
+                   JOIN project_categories pc ON p.category_id = pc.id"""
         params = []
+        if pioneer:
+            query += " JOIN project_pioneers pp ON pp.project_id = p.id"
+        query += " WHERE 1=1"
         if status_filter:
             query += " AND p.status = ?"
             params.append(status_filter)
@@ -813,7 +815,7 @@ def list_projects(
             query += " AND p.category_id = ?"
             params.append(category_id)
         if pioneer:
-            query += " AND p.pioneer_name = ?"
+            query += " AND pp.pioneer_name = ?"
             params.append(pioneer)
         if client:
             query += " AND p.client_name = ?"
@@ -1312,14 +1314,14 @@ def get_activity_count() -> int:
 # ── Metrics helpers ───────────────────────────────────────────────────────────
 
 def list_complete_projects() -> list:
-    """Return all complete projects joined with expert_responses and category name."""
+    """Return projects with status 'partial' or 'complete' (have at least some responses)."""
     conn = get_connection()
     try:
         rows = conn.execute(
-            """SELECT p.*, pc.name as category_name, er.*
+            """SELECT DISTINCT p.*, pc.name as category_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
-               JOIN expert_responses er ON p.id = er.project_id
+               WHERE p.status IN ('partial', 'complete')
                ORDER BY p.created_at ASC"""
         ).fetchall()
         return [dict(r) for r in rows]
@@ -1332,7 +1334,7 @@ def update_project_client_pulse(project_id: int, client_pulse: str) -> bool:
 
 
 def list_norm_aggregates() -> list:
-    from backend.metrics import compute_project_metrics
+    from backend.metrics import compute_averaged_project_metrics
 
     completed = list_complete_projects()
     all_projects = list_projects()
@@ -1358,7 +1360,10 @@ def list_norm_aggregates() -> list:
     rows = []
     for cat_name, group in sorted(grouped.items()):
         items = group["items"]
-        metrics_list = [compute_project_metrics(item) for item in items]
+        metrics_list = []
+        for item in items:
+            responses = get_all_project_responses(item["id"])
+            metrics_list.append(compute_averaged_project_metrics(item, responses))
 
         rows.append({
             "category_id": group["category_id"],
