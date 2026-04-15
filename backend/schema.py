@@ -149,6 +149,26 @@ EXPERT_FIELDS = {
     "l16_legacy_b6_data":          {"label": "What % of time would traditional delivery spend on data sourcing?", "section": "L", "options": ["<25% on data", "25-50%", "50-75%", ">75% on data"]},
 }
 
+# Fields that must be filled for a round to be considered "complete" and recorded.
+# All scoring-critical fields across B/C/D/E/F/G/L. f2_productization is intentionally
+# excluded — it's a forward-looking signal, not a scoring input.
+REQUIRED_EXPERT_FIELDS = tuple(
+    k for k in EXPERT_FIELDS.keys() if k != "f2_productization"
+)
+
+
+def missing_required_fields(data: dict) -> list:
+    """Return the list of REQUIRED_EXPERT_FIELDS whose value in `data` is missing/blank."""
+    missing = []
+    for key in REQUIRED_EXPERT_FIELDS:
+        value = data.get(key)
+        if value is None:
+            missing.append(key)
+            continue
+        if isinstance(value, str) and not value.strip():
+            missing.append(key)
+    return missing
+
 # ── Metric definitions (for KPI tiles, chart tooltips, norms headers) ───────
 
 METRICS = {

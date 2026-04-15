@@ -37,7 +37,13 @@ from backend.models import (
     TrendData,
     UserInfo,
 )
-from backend.schema import EXPERT_FIELDS, MAX_PIONEERS_PER_PROJECT, MAX_ROUNDS_PER_PIONEER, build_schema_response
+from backend.schema import (
+    EXPERT_FIELDS,
+    MAX_PIONEERS_PER_PROJECT,
+    MAX_ROUNDS_PER_PIONEER,
+    build_schema_response,
+    missing_required_fields,
+)
 
 
 # ── Expert field options (derived from schema.py) ────────────────────────────
@@ -106,6 +112,7 @@ async def startup_event():
     db.migrate()
     db.migrate_v2()
     db.migrate_v11()
+    db.migrate_round_tokens()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -509,6 +516,42 @@ async def delete_project_pioneer(
     )
 
 
+@app.post("/api/pioneers/{pioneer_id}/rounds/{round_number}/issue")
+async def issue_pioneer_round(
+    pioneer_id: int,
+    round_number: int,
+    current_user: dict = Depends(auth.get_current_user_analyst),
+):
+    """Issue (or re-issue) a round token for a pioneer. Returns the new token row."""
+    try:
+        row = db.issue_round_token(pioneer_id, round_number, issued_by=current_user.get("sub"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db.log_activity(
+        current_user["sub"],
+        "round_issued",
+        details=f"Issued round {round_number} for pioneer #{pioneer_id}",
+    )
+    return row
+
+
+@app.delete("/api/pioneers/{pioneer_id}/rounds/{round_number}", status_code=204)
+async def cancel_pioneer_round(
+    pioneer_id: int,
+    round_number: int,
+    current_user: dict = Depends(auth.get_current_user_analyst),
+):
+    """Cancel a pending round token. Fails if the round is already completed."""
+    ok = db.cancel_round_token(pioneer_id, round_number)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Cannot cancel: round is completed or not issued")
+    db.log_activity(
+        current_user["sub"],
+        "round_cancelled",
+        details=f"Cancelled round {round_number} for pioneer #{pioneer_id}",
+    )
+
+
 # ── Schema (NO auth — public) ────────────────────────────────────────────────
 
 @app.get("/api/schema")
@@ -527,34 +570,33 @@ async def get_expert_options():
 
 @app.get("/api/expert/{token}", response_model=ExpertContextResponse)
 async def get_expert_context(token: str):
-    pioneer = db.get_pioneer_by_token(token)
-    if not pioneer:
+    tok = db.get_round_token(token)
+    if not tok:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
 
-    pioneer_id = pioneer["id"]
-    project_id = pioneer["project_id"]
-    responses = db.get_pioneer_responses(pioneer_id)
-    current_round = len(responses) + 1
-    total_rounds = pioneer.get("total_rounds") or pioneer.get("default_rounds") or 1
-    show_previous = bool(pioneer.get("show_previous") if pioneer.get("show_previous") is not None else pioneer.get("show_previous_answers"))
-    already_completed = current_round > total_rounds
+    pioneer_id = tok["pioneer_id"]
+    project_id = tok["project_id"]
+    current_round = tok["round_number"]
+    total_rounds = tok.get("total_rounds") or tok.get("default_rounds") or 1
+    show_previous = bool(tok.get("show_previous") if tok.get("show_previous") is not None else tok.get("show_previous_answers"))
+    already_completed = tok.get("completed_at") is not None
 
     previous_responses = None
-    if show_previous and responses:
-        previous_responses = responses
+    if show_previous:
+        previous_responses = db.get_pioneer_responses(pioneer_id)
 
     return ExpertContextResponse(
         project_id=project_id,
-        project_name=pioneer["project_name"],
-        category_name=pioneer["category_name"],
-        description=pioneer.get("description"),
-        client_name=pioneer.get("client_name"),
-        pioneer_name=pioneer["pioneer_name"],
-        date_started=pioneer.get("date_started"),
-        date_delivered=pioneer.get("date_delivered"),
-        xcsg_team_size=pioneer["xcsg_team_size"],
-        xcsg_calendar_days=pioneer.get("xcsg_calendar_days"),
-        engagement_stage=pioneer.get("engagement_stage"),
+        project_name=tok["project_name"],
+        category_name=tok["category_name"],
+        description=tok.get("description"),
+        client_name=tok.get("client_name"),
+        pioneer_name=tok["pioneer_name"],
+        date_started=tok.get("date_started"),
+        date_delivered=tok.get("date_delivered"),
+        xcsg_team_size=tok["xcsg_team_size"],
+        xcsg_calendar_days=tok.get("xcsg_calendar_days"),
+        engagement_stage=tok.get("engagement_stage"),
         already_completed=already_completed,
         pioneer_id=pioneer_id,
         current_round=current_round,
@@ -567,10 +609,10 @@ async def get_expert_context(token: str):
 @app.get("/api/expert/{token}/metrics", response_model=ExpertAssessmentMetrics)
 async def get_expert_metrics(token: str):
     """Return computed flywheel leg scores for a submitted expert assessment."""
-    pioneer = db.get_pioneer_by_token(token)
-    if not pioneer:
+    tok = db.get_round_token(token)
+    if not tok:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
-    project_id = pioneer["project_id"]
+    project_id = tok["project_id"]
 
     project_row = db.get_project(project_id)
     if not project_row:
@@ -594,42 +636,49 @@ async def get_expert_metrics(token: str):
 
 @app.post("/api/expert/{token}", status_code=201)
 async def submit_expert_response(token: str, body: ExpertResponseCreate):
-    pioneer = db.get_pioneer_by_token(token)
-    if not pioneer:
+    tok = db.get_round_token(token)
+    if not tok:
         raise HTTPException(status_code=404, detail="Expert link is invalid or has expired")
 
-    pioneer_id = pioneer["id"]
-    project_id = pioneer["project_id"]
-    existing_responses = db.get_pioneer_responses(pioneer_id)
-    current_round = len(existing_responses) + 1
-    total_rounds = pioneer.get("total_rounds") or pioneer.get("default_rounds") or 1
+    if tok.get("completed_at") is not None:
+        return {"already_completed": True, "message": "This round has already been submitted."}
 
-    if current_round > total_rounds:
-        return {"already_completed": True, "message": "All assessment rounds have been completed"}
+    pioneer_id = tok["pioneer_id"]
+    project_id = tok["project_id"]
+    current_round = tok["round_number"]
+    total_rounds = tok.get("total_rounds") or tok.get("default_rounds") or 1
 
     data = body.model_dump()
-    db.create_expert_response(pioneer_id, project_id, current_round, data)
+    missing = missing_required_fields(data)
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Survey is incomplete. Please answer every required field before submitting.",
+                "missing_fields": missing,
+            },
+        )
+
+    response_id = db.create_expert_response(pioneer_id, project_id, current_round, data)
+    db.complete_round_token(token, response_id)
     db.update_project_status(project_id)
 
     db.log_activity(
         1,
         "expert_submitted",
         project_id=project_id,
-        details=f"Expert assessment submitted for '{pioneer['project_name']}' (pioneer: {pioneer['pioneer_name']}, round {current_round}/{total_rounds})",
+        details=f"Expert assessment submitted for '{tok['project_name']}' (pioneer: {tok['pioneer_name']}, round {current_round}/{total_rounds})",
     )
 
-    # Compute and return metrics on successful submission
     project_row = db.get_project(project_id)
     responses = db.get_all_project_responses(project_id)
     metrics = mtx.compute_averaged_project_metrics(dict(project_row), responses)
-    rounds_remaining = max(total_rounds - current_round, 0)
     return {
         "success": True,
         "message": "Assessment submitted successfully",
         "metrics": metrics,
         "current_round": current_round,
         "total_rounds": total_rounds,
-        "rounds_remaining": rounds_remaining,
     }
 
 

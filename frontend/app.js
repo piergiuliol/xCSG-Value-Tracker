@@ -362,7 +362,23 @@ async function apiCall(method, endpoint, body = null) {
   if (res.status === 401) { handleLogout(); throw new Error('Session expired'); }
   if (res.status === 204) return null;
   const json = await res.json();
-  if (!res.ok) throw new Error(json.detail || json.message || `Error ${res.status}`);
+  if (!res.ok) {
+    // `detail` can be either a plain string or a structured object (e.g. the
+    // completeness gate returns {message, missing_fields}). Prefer message for
+    // the human-readable text but stash the whole object for callers that care.
+    let msg;
+    if (typeof json.detail === 'string') {
+      msg = json.detail;
+    } else if (json.detail && typeof json.detail === 'object') {
+      msg = json.detail.message || `Error ${res.status}`;
+    } else {
+      msg = json.message || `Error ${res.status}`;
+    }
+    const err = new Error(msg);
+    err.status = res.status;
+    err.detail = json.detail;
+    throw err;
+  }
   return json;
 }
 
@@ -1290,41 +1306,92 @@ function _renderPioneerTable(p, mc) {
 
   const section = document.createElement('fieldset');
   section.style.marginTop = '24px';
-  section.innerHTML = '<legend>Pioneers &amp; Assessment Links</legend>';
+  section.innerHTML = '<legend>Pioneers &amp; Assessment Rounds</legend>';
 
-  let html = '<table class="data-table"><thead><tr><th>Pioneer</th><th>Email</th><th>Round</th><th>Status</th><th>Last Submitted</th><th>Actions</th></tr></thead><tbody>';
+  const defaultRounds = p.default_rounds || 1;
+  const writer = canWrite();
+
+  let html = '<table class="data-table pioneer-rounds-table"><thead><tr><th>Pioneer</th><th>Email</th><th>Rounds</th>';
+  if (writer) html += '<th style="text-align:right">Actions</th>';
+  html += '</tr></thead><tbody>';
+
   for (const pi of pioneers) {
-    const totalRounds = pi.total_rounds || p.default_rounds || 1;
+    const totalRounds = pi.total_rounds || defaultRounds;
+    const rounds = pi.rounds || [];
     const responseCount = pi.response_count || 0;
-    const roundLabel = responseCount + ' of ' + totalRounds;
-    let statusBadge;
-    if (responseCount >= totalRounds) {
-      statusBadge = '<span class="badge badge-green">Complete</span>';
-    } else if (responseCount > 0) {
-      statusBadge = '<span class="badge badge-warning">Partial</span>';
-    } else {
-      statusBadge = '<span class="badge badge-orange">Pending</span>';
+
+    let roundsHtml = '<div class="round-chip-row">';
+    for (let r = 1; r <= totalRounds; r++) {
+      const existing = rounds.find(x => x.round_number === r);
+      let chip;
+      if (existing && existing.completed_at) {
+        const tip = 'Completed ' + formatDateTime(existing.completed_at);
+        chip = '<span class="round-chip round-chip-done" title="' + esc(tip) + '">R' + r + ' \u2713</span>';
+      } else if (existing) {
+        const link = window.location.origin + '/#expert/' + (existing.token || '');
+        const copyJs = 'event.stopPropagation();copyToClipboard(\'' + esc(link) + '\')';
+        const cancelJs = 'event.stopPropagation();cancelPioneerRound(' + p.id + ',' + pi.id + ',' + r + ')';
+        chip = '<span class="round-chip round-chip-pending" title="Pending — click Copy to send the link">R' + r + '</span>';
+        if (writer) {
+          chip += '<button class="btn btn-xs btn-secondary round-action" onclick="' + copyJs + '">Copy</button>'
+               + '<button class="btn btn-xs btn-ghost round-action" onclick="' + cancelJs + '" title="Cancel this round">\u00d7</button>';
+        }
+      } else {
+        const prevCompleted = r === 1 || (rounds.find(x => x.round_number === r - 1) && rounds.find(x => x.round_number === r - 1).completed_at);
+        if (prevCompleted && writer) {
+          const issueJs = 'event.stopPropagation();issuePioneerRound(' + p.id + ',' + pi.id + ',' + r + ')';
+          chip = '<span class="round-chip round-chip-empty">R' + r + '</span>'
+               + '<button class="btn btn-xs btn-primary round-action" onclick="' + issueJs + '">Issue</button>';
+        } else {
+          chip = '<span class="round-chip round-chip-locked" title="Issue after previous round is completed">R' + r + '</span>';
+        }
+      }
+      roundsHtml += '<span class="round-chip-group">' + chip + '</span>';
     }
-    const lastSubmitted = pi.last_submitted ? formatDateTime(pi.last_submitted) : '\u2014';
-    const link = window.location.origin + '/#expert/' + (pi.expert_token || '');
-    const copyBtn = pi.expert_token ? '<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();copyToClipboard(\'' + esc(link) + '\')">Copy Link</button>' : '';
-    const removeBtn = canWrite() && responseCount === 0 ? ' <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePioneer(' + p.id + ',' + pi.id + ',\'' + esc(pi.name || pi.pioneer_name) + '\')">Remove</button>' : '';
-    html += '<tr><td><strong>' + esc(pi.name || pi.pioneer_name || '') + '</strong></td>'
-      + '<td>' + esc(pi.email || pi.pioneer_email || '\u2014') + '</td>'
-      + '<td>' + roundLabel + '</td>'
-      + '<td>' + statusBadge + '</td>'
-      + '<td>' + lastSubmitted + '</td>'
-      + '<td class="actions-cell">' + copyBtn + removeBtn + '</td></tr>';
+    roundsHtml += '</div>';
+
+    const removeBtn = writer && responseCount === 0
+      ? '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePioneer(' + p.id + ',' + pi.id + ',\'' + esc(pi.name || pi.pioneer_name) + '\')">Remove</button>'
+      : '';
+
+    html += '<tr><td><strong>' + esc(pi.pioneer_name || pi.name || '') + '</strong></td>'
+      + '<td>' + esc(pi.pioneer_email || pi.email || '\u2014') + '</td>'
+      + '<td>' + roundsHtml + '</td>';
+    if (writer) html += '<td class="actions-cell" style="text-align:right">' + removeBtn + '</td>';
+    html += '</tr>';
   }
   html += '</tbody></table>';
-  if (canWrite()) {
+  if (writer) {
     html += '<button class="btn btn-secondary btn-sm" style="margin-top:12px" onclick="showAddPioneerForm(' + p.id + ')">+ Add Pioneer</button>';
   }
   section.innerHTML += html;
 
-  // Insert before the form's submit button area
   const form = mc.querySelector('#projectForm');
   if (form) form.appendChild(section);
+}
+
+
+async function issuePioneerRound(projectId, pioneerId, roundNumber) {
+  try {
+    const row = await apiCall('POST', '/pioneers/' + pioneerId + '/rounds/' + roundNumber + '/issue', {});
+    const link = window.location.origin + '/#expert/' + row.token;
+    showToast('Round ' + roundNumber + ' issued. Link copied to clipboard.');
+    copyToClipboard(link);
+    renderEditProject(projectId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function cancelPioneerRound(projectId, pioneerId, roundNumber) {
+  if (!confirm('Cancel the pending round ' + roundNumber + '? The issued link will stop working.')) return;
+  try {
+    await apiCall('DELETE', '/pioneers/' + pioneerId + '/rounds/' + roundNumber);
+    showToast('Round ' + roundNumber + ' cancelled.');
+    renderEditProject(projectId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 function removePioneer(projectId, pioneerId, name) {
@@ -2083,15 +2150,15 @@ async function renderExpert(token) {
         const result = await apiCall('POST', '/expert/' + token, payload);
         _expertClearStorage(token, currentRound);
         if (result.already_completed) {
-          ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This assessment was previously completed.</p></div>';
-        } else if (result.rounds_remaining && result.rounds_remaining > 0) {
-          // More rounds remaining
+          ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This round has already been recorded.</p></div>';
+        } else if (result.current_round && result.total_rounds && result.current_round < result.total_rounds) {
+          // More rounds remain, but the pioneer is done for this session.
+          // A fresh link will be sent by the PMO team when the next round opens.
           ec.innerHTML = '<div class="expert-thankyou">'
             + '<div class="thankyou-icon">&#10003;</div>'
             + '<h2>Round ' + result.current_round + ' of ' + result.total_rounds + ' Complete</h2>'
-            + '<p>Your responses for this round have been recorded.</p>'
-            + '<p style="margin-top:12px;color:var(--gray-600)">' + result.rounds_remaining + ' round' + (result.rounds_remaining > 1 ? 's' : '') + ' remaining. Use this same link for your next round.</p>'
-            + '<button class="btn btn-primary" style="margin-top:20px" onclick="renderExpert(\'' + esc(token) + '\')">Start Next Round</button>'
+            + '<p>Your responses for this round have been recorded. Thank you!</p>'
+            + '<p style="margin-top:12px;color:var(--gray-600)">You will receive a new assessment link when the next round is scheduled by the PMO team.</p>'
             + '</div>';
         } else {
           const m = result.metrics || {};
@@ -2128,7 +2195,25 @@ async function renderExpert(token) {
             + '</div></div>';
         }
       } catch (err) {
-        showToast(err.message, 'error');
+        if (err.status === 422 && err.detail && Array.isArray(err.detail.missing_fields)) {
+          const missing = err.detail.missing_fields;
+          showToast('Please answer all ' + missing.length + ' required question' + (missing.length === 1 ? '' : 's') + ' before submitting.', 'error');
+          document.querySelectorAll('.accordion-field').forEach(el => el.classList.remove('field-missing'));
+          missing.forEach(key => {
+            const el = document.querySelector('.accordion-field[data-key="' + key + '"]');
+            if (el) el.classList.add('field-missing');
+          });
+          const first = document.querySelector('.field-missing');
+          if (first) {
+            const sec = first.closest('.accordion-section');
+            if (sec && !sec.classList.contains('open')) {
+              _expertToggleAccordion(sec.dataset.section);
+            }
+            first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        } else {
+          showToast(err.message, 'error');
+        }
         btn.disabled = false;
         _expertUpdateProgress(totalFields);
       }

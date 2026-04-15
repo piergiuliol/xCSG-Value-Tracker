@@ -164,6 +164,21 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
             );
+
+            CREATE TABLE IF NOT EXISTS pioneer_round_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pioneer_id INTEGER NOT NULL,
+                round_number INTEGER NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                issued_by INTEGER,
+                completed_at TIMESTAMP,
+                response_id INTEGER,
+                FOREIGN KEY (pioneer_id) REFERENCES project_pioneers(id) ON DELETE CASCADE,
+                FOREIGN KEY (issued_by) REFERENCES users(id),
+                FOREIGN KEY (response_id) REFERENCES expert_responses(id),
+                UNIQUE(pioneer_id, round_number)
+            );
         """)
         conn.commit()
 
@@ -406,6 +421,76 @@ def migrate_v11() -> None:
         _migrate_v11_schema(conn)
         _migrate_v11_data(conn)
         _migrate_v11_indexes(conn)
+        conn.commit()
+
+
+def migrate_round_tokens() -> None:
+    """Create pioneer_round_tokens table and seed round 1 for existing pioneers.
+
+    The first round reuses the pioneer's existing expert_token so any in-flight
+    links survive the migration. Any existing expert_responses are marked as
+    completed on the matching round_token row (round > 1 gets a dead placeholder
+    token since there's no URL value to preserve).
+    """
+    with _db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pioneer_round_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pioneer_id INTEGER NOT NULL,
+                round_number INTEGER NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                issued_by INTEGER,
+                completed_at TIMESTAMP,
+                response_id INTEGER,
+                FOREIGN KEY (pioneer_id) REFERENCES project_pioneers(id) ON DELETE CASCADE,
+                FOREIGN KEY (issued_by) REFERENCES users(id),
+                FOREIGN KEY (response_id) REFERENCES expert_responses(id),
+                UNIQUE(pioneer_id, round_number)
+            )
+        """)
+
+        # Seed round 1 for every existing pioneer that doesn't already have one.
+        pioneers = conn.execute(
+            "SELECT id, expert_token, created_at FROM project_pioneers"
+        ).fetchall()
+        for pp in pioneers:
+            has_round1 = conn.execute(
+                "SELECT 1 FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = 1",
+                (pp["id"],),
+            ).fetchone()
+            if has_round1:
+                continue
+            conn.execute(
+                """INSERT INTO pioneer_round_tokens
+                   (pioneer_id, round_number, token, issued_at, issued_by)
+                   VALUES (?, 1, ?, ?, NULL)""",
+                (pp["id"], pp["expert_token"], pp["created_at"]),
+            )
+
+        # Mark tokens completed for every existing response.
+        responses = conn.execute(
+            "SELECT id, pioneer_id, round_number, submitted_at FROM expert_responses WHERE pioneer_id IS NOT NULL"
+        ).fetchall()
+        for r in responses:
+            existing = conn.execute(
+                "SELECT id FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+                (r["pioneer_id"], r["round_number"]),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE pioneer_round_tokens SET completed_at = ?, response_id = ? WHERE id = ?",
+                    (r["submitted_at"], r["id"], existing["id"]),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO pioneer_round_tokens
+                       (pioneer_id, round_number, token, issued_at, completed_at, response_id)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (r["pioneer_id"], r["round_number"], secrets.token_urlsafe(32),
+                     r["submitted_at"], r["submitted_at"], r["id"]),
+                )
+
         conn.commit()
 
 
@@ -741,15 +826,21 @@ def create_project(data: dict) -> int:
         )
         project_id = cur.lastrowid
 
-        # Create pioneer rows
+        # Create pioneer rows + auto-issue round 1 token for each.
         if pioneers_input:
             for p in pioneers_input:
                 token = secrets.token_urlsafe(32)
-                conn.execute(
+                cur_pp = conn.execute(
                     """INSERT INTO project_pioneers
                        (project_id, pioneer_name, pioneer_email, total_rounds, expert_token)
                        VALUES (?, ?, ?, ?, ?)""",
                     (project_id, p["name"], p.get("email"), p.get("total_rounds"), token),
+                )
+                conn.execute(
+                    """INSERT INTO pioneer_round_tokens
+                       (pioneer_id, round_number, token, issued_by)
+                       VALUES (?, 1, ?, ?)""",
+                    (cur_pp.lastrowid, token, data.get("created_by")),
                 )
 
         conn.commit()
@@ -846,7 +937,11 @@ def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
 # ── Pioneer CRUD ─────────────────────────────────────────────────────────────
 
 def list_pioneers(project_id: int) -> list:
-    """Return all pioneers for a project with response_count, last_round, last_submitted."""
+    """Return all pioneers for a project with response counts and round tokens.
+
+    Each pioneer dict gains a ``rounds`` list containing every round token row
+    (issued and/or completed) ordered by round_number.
+    """
     with _db() as conn:
         rows = conn.execute(
             """SELECT pp.*,
@@ -867,11 +962,28 @@ def list_pioneers(project_id: int) -> list:
                ORDER BY pp.created_at ASC""",
             (project_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        pioneers = [dict(r) for r in rows]
+        if not pioneers:
+            return pioneers
+        pioneer_ids = [p["id"] for p in pioneers]
+        placeholders = ",".join("?" for _ in pioneer_ids)
+        token_rows = conn.execute(
+            f"SELECT * FROM pioneer_round_tokens WHERE pioneer_id IN ({placeholders}) ORDER BY round_number ASC",
+            pioneer_ids,
+        ).fetchall()
+        by_pioneer: dict[int, list] = {}
+        for tr in token_rows:
+            by_pioneer.setdefault(tr["pioneer_id"], []).append(dict(tr))
+        for p in pioneers:
+            p["rounds"] = by_pioneer.get(p["id"], [])
+        return pioneers
 
 
-def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None) -> int:
-    """Add a new pioneer to an existing project. Returns the new pioneer id."""
+def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None) -> int:
+    """Add a new pioneer to an existing project and auto-issue round 1 token.
+
+    Returns the new pioneer id.
+    """
     token = secrets.token_urlsafe(32)
     with _db() as conn:
         cur = conn.execute(
@@ -879,8 +991,14 @@ def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int
                VALUES (?, ?, ?, ?, ?)""",
             (project_id, name, email, total_rounds, token),
         )
+        pioneer_id = cur.lastrowid
+        conn.execute(
+            """INSERT INTO pioneer_round_tokens (pioneer_id, round_number, token, issued_by)
+               VALUES (?, 1, ?, ?)""",
+            (pioneer_id, token, issued_by),
+        )
         conn.commit()
-        return cur.lastrowid
+        return pioneer_id
 
 
 def remove_pioneer(pioneer_id: int) -> bool:
@@ -916,11 +1034,20 @@ def update_pioneer(pioneer_id: int, data: dict) -> bool:
         return True
 
 
-def get_pioneer_by_token(token: str) -> Optional[dict]:
-    """Look up a pioneer by token, joining with project and category data."""
+def get_round_token(token: str) -> Optional[dict]:
+    """Look up a round token, joining pioneer, project, and category context.
+
+    Returns None if no round token with the given value exists. The returned
+    dict includes round_number, completed_at, and all pioneer/project fields
+    previously returned by get_pioneer_by_token.
+    """
     with _db() as conn:
         row = conn.execute(
-            """SELECT pp.*, p.project_name, p.category_id, p.client_name,
+            """SELECT prt.id AS token_row_id, prt.pioneer_id, prt.round_number,
+                      prt.token, prt.issued_at, prt.completed_at, prt.response_id,
+                      pp.pioneer_name, pp.pioneer_email, pp.total_rounds, pp.show_previous,
+                      pp.project_id,
+                      p.project_name, p.category_id, p.client_name,
                       p.description, p.date_started, p.date_delivered,
                       p.xcsg_calendar_days, p.working_days, p.xcsg_team_size,
                       p.xcsg_revision_rounds, p.revision_depth, p.xcsg_scope_expansion,
@@ -928,13 +1055,100 @@ def get_pioneer_by_token(token: str) -> Optional[dict]:
                       p.legacy_revision_rounds, p.legacy_overridden, p.engagement_stage,
                       p.default_rounds, p.show_previous_answers, p.status,
                       pc.name AS category_name
-               FROM project_pioneers pp
+               FROM pioneer_round_tokens prt
+               JOIN project_pioneers pp ON prt.pioneer_id = pp.id
                JOIN projects p ON pp.project_id = p.id
                JOIN project_categories pc ON p.category_id = pc.id
-               WHERE pp.expert_token = ?""",
+               WHERE prt.token = ?""",
             (token,),
         ).fetchone()
         return dict(row) if row else None
+
+
+def issue_round_token(pioneer_id: int, round_number: int, issued_by: Optional[int] = None) -> dict:
+    """Issue a new round token (or re-issue a pending one). Returns the token row as a dict.
+
+    Raises ValueError if the round is out of range, the previous round isn't
+    completed, or the target round is already completed.
+    """
+    with _db() as conn:
+        pp = conn.execute(
+            """SELECT pp.id, pp.total_rounds, p.default_rounds
+               FROM project_pioneers pp
+               JOIN projects p ON p.id = pp.project_id
+               WHERE pp.id = ?""",
+            (pioneer_id,),
+        ).fetchone()
+        if not pp:
+            raise ValueError(f"Pioneer {pioneer_id} not found")
+        total_rounds = pp["total_rounds"] or pp["default_rounds"] or 1
+        if round_number < 1 or round_number > total_rounds:
+            raise ValueError(f"Round {round_number} is out of range (1..{total_rounds})")
+        if round_number > 1:
+            prev = conn.execute(
+                "SELECT completed_at FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+                (pioneer_id, round_number - 1),
+            ).fetchone()
+            if not prev or prev["completed_at"] is None:
+                raise ValueError(f"Round {round_number - 1} must be completed before issuing round {round_number}")
+        existing = conn.execute(
+            "SELECT completed_at FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+            (pioneer_id, round_number),
+        ).fetchone()
+        if existing and existing["completed_at"]:
+            raise ValueError(f"Round {round_number} is already completed")
+
+        new_token = secrets.token_urlsafe(32)
+        if existing:
+            conn.execute(
+                """UPDATE pioneer_round_tokens
+                   SET token = ?, issued_at = CURRENT_TIMESTAMP, issued_by = ?
+                   WHERE pioneer_id = ? AND round_number = ?""",
+                (new_token, issued_by, pioneer_id, round_number),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO pioneer_round_tokens (pioneer_id, round_number, token, issued_by)
+                   VALUES (?, ?, ?, ?)""",
+                (pioneer_id, round_number, new_token, issued_by),
+            )
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT * FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+            (pioneer_id, round_number),
+        ).fetchone()
+        return dict(row)
+
+
+def cancel_round_token(pioneer_id: int, round_number: int) -> bool:
+    """Cancel a pending round token. Returns False if already completed or absent."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT completed_at FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+            (pioneer_id, round_number),
+        ).fetchone()
+        if not row or row["completed_at"] is not None:
+            return False
+        conn.execute(
+            "DELETE FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+            (pioneer_id, round_number),
+        )
+        conn.commit()
+        return True
+
+
+def complete_round_token(token: str, response_id: int) -> bool:
+    """Mark a pending round token as completed with the given response_id."""
+    with _db() as conn:
+        cur = conn.execute(
+            """UPDATE pioneer_round_tokens
+               SET completed_at = CURRENT_TIMESTAMP, response_id = ?
+               WHERE token = ? AND completed_at IS NULL""",
+            (response_id, token),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def get_pioneer_responses(pioneer_id: int) -> list:
