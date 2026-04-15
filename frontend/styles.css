@@ -565,6 +565,18 @@ legend {
   background: rgba(16, 185, 129, 0.12);
   color: #047857;
 }
+button.round-chip {
+  border: none;
+  font-family: inherit;
+  cursor: default;
+}
+button.round-chip-clickable {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+button.round-chip-clickable:hover {
+  background: rgba(16, 185, 129, 0.22);
+}
 .round-chip-pending {
   background: rgba(245, 158, 11, 0.14);
   color: #B45309;
@@ -831,6 +843,11 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   max-width: 95vw;
   padding: 32px;
   box-shadow: var(--shadow-lg);
+}
+.modal-card:has(.pioneer-round-modal) {
+  width: 900px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .modal-title {

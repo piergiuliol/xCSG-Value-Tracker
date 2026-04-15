@@ -1326,8 +1326,9 @@ function _renderPioneerTable(p, mc) {
       const existing = rounds.find(x => x.round_number === r);
       let chip;
       if (existing && existing.completed_at) {
-        const tip = 'Completed ' + formatDateTime(existing.completed_at);
-        chip = '<span class="round-chip round-chip-done" title="' + esc(tip) + '">R' + r + ' \u2713</span>';
+        const tip = 'Completed ' + formatDateTime(existing.completed_at) + ' \u2014 click to view responses';
+        const viewJs = 'event.stopPropagation();viewPioneerRound(' + pi.id + ',' + r + ')';
+        chip = '<button type="button" class="round-chip round-chip-done round-chip-clickable" title="' + esc(tip) + '" onclick="' + viewJs + '">R' + r + ' \u2713</button>';
       } else if (existing) {
         const link = window.location.origin + '/#expert/' + (existing.token || '');
         const copyJs = 'event.stopPropagation();copyToClipboard(\'' + esc(link) + '\')';
@@ -1402,6 +1403,19 @@ async function cancelPioneerRound(projectId, pioneerId, roundNumber) {
     await _refreshPioneerFieldset(projectId);
   } catch (err) {
     showToast(err.message, 'error');
+  }
+}
+
+async function viewPioneerRound(pioneerId, roundNumber) {
+  try {
+    const data = await apiCall('GET', '/pioneers/' + pioneerId + '/rounds/' + roundNumber);
+    const header = '<h3 style="color:var(--navy);margin-bottom:4px">' + esc(data.pioneer_name) + ' \u2014 Round ' + data.round_number + '</h3>'
+      + '<p style="color:var(--gray-500);font-size:13px;margin-bottom:16px">Submitted ' + esc(formatDateTime(data.submitted_at)) + '</p>';
+    const body = renderExpertAssessment(data.response, data.metrics || {});
+    const footer = '<div style="display:flex;justify-content:flex-end;margin-top:16px"><button type="button" class="btn btn-secondary btn-sm" onclick="hideModal()">Close</button></div>';
+    showModal('<div class="pioneer-round-modal">' + header + body + footer + '</div>');
+  } catch (err) {
+    showToast('Failed to load round: ' + err.message, 'error');
   }
 }
 

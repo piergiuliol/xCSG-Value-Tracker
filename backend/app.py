@@ -552,6 +552,40 @@ async def cancel_pioneer_round(
     )
 
 
+@app.get("/api/pioneers/{pioneer_id}/rounds/{round_number}")
+async def get_pioneer_round(
+    pioneer_id: int,
+    round_number: int,
+    current_user: dict = Depends(auth.get_current_user),
+):
+    """Return the completed response + per-round metrics for a pioneer round."""
+    responses = db.get_pioneer_responses(pioneer_id)
+    response = next((r for r in responses if r.get("round_number") == round_number), None)
+    if not response:
+        raise HTTPException(status_code=404, detail="Round has not been submitted")
+
+    with db._db() as conn:
+        pp = conn.execute(
+            "SELECT project_id, pioneer_name FROM project_pioneers WHERE id = ?",
+            (pioneer_id,),
+        ).fetchone()
+    if not pp:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+
+    project_row = db.get_project(pp["project_id"])
+    merged = dict(project_row)
+    merged.update(dict(response))
+    metrics = mtx.compute_project_metrics(merged)
+    return {
+        "round_number": round_number,
+        "pioneer_id": pioneer_id,
+        "pioneer_name": pp["pioneer_name"],
+        "submitted_at": response.get("submitted_at"),
+        "response": dict(response),
+        "metrics": metrics,
+    }
+
+
 # ── Schema (NO auth — public) ────────────────────────────────────────────────
 
 @app.get("/api/schema")
