@@ -1022,7 +1022,7 @@ async function renderNewProject(existing) {
     row.dataset.idx = idx;
     row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
       + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
-      + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" title="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Proj. default" style="width:110px"></div>`
+      + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" title="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:110px"></div>`
       + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
     container.appendChild(row);
     row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
