@@ -1333,15 +1333,15 @@ function _renderPioneerTable(p, mc) {
         const cancelJs = 'event.stopPropagation();cancelPioneerRound(' + p.id + ',' + pi.id + ',' + r + ')';
         chip = '<span class="round-chip round-chip-pending" title="Pending — click Copy to send the link">R' + r + '</span>';
         if (writer) {
-          chip += '<button class="btn btn-xs btn-secondary round-action" onclick="' + copyJs + '">Copy</button>'
-               + '<button class="btn btn-xs btn-ghost round-action" onclick="' + cancelJs + '" title="Cancel this round">\u00d7</button>';
+          chip += '<button type="button" class="btn btn-xs btn-secondary round-action" onclick="' + copyJs + '">Copy</button>'
+               + '<button type="button" class="btn btn-xs btn-ghost round-action" onclick="' + cancelJs + '" title="Cancel this round">\u00d7</button>';
         }
       } else {
         const prevCompleted = r === 1 || (rounds.find(x => x.round_number === r - 1) && rounds.find(x => x.round_number === r - 1).completed_at);
         if (prevCompleted && writer) {
           const issueJs = 'event.stopPropagation();issuePioneerRound(' + p.id + ',' + pi.id + ',' + r + ')';
           chip = '<span class="round-chip round-chip-empty">R' + r + '</span>'
-               + '<button class="btn btn-xs btn-primary round-action" onclick="' + issueJs + '">Issue</button>';
+               + '<button type="button" class="btn btn-xs btn-primary round-action" onclick="' + issueJs + '">Issue</button>';
         } else {
           chip = '<span class="round-chip round-chip-locked" title="Issue after previous round is completed">R' + r + '</span>';
         }
@@ -1351,7 +1351,7 @@ function _renderPioneerTable(p, mc) {
     roundsHtml += '</div>';
 
     const removeBtn = writer && responseCount === 0
-      ? '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePioneer(' + p.id + ',' + pi.id + ',\'' + esc(pi.name || pi.pioneer_name) + '\')">Remove</button>'
+      ? '<button type="button" class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePioneer(' + p.id + ',' + pi.id + ',\'' + esc(pi.name || pi.pioneer_name) + '\')">Remove</button>'
       : '';
 
     html += '<tr><td><strong>' + esc(pi.pioneer_name || pi.name || '') + '</strong></td>'
