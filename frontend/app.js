@@ -1305,6 +1305,7 @@ function _renderPioneerTable(p, mc) {
   if (!pioneers.length) return;
 
   const section = document.createElement('fieldset');
+  section.id = 'pioneerFieldset';
   section.style.marginTop = '24px';
   section.innerHTML = '<legend>Pioneers &amp; Assessment Rounds</legend>';
 
@@ -1375,9 +1376,19 @@ async function issuePioneerRound(projectId, pioneerId, roundNumber) {
   try {
     const row = await apiCall('POST', '/pioneers/' + pioneerId + '/rounds/' + roundNumber + '/issue', {});
     const link = window.location.origin + '/#expert/' + row.token;
-    showToast('Round ' + roundNumber + ' issued. Link copied to clipboard.');
-    copyToClipboard(link);
-    renderEditProject(projectId);
+    await _refreshPioneerFieldset(projectId);
+    // Show the link in a modal with a user-click Copy button. The clipboard
+    // API requires a user gesture, which is lost after the await above, so we
+    // can't auto-copy reliably.
+    showModal(
+      '<h3 style="color:var(--navy);margin-bottom:12px">Round ' + roundNumber + ' issued</h3>'
+      + '<p style="margin-bottom:12px">Send this link to the pioneer when ready. They can only open it once.</p>'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">'
+      + '<input type="text" value="' + esc(link) + '" readonly style="flex:1;padding:8px 10px;border:1px solid var(--gray-200);border-radius:4px;font-family:monospace;font-size:12px">'
+      + '<button type="button" class="btn btn-primary btn-sm" onclick="copyToClipboard(\'' + esc(link) + '\')">Copy</button>'
+      + '</div>'
+      + '<div style="display:flex;justify-content:flex-end"><button type="button" class="btn btn-secondary btn-sm" onclick="hideModal()">Done</button></div>'
+    );
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -1388,9 +1399,24 @@ async function cancelPioneerRound(projectId, pioneerId, roundNumber) {
   try {
     await apiCall('DELETE', '/pioneers/' + pioneerId + '/rounds/' + roundNumber);
     showToast('Round ' + roundNumber + ' cancelled.');
-    renderEditProject(projectId);
+    await _refreshPioneerFieldset(projectId);
   } catch (err) {
     showToast(err.message, 'error');
+  }
+}
+
+async function _refreshPioneerFieldset(projectId) {
+  // Partial refresh of only the pioneer fieldset — avoids re-rendering the whole
+  // project edit view (which would scroll to top and lose form state).
+  try {
+    const p = await apiCall('GET', '/projects/' + projectId);
+    const mc = document.getElementById('mainContent');
+    if (!mc) return;
+    const existing = document.getElementById('pioneerFieldset');
+    if (existing) existing.remove();
+    _renderPioneerTable(p, mc);
+  } catch (err) {
+    showToast('Failed to refresh pioneers: ' + err.message, 'error');
   }
 }
 
