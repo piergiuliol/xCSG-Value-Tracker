@@ -415,6 +415,25 @@ function round2(n) { return Math.round(n * 100) / 100; }
 function canWrite() { return state.user && state.user.role !== 'viewer'; }
 function isAdmin() { return state.user && state.user.role === 'admin'; }
 
+// Schedule variance (actual - expected) helpers — shared across form, tables, and dashboard.
+function scheduleDelta(dateExpected, dateActual) {
+  if (!dateExpected || !dateActual) return null;
+  const e = new Date(dateExpected), a = new Date(dateActual);
+  if (isNaN(e) || isNaN(a)) return null;
+  return Math.round((a - e) / 86400000);
+}
+function formatScheduleDelta(delta) {
+  if (delta == null) return '';
+  if (delta === 0) return 'On time';
+  return delta > 0 ? `+${delta}d late` : `${Math.abs(delta)}d early`;
+}
+function scheduleDeltaBadgeClass(delta) {
+  if (delta == null) return '';
+  if (delta <= 0) return 'badge-green';
+  if (delta <= 3) return 'badge-warning';
+  return 'badge-orange';
+}
+
 function optionsHTML(arr, selected) {
   return '<option value="">\u2014 Select \u2014</option>' +
     arr.map(v => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(v)}</option>`).join('');
@@ -681,6 +700,25 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
       <div class="metric-tile-label">${s.label} ${infoIcon(s.key)}</div>
     </div>`;
   }
+
+  // On-Time Delivery tile — proportion primary, avg delta secondary.
+  // Computed from the currently filtered project list so it reacts to category slicer.
+  const schedTracked = filtered.filter(p => scheduleDelta(p.date_expected_delivered, p.date_delivered) !== null);
+  const schedDeltas = schedTracked.map(p => scheduleDelta(p.date_expected_delivered, p.date_delivered));
+  const onTimeCount = schedDeltas.filter(d => d <= 0).length;
+  const onTimePct = schedTracked.length ? Math.round((onTimeCount / schedTracked.length) * 100) : null;
+  const avgDelta = schedTracked.length ? (schedDeltas.reduce((a, b) => a + b, 0) / schedTracked.length) : null;
+  const onTimeColor = onTimePct == null ? 'var(--gray-400)' : onTimePct >= 80 ? 'var(--success)' : onTimePct >= 60 ? 'var(--blue)' : onTimePct >= 40 ? 'var(--warning)' : 'var(--danger)';
+  const onTimeTip = schedTracked.length
+    ? `${onTimeCount}/${schedTracked.length} delivered on or before expected date`
+    : 'No projects with both expected and actual delivery dates yet.';
+  const avgDeltaLabel = avgDelta == null ? '' : (avgDelta === 0 ? 'avg on time' : (avgDelta > 0 ? `avg +${round2(avgDelta)}d late` : `avg ${round2(Math.abs(avgDelta))}d early`));
+  html += `<div class="metric-tile metric-tile-schedule" title="${esc(onTimeTip)}">
+    <div class="metric-tile-icon">\u23f1</div>
+    <div class="metric-tile-value" style="color:${onTimeColor}">${onTimePct == null ? '\u2014' : onTimePct + '%'}</div>
+    <div class="metric-tile-label">On-Time Delivery</div>
+    <div class="metric-tile-sub" style="font-size:11px;color:var(--gray-500);margin-top:4px">${esc(avgDeltaLabel)}</div>
+  </div>`;
   html += `</div>`;
 
   // ── CHART SECTIONS ──
@@ -703,6 +741,16 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     <div class="chart-row">
       <div class="chart-card"><div class="chart-card-title">xCSG Value Gain Over Time</div><div class="chart-card-explain">Quality per person-day (xCSG vs legacy) per project, ordered by delivery date. Rising = improving efficiency.</div><div class="chart-body" style="height:320px"><div id="chartAdvantageTrend" style="width:100%;height:100%"></div></div></div>
       <div class="chart-card"><div class="chart-card-title">Speed, Quality &amp; Value Gain</div><div class="chart-card-explain">All three ratios over time. Value Gain (dashed) = quality per person-day vs legacy. All above 1\xd7 = xCSG outperforms.</div><div class="chart-body" style="height:320px"><div id="chartSpeedQuality" style="width:100%;height:100%"></div></div></div>
+    </div>
+  </div>`;
+
+  html += `<div class="dashboard-section">
+    <div class="section-header">
+      <div class="section-icon">\u23f1</div>
+      <div><h2 class="section-title">Delivery Discipline</h2><p class="section-subtitle">Schedule variance by project</p></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card"><div class="chart-card-title">Schedule Variance</div><div class="chart-card-explain">Each dot is a project. Y = days between actual and expected delivery. Below 0 = early, above 0 = late. Only projects with both dates appear.</div><div class="chart-body" style="height:320px"><div id="chartSchedule" style="width:100%;height:100%"></div></div></div>
     </div>
   </div>`;
 
@@ -759,17 +807,22 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     </div>
     <div class="table-wrapper">
     <table class="data-table portfolio-table">
-      <thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th><th class="r">Actions</th></tr></thead><tbody>`;
+      <thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th><th class="r">Actions</th></tr></thead><tbody>`;
   for (const row of filtered) {
     const m = row.metrics || {};
     const rowPioneers = row.pioneers || [];
     const rowPioneerNames = rowPioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
     const pioneerDisplay = rowPioneerNames.length > 0 ? rowPioneerNames.length + ' pioneer' + (rowPioneerNames.length !== 1 ? 's' : '') : esc(row.pioneer_name || '\u2014');
     const pioneerTooltip = rowPioneerNames.join(', ') || row.pioneer_name || '';
+    const schedDelta = scheduleDelta(row.date_expected_delivered, row.date_delivered);
+    const schedCell = schedDelta == null
+      ? '<span style="color:var(--gray-400)">\u2014</span>'
+      : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(row.date_expected_delivered)} \xb7 Delivered: ${esc(row.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
     html += `<tr>
       <td><strong>${esc(row.project_name)}</strong></td>
       <td>${esc(row.category_name)}</td>
       <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
+      <td>${schedCell}</td>
       <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${fmtRatio(m.delivery_speed)}</td>
       <td class="r" style="color:${metricTone(m.output_quality)};font-weight:700">${fmtRatio(m.output_quality)}</td>
       <td class="r" style="color:${metricTone(m.productivity_ratio)};font-weight:800">${fmtRatio(m.productivity_ratio)}</td>
@@ -918,7 +971,7 @@ async function renderNewProject(existing) {
       <fieldset><legend>Project Info</legend>
         <div class="form-row">
           <div class="form-group"><label>Project Name *</label><input type="text" id="fName" value="${esc(p.project_name || '')}" required></div>
-          <div class="form-group"><label>Category * <span class="field-hint" title="Deliverable type. Used for category norms, benchmarking, and the scaling gate &quot;Multi-engagement&quot; (at least 2 types required).">&#9432;</span></label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
+          <div class="form-group"><label>Category * <span class="field-hint" data-hint="Deliverable type. Used for category norms, benchmarking, and the scaling gate &quot;Multi-engagement&quot; (at least 2 types required).">&#9432;</span></label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(p.client_name || '')}"></div>
@@ -937,12 +990,12 @@ async function renderNewProject(existing) {
         <button type="button" class="btn btn-secondary btn-sm" id="addPioneerBtn" style="margin-top:8px">+ Add Pioneer</button>
         <div class="form-row" style="margin-top:16px">
           <div class="form-group">
-            <label>Default Rounds <span class="field-hint" title="Number of times each pioneer will be surveyed. Set per-pioneer overrides in the Rounds column above.">&#9432;</span></label>
+            <label>Default Rounds <span class="field-hint" data-hint="Number of times each pioneer will be surveyed. Set per-pioneer overrides in the Rounds column above.">&#9432;</span></label>
             <input type="number" id="fDefaultRounds" min="1" max="10" value="${p.default_rounds || 1}" style="width:100px">
             <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">How many survey rounds per pioneer</span>
           </div>
           <div class="form-group">
-            <label>Show Previous Answers <span class="field-hint" title="When enabled, pioneers see their prior round responses (read-only) when starting a new round. Useful for longitudinal tracking.">&#9432;</span></label>
+            <label>Show Previous Answers <span class="field-hint" data-hint="When enabled, pioneers see their prior round responses (read-only) when starting a new round. Useful for longitudinal tracking.">&#9432;</span></label>
             <select id="fShowPrevious">
               <option value="0" ${!p.show_previous_answers ? 'selected' : ''}>No</option>
               <option value="1" ${p.show_previous_answers ? 'selected' : ''}>Yes</option>
@@ -952,9 +1005,10 @@ async function renderNewProject(existing) {
         </div>
       </fieldset>
 
-      <fieldset><legend>Timeline <span id="calendarDaysBadge" class="badge badge-info" style="font-size:11px"></span></legend>
+      <fieldset><legend>Timeline <span id="calendarDaysBadge" class="badge badge-info" style="font-size:11px"></span> <span id="scheduleDeltaBadge" class="badge" style="font-size:11px"></span></legend>
         <div class="form-row">
           <div class="form-group"><label>Date Started</label><input type="date" id="fDateStart" value="${p.date_started || ''}"></div>
+          <div class="form-group"><label>Expected Delivery <span class="field-hint" data-hint="Planned delivery date at kickoff. Can be updated when the plan changes. Used to compute schedule variance vs. actual delivery.">&#9432;</span></label><input type="date" id="fDateExpected" value="${p.date_expected_delivered || ''}"></div>
           <div class="form-group"><label>Date Delivered</label><input type="date" id="fDateEnd" value="${p.date_delivered || ''}"></div>
         </div>
       </fieldset>
@@ -963,19 +1017,19 @@ async function renderNewProject(existing) {
         <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Actual delivery metrics for this project using the xCSG approach. Team Size and Revision Rounds are required. Calendar Days auto-compute from dates if left blank. These feed into Delivery Speed = Legacy person-days \u00F7 xCSG person-days.</p>
         <div class="form-row">
           <div class="form-group">
-            <label>Calendar Days <span class="field-hint" title="Total elapsed calendar days for xCSG delivery. Auto-computed from dates if left blank.">&#9432;</span></label>
+            <label>Calendar Days <span class="field-hint" data-hint="Total elapsed calendar days for xCSG delivery. Auto-computed from dates if left blank.">&#9432;</span></label>
             <input type="number" id="fXDays" min="1" max="365" step="1" value="${esc(p.xcsg_calendar_days || '')}" placeholder="e.g. 5">
             <span class="field-warn" id="warnXDays"></span>
           </div>
           <div class="form-group">
-            <label>Team Size * <span class="field-hint" title="Number of people on the xCSG delivery team. Used to compute person-days (working days × team size).">&#9432;</span></label>
+            <label>Team Size * <span class="field-hint" data-hint="Number of people on the xCSG delivery team. Used to compute person-days (working days × team size).">&#9432;</span></label>
             <input type="number" id="fXTeam" min="1" max="50" step="1" value="${esc(p.xcsg_team_size || '')}" required placeholder="e.g. 2">
             <span class="field-warn" id="warnXTeam"></span>
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Revision Rounds * <span class="field-hint" title="How many revision cycles the xCSG deliverable went through. Feeds into the Rework Efficiency metric.">&#9432;</span></label>
+            <label>Revision Rounds * <span class="field-hint" data-hint="How many revision cycles the xCSG deliverable went through. Feeds into the Rework Efficiency metric.">&#9432;</span></label>
             <input type="number" id="fRevisions" min="0" max="20" step="1" value="${esc(p.xcsg_revision_rounds || '')}" required placeholder="e.g. 1">
             <span class="field-warn" id="warnRevisions"></span>
           </div>
@@ -1022,7 +1076,7 @@ async function renderNewProject(existing) {
     row.dataset.idx = idx;
     row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
       + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
-      + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" title="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:110px"></div>`
+      + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" data-hint="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:110px"></div>`
       + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
     container.appendChild(row);
     row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
@@ -1055,17 +1109,37 @@ async function renderNewProject(existing) {
     _renderPioneerTable(p, mc);
   }
 
-  // Calendar days auto-compute
+  // Calendar days auto-compute + schedule variance badge
   function updateCalendarDays() {
     const s = document.getElementById('fDateStart').value;
-    const e = document.getElementById('fDateEnd').value;
+    const expected = document.getElementById('fDateExpected').value;
+    const actual = document.getElementById('fDateEnd').value;
     const badge = document.getElementById('calendarDaysBadge');
-    if (s && e) {
-      const days = Math.round((new Date(e) - new Date(s)) / 86400000);
-      badge.textContent = days >= 0 ? days + ' calendar days' : '';
+    const schedBadge = document.getElementById('scheduleDeltaBadge');
+    const xDays = document.getElementById('fXDays');
+    const endForDays = actual || expected;
+    if (s && endForDays) {
+      const days = Math.round((new Date(endForDays) - new Date(s)) / 86400000);
+      if (days >= 0) {
+        badge.textContent = days + ' calendar days' + (actual ? '' : ' (est.)');
+        if (xDays && !xDays.value) { xDays.value = days; }
+      } else {
+        badge.textContent = '';
+      }
     } else { badge.textContent = ''; }
+    if (schedBadge) {
+      if (expected && actual) {
+        const delta = Math.round((new Date(actual) - new Date(expected)) / 86400000);
+        schedBadge.textContent = formatScheduleDelta(delta);
+        schedBadge.className = 'badge ' + scheduleDeltaBadgeClass(delta);
+      } else {
+        schedBadge.textContent = '';
+        schedBadge.className = 'badge';
+      }
+    }
   }
   document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);
+  document.getElementById('fDateExpected').addEventListener('change', updateCalendarDays);
   document.getElementById('fDateEnd').addEventListener('change', updateCalendarDays);
   updateCalendarDays();
 
@@ -1128,6 +1202,7 @@ async function renderNewProject(existing) {
       client_pulse: document.getElementById('fPulse').value || 'Not yet received',
       description: document.getElementById('fDesc').value || null,
       date_started: document.getElementById('fDateStart').value || null,
+      date_expected_delivered: document.getElementById('fDateExpected').value || null,
       date_delivered: document.getElementById('fDateEnd').value || null,
       xcsg_calendar_days: document.getElementById('fXDays').value || null,
       xcsg_team_size: document.getElementById('fXTeam').value,
@@ -1345,7 +1420,7 @@ async function renderProjects() {
         ${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>' : ''}
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
-        <th>Project</th><th>Category</th><th>Pioneers</th><th>Responses</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
+        <th>Project</th><th>Category</th><th>Pioneers</th><th>Responses</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody>`;
 
     for (const p of rows) {
@@ -1382,11 +1457,16 @@ async function renderProjects() {
       const deleteBtn = _isAdmin
         ? `<button class="btn-icon btn-danger-icon" title="Delete" onclick="event.stopPropagation();confirmDelete(${p.id},'${esc(p.project_name)}')">${trashSvg}</button>`
         : '';
+      const schedDelta = scheduleDelta(p.date_expected_delivered, p.date_delivered);
+      const schedCell = schedDelta == null
+        ? '<span style="color:var(--gray-400)">\u2014</span>'
+        : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(p.date_expected_delivered)} \xb7 Delivered: ${esc(p.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
       html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" onclick="window.location.hash='#edit/${p.id}'">
         <td>${esc(p.project_name)}</td>
         <td>${esc(p.category_name || '\u2014')}</td>
         <td title="${esc(pioneerTooltip)}">${esc(pioneerLabel)}</td>
         <td>${responsesLabel}</td>
+        <td>${schedCell}</td>
         <td>${qualityScore}</td>
         <td onclick="event.stopPropagation()">${pulseSelect}</td>
         <td>${statusBadge}</td>
@@ -1586,6 +1666,56 @@ function renderDashboardCharts(dashboard, allProjects) {
           lineStyle: { color: C.green, width: 3, type: 'dashed' }, itemStyle: { color: C.green, borderWidth: 2, borderColor: '#fff' } },
       ],
     });
+  }
+
+  // 4b. SCHEDULE VARIANCE — one dot per project, Y = actual - expected (days)
+  const sSched = ecInit('chartSchedule');
+  if (sSched) {
+    const pts = allProjects
+      .map(p => {
+        const delta = scheduleDelta(p.date_expected_delivered, p.date_delivered);
+        if (delta == null) return null;
+        return { name: p.project_name, cat: p.category_name, delta, expected: p.date_expected_delivered, actual: p.date_delivered };
+      })
+      .filter(Boolean)
+      .sort((a, b) => new Date(a.actual) - new Date(b.actual));
+    if (pts.length) {
+      const maxAbs = Math.max(...pts.map(p => Math.abs(p.delta)), 1);
+      const ySpan = Math.ceil(maxAbs * 1.2);
+      sSched.setOption({
+        tooltip: { ...tip(), trigger: 'item',
+          formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${esc(d.name)}</b><br><span style="opacity:.7">${esc(d.cat || '')}</span><br><br>Expected: <b>${d.expected}</b><br>Delivered: <b>${d.actual}</b><br>Delta: <b>${formatScheduleDelta(d.delta)}</b>`; } },
+        grid: { left: 60, right: 30, top: 30, bottom: 50 },
+        xAxis: { type: 'category', data: pts.map((_, i) => i + 1), name: 'Project (chronological)', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 10 } },
+        yAxis: { type: 'value', name: 'Days (actual \u2212 expected)', nameLocation: 'middle', nameGap: 45, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+          min: -ySpan, max: ySpan,
+          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(),
+          splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+        series: [{
+          type: 'scatter',
+          data: pts.map((d, i) => ({
+            value: [i, d.delta],
+            symbolSize: 22,
+            itemStyle: {
+              color: d.delta <= 0 ? C.green : (d.delta <= 3 ? C.orange : '#EF4444'),
+              borderColor: '#fff', borderWidth: 2,
+              shadowBlur: 6, shadowColor: d.delta <= 0 ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.3)',
+            },
+          })),
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: '#9CA3AF', width: 1.5 }, data: [{ yAxis: 0 }], label: { show: false } },
+          emphasis: { scale: 1.4 },
+        }],
+        graphic: [
+          { type: 'text', right: 30, top: 10, style: { text: 'Late \u25b2', fill: 'rgba(239,68,68,0.55)', fontSize: 12, fontWeight: 600 } },
+          { type: 'text', right: 30, bottom: 60, style: { text: 'Early \u25bc', fill: 'rgba(16,185,129,0.55)', fontSize: 12, fontWeight: 600 } },
+        ],
+      });
+    } else {
+      sSched.setOption({
+        graphic: [{ type: 'text', left: 'center', top: 'middle', style: { text: 'No projects with both expected and actual delivery dates yet.', fill: '#9CA3AF', fontSize: 13 } }],
+      });
+    }
   }
 
   // 5. CATEGORY BAR (show all with 1+ projects)

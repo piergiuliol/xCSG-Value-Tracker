@@ -3623,9 +3623,42 @@ input.expert-input:focus {
   font-size: 14px;
   margin-left: 4px;
   position: relative;
+  display: inline-block;
 }
 .field-hint:hover {
   color: var(--navy);
+}
+.field-hint[data-hint]:hover::after {
+  content: attr(data-hint);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--navy);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+  width: max-content;
+  max-width: 280px;
+  text-align: left;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+.field-hint[data-hint]:hover::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--navy);
+  z-index: 1000;
+  pointer-events: none;
 }
 
 /* Pioneer rows in project form */

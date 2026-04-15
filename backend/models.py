@@ -92,6 +92,7 @@ class ProjectCreate(BaseModel):
     client_pulse: Optional[str] = "Not yet received"
     description: Optional[str] = None
     date_started: Optional[str] = None
+    date_expected_delivered: Optional[str] = None
     date_delivered: Optional[str] = None
     xcsg_calendar_days: Optional[str] = None
     working_days: Optional[int] = None
@@ -123,6 +124,7 @@ class ProjectUpdate(BaseModel):
     client_pulse: Optional[str] = None
     description: Optional[str] = None
     date_started: Optional[str] = None
+    date_expected_delivered: Optional[str] = None
     date_delivered: Optional[str] = None
     xcsg_calendar_days: Optional[str] = None
     working_days: Optional[int] = None

@@ -41,8 +41,14 @@ def average(values: list[Optional[float]]) -> Optional[float]:
 
 def coalesce(data: dict, *keys: str) -> object:
     for key in keys:
-        if key and data.get(key) is not None:
-            return data.get(key)
+        if not key:
+            continue
+        value = data.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
     return None
 
 
@@ -83,6 +89,22 @@ def compute_calendar_days(date_started: Optional[str], date_delivered: Optional[
     except ValueError:
         return None
     return max((end - start).days, 1)
+
+
+def compute_schedule_delta(date_expected: Optional[str], date_delivered: Optional[str]) -> Optional[int]:
+    """Days by which actual delivery missed the expected date.
+
+    Returns `actual - expected` in calendar days. Negative = early, 0 = on time, positive = late.
+    Returns None if either date is missing or unparseable.
+    """
+    if not date_expected or not date_delivered:
+        return None
+    try:
+        expected = datetime.strptime(date_expected, "%Y-%m-%d")
+        actual = datetime.strptime(date_delivered, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return (actual - expected).days
 
 
 
@@ -205,6 +227,7 @@ def compute_legacy_smoothness(data: dict) -> Optional[float]:
 def _compute_effort_metrics(data: dict) -> dict:
     """Compute delivery speed and person-day metrics."""
     calendar_days = compute_calendar_days(data.get("date_started"), data.get("date_delivered"))
+    schedule_delta_days = compute_schedule_delta(data.get("date_expected_delivered"), data.get("date_delivered"))
     xcsg_person_days = compute_person_days(coalesce(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
     legacy_person_days = compute_person_days(coalesce(data, "l1_legacy_working_days", "legacy_working_days"), coalesce(data, "l2_legacy_team_size", "legacy_team_size"))
     delivery_speed = compute_ratio(legacy_person_days, xcsg_person_days)
@@ -212,7 +235,9 @@ def _compute_effort_metrics(data: dict) -> dict:
     revenue_productivity_xcsg = round2(engagement_revenue / xcsg_person_days) if engagement_revenue is not None and xcsg_person_days else None
     revenue_productivity_legacy = round2(engagement_revenue / legacy_person_days) if engagement_revenue is not None and legacy_person_days else None
     return {
-        "calendar_days": calendar_days, "xcsg_person_days": xcsg_person_days,
+        "calendar_days": calendar_days,
+        "schedule_delta_days": schedule_delta_days,
+        "xcsg_person_days": xcsg_person_days,
         "legacy_person_days": legacy_person_days, "delivery_speed": delivery_speed,
         "effort_ratio": delivery_speed,
         "revenue_productivity_xcsg": revenue_productivity_xcsg,
@@ -404,6 +429,26 @@ def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[
     reuse_intent_rate = round2((sum(1 for m in metrics_list if m["reuse_intent_score"] == 1.0) / completed_count) * 100) if completed_count else 0.0
     flywheel_health = average([machine_first_avg, senior_led_avg, proprietary_knowledge_avg, reuse_intent_avg]) or 0.0
 
+    # Schedule-variance aggregates over *all* projects with both expected & actual dates.
+    # Independent of expert completion — a project can be delivered before its survey is done.
+    schedule_series = []
+    for project in all_projects:
+        delta = compute_schedule_delta(project.get("date_expected_delivered"), project.get("date_delivered"))
+        if delta is None:
+            continue
+        schedule_series.append({
+            "project_id": project.get("id"),
+            "project_name": project.get("project_name"),
+            "category_name": project.get("category_name"),
+            "delta_days": delta,
+            "date_expected_delivered": project.get("date_expected_delivered"),
+            "date_delivered": project.get("date_delivered"),
+        })
+    schedule_tracked = len(schedule_series)
+    on_time_count = sum(1 for s in schedule_series if s["delta_days"] <= 0)
+    on_time_pct = round2((on_time_count / schedule_tracked) * 100) if schedule_tracked else None
+    avg_schedule_delta_days = round2(sum(s["delta_days"] for s in schedule_series) / schedule_tracked) if schedule_tracked else None
+
     return {
         "total_projects": total_count,
         "completed_count": completed_count,
@@ -428,6 +473,11 @@ def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[
         "ai_survival_avg": ai_survival_avg,
         "client_pulse_avg": client_pulse_avg,
         "overall_xcsg_avg": average([machine_first_avg, senior_led_avg, proprietary_knowledge_avg]) or 0.0,
+        "on_time_pct": on_time_pct,
+        "avg_schedule_delta_days": avg_schedule_delta_days,
+        "schedule_tracked_count": schedule_tracked,
+        "schedule_on_time_count": on_time_count,
+        "schedule_series": schedule_series,
         "checkpoint": determine_checkpoint(completed_count),
         "projects_to_next_checkpoint": projects_to_next_checkpoint(completed_count),
         "scaling_gates": scaling_gates,

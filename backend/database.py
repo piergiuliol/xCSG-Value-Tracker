@@ -61,6 +61,7 @@ def init_db() -> None:
                 pioneer_email TEXT,
                 description TEXT,
                 date_started TEXT,
+                date_expected_delivered TEXT,
                 date_delivered TEXT,
                 status TEXT DEFAULT 'expert_pending',
                 xcsg_calendar_days TEXT,
@@ -272,6 +273,8 @@ def _migrate_v11_schema(conn) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN default_rounds INTEGER DEFAULT 1")
     if "show_previous_answers" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN show_previous_answers INTEGER DEFAULT 0")
+    if "date_expected_delivered" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN date_expected_delivered TEXT")
 
     # Rebuild expert_responses to remove the UNIQUE constraint on project_id
     # and add pioneer_id + round_number columns
@@ -699,12 +702,12 @@ def create_project(data: dict) -> int:
             """INSERT INTO projects
                (created_by, project_name, category_id, client_name,
                 pioneer_name, pioneer_email, description,
-                date_started, date_delivered,
+                date_started, date_expected_delivered, date_delivered,
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
                 default_rounds, show_previous_answers, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -714,6 +717,7 @@ def create_project(data: dict) -> int:
                 pioneer_email_for_project,
                 data.get("description"),
                 data.get("date_started"),
+                data.get("date_expected_delivered"),
                 data.get("date_delivered"),
                 data.get("xcsg_calendar_days"),
                 data.get("working_days"),

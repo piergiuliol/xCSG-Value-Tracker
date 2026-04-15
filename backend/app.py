@@ -61,12 +61,14 @@ def _normalize_project_payload(data: dict) -> dict:
         normalized["xcsg_calendar_days"] = str(normalized["working_days"])
     if normalized.get("revision_depth") and normalized.get("xcsg_revision_rounds") is None:
         normalized["xcsg_revision_rounds"] = normalized["revision_depth"]
-    # Auto-compute working_days from dates if not provided
-    if normalized.get("working_days") is None and normalized.get("date_started") and normalized.get("date_delivered"):
+    # Auto-compute working_days from dates if not provided.
+    # Prefer actual delivery; fall back to expected delivery when actual is blank.
+    end_date = normalized.get("date_delivered") or normalized.get("date_expected_delivered")
+    if normalized.get("working_days") is None and normalized.get("date_started") and end_date:
         try:
             from datetime import date as _date
             s = _date.fromisoformat(normalized["date_started"])
-            e = _date.fromisoformat(normalized["date_delivered"])
+            e = _date.fromisoformat(end_date)
             # Business days approximation: total days * 5/7
             total = (e - s).days
             if total >= 0:
