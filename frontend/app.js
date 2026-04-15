@@ -659,7 +659,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
 
   // ── SLICER BAR ──
   html += `<div class="slicer-bar">
-    <span class="slicer-label">\xd83d\xdd0d Filter:</span>
+    <span class="slicer-label">\u{1F50D} Filter:</span>
     <button class="filter-chip ${!filterCategory ? 'filter-chip-active' : ''}" onclick="_sliceDashboard(null)">All</button>`;
   for (const cat of categories) {
     const count = allProjects.filter(p => p.category_name === cat).length;
