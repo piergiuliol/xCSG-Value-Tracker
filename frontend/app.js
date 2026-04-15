@@ -1109,7 +1109,9 @@ async function renderNewProject(existing) {
     _renderPioneerTable(p, mc);
   }
 
-  // Calendar days auto-compute + schedule variance badge
+  // Calendar days auto-compute + schedule variance badge.
+  // xDays is auto-filled from (actual || expected) and refreshes while still auto-filled.
+  // If the user types into it, the autofilled flag is cleared and we stop overwriting.
   function updateCalendarDays() {
     const s = document.getElementById('fDateStart').value;
     const expected = document.getElementById('fDateExpected').value;
@@ -1122,7 +1124,10 @@ async function renderNewProject(existing) {
       const days = Math.round((new Date(endForDays) - new Date(s)) / 86400000);
       if (days >= 0) {
         badge.textContent = days + ' calendar days' + (actual ? '' : ' (est.)');
-        if (xDays && !xDays.value) { xDays.value = days; }
+        if (xDays && (!xDays.value || xDays.dataset.autofilled === '1')) {
+          xDays.value = days;
+          xDays.dataset.autofilled = '1';
+        }
       } else {
         badge.textContent = '';
       }
@@ -1141,6 +1146,9 @@ async function renderNewProject(existing) {
   document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);
   document.getElementById('fDateExpected').addEventListener('change', updateCalendarDays);
   document.getElementById('fDateEnd').addEventListener('change', updateCalendarDays);
+  document.getElementById('fXDays').addEventListener('input', function () {
+    this.dataset.autofilled = '';
+  });
   updateCalendarDays();
 
   // Numeric field validation
