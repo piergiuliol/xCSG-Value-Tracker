@@ -862,7 +862,14 @@ function _renderDashboardView(allProjects, dashboard) {
 
   const fmtRatio = value => value == null ? '\u2014' : `${round2(value)}\xd7`;
   const fmtPct = value => value == null ? '\u2014' : `${Math.round(value * 100)}%`;
-  const metricTone = value => value == null ? 'var(--gray-400)' : value > 1.5 ? 'var(--success)' : value >= 1.0 ? 'var(--blue)' : value >= 0.8 ? 'var(--warning)' : 'var(--danger)';
+  const metricTone = value => {
+    if (value == null) return 'var(--gray-400)';
+    const t = schema.dashboard.thresholds.metric_tone;
+    if (value > t.success_above) return 'var(--success)';
+    if (value >= t.blue_above) return 'var(--blue)';
+    if (value >= t.warning_above) return 'var(--warning)';
+    return 'var(--danger)';
+  };
 
   let html = '';
 
@@ -884,57 +891,58 @@ function _renderDashboardView(allProjects, dashboard) {
   // ── FILTER BAR (populated by Task 11) ──
   html += `<div id="filterBar"></div>`;
 
-  // ── KPI GRID ──
-  const kpis = [
-    { label: 'Delivery Speed', key: 'delivery_speed', value: localMetrics.average_effort_ratio, fmt: fmtRatio, icon: '\u26a1', tip: 'How much faster xCSG delivers vs legacy. Calculated as legacy person-days \xf7 xCSG person-days. 2\xd7 = xCSG took half the effort.' },
-    { label: 'Output Quality', key: 'output_quality', value: localMetrics.average_quality_ratio, fmt: fmtRatio, icon: '\u2b50', tip: 'xCSG output quality \xf7 legacy quality. Based on analytical depth, decision readiness, and self-assessment. 1.5\xd7 = 50% better quality.' },
-    { label: 'Rework Efficiency', key: 'rework_efficiency', value: localMetrics.rework_efficiency_avg, fmt: fmtRatio, icon: '\ud83d\udd27', tip: 'xCSG revision/rework burden vs legacy. Combines revision depth, scope changes, and client reaction. Higher = smoother delivery.' },
-    { label: 'Machine-First Gain', key: 'machine_first_score', value: localMetrics.machine_first_avg, fmt: fmtRatio, icon: '\ud83e\udd16', tip: 'xCSG knowledge synthesis breadth vs legacy. From single-source to broad systematic synthesis. Higher = more automation leverage.' },
-    { label: 'Senior-Led Gain', key: 'senior_led_score', value: localMetrics.senior_led_avg, fmt: fmtRatio, icon: '\ud83d\udc54', tip: 'Senior expert involvement in xCSG vs legacy. Averages specialization depth, directness of authorship, and judgment time. Higher = more expert-driven.' },
-    { label: 'Knowledge Gain', key: 'proprietary_knowledge_score', value: localMetrics.proprietary_knowledge_avg, fmt: fmtRatio, icon: '\ud83c\udff0', tip: 'Proprietary knowledge advantage. Averages proprietary data use, knowledge reuse, and competitive moat vs legacy. Higher = harder to replicate.' },
-    { label: 'Client Impact', key: 'client_impact', value: localMetrics.client_impact_avg, fmt: fmtRatio, icon: '\ud83d\udca5', tip: 'Did xCSG work drive client decisions more than legacy would have? Ratio of decision influence scores, capped at 10\xd7.' },
-    { label: 'Data Independence', key: 'data_independence', value: localMetrics.data_independence_avg, fmt: fmtRatio, icon: '\ud83d\udcca', tip: 'How efficiently xCSG uses data vs legacy. Less time on sourcing, more on analysis. Higher = more insight per data effort.' },
-  ];
-  const signals = [
-    { label: 'Reuse Intent', key: 'reuse_intent_avg', value: localMetrics.reuse_intent_avg, fmt: fmtPct, icon: '\ud83d\udd04', tip: 'Expert loyalty signal. Would they choose xCSG again? 100% = all said "yes without hesitation", 50% = mixed, 0% = all said no.' },
-    { label: 'AI Survival', key: 'ai_survival_avg', value: localMetrics.ai_survival_avg, fmt: fmtPct, icon: '\ud83c\udf0d', tip: 'How much of the initial AI-generated draft made it into the final deliverable unchanged. Higher = AI produced better starting material.' },
-    { label: 'Client Pulse', key: 'client_pulse_avg', value: localMetrics.client_pulse_avg, fmt: fmtPct, icon: '\u2764', tip: 'How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below.' },
-  ];
-
-  html += `<div class="metrics-grid">`;
-  for (const k of kpis) {
-    html += `<div class="metric-tile" title="${k.tip}">
-      <div class="metric-tile-icon">${k.icon}</div>
-      <div class="metric-tile-value" style="color:${metricTone(k.value)}">${k.fmt(k.value)}</div>
-      <div class="metric-tile-label">${k.label} ${infoIcon(k.key)}</div>
-    </div>`;
-  }
-  for (const s of signals) {
-    html += `<div class="metric-tile metric-tile-signal" title="${s.tip}">
-      <div class="metric-tile-icon">${s.icon}</div>
-      <div class="metric-tile-value" style="color:${metricTone(s.value)}">${s.fmt(s.value)}</div>
-      <div class="metric-tile-label">${s.label} ${infoIcon(s.key)}</div>
-    </div>`;
-  }
-
-  // On-Time Delivery tile — proportion primary, avg delta secondary.
-  // Computed from the currently filtered project list so it reacts to category slicer.
+  // ── KPI GRID (driven by schema.dashboard.kpi_tiles + schema.metrics) ──
+  // On-Time Delivery is the only synthetic tile — compute value + sub-label from
+  // the currently filtered project list so it reacts to the category slicer.
   const schedTracked = filtered.filter(p => scheduleDelta(p.date_expected_delivered, p.date_delivered) !== null);
   const schedDeltas = schedTracked.map(p => scheduleDelta(p.date_expected_delivered, p.date_delivered));
   const onTimeCount = schedDeltas.filter(d => d <= 0).length;
   const onTimePct = schedTracked.length ? Math.round((onTimeCount / schedTracked.length) * 100) : null;
   const avgDelta = schedTracked.length ? (schedDeltas.reduce((a, b) => a + b, 0) / schedTracked.length) : null;
-  const onTimeColor = onTimePct == null ? 'var(--gray-400)' : onTimePct >= 80 ? 'var(--success)' : onTimePct >= 60 ? 'var(--blue)' : onTimePct >= 40 ? 'var(--warning)' : 'var(--danger)';
   const onTimeTip = schedTracked.length
     ? `${onTimeCount}/${schedTracked.length} delivered on or before expected date`
     : 'No projects with both expected and actual delivery dates yet.';
   const avgDeltaLabel = avgDelta == null ? '' : (avgDelta === 0 ? 'avg on time' : (avgDelta > 0 ? `avg +${round2(avgDelta)}d late` : `avg ${round2(Math.abs(avgDelta))}d early`));
-  html += `<div class="metric-tile metric-tile-schedule" title="${esc(onTimeTip)}">
-    <div class="metric-tile-icon">\u23f1</div>
-    <div class="metric-tile-value" style="color:${onTimeColor}">${onTimePct == null ? '\u2014' : onTimePct + '%'}</div>
-    <div class="metric-tile-label">On-Time Delivery</div>
-    <div class="metric-tile-sub" style="font-size:11px;color:var(--gray-500);margin-top:4px">${esc(avgDeltaLabel)}</div>
-  </div>`;
+
+  const tileDefs = schema.dashboard.kpi_tiles.map(t => {
+    const meta = t.synthetic ? t : (schema.metrics[t.metric_key] || {});
+    return {
+      label: meta.label || t.metric_key,
+      icon: meta.icon || '',
+      tip: meta.tip || '',
+      format: meta.format || 'ratio',
+      serverKey: t.server_key || t.metric_key,
+      synthetic: !!t.synthetic,
+      metricKey: t.metric_key,
+    };
+  });
+
+  html += `<div class="metrics-grid">`;
+  for (const def of tileDefs) {
+    let value, fmt, tip;
+    if (def.synthetic && def.metricKey === 'on_time_delivery_pct') {
+      // onTimePct is already 0-100; divide by 100 so fmtPct renders it correctly.
+      value = onTimePct == null ? null : onTimePct / 100;
+      fmt = fmtPct;
+      tip = onTimeTip;
+    } else {
+      value = localMetrics[def.serverKey];
+      fmt = def.format === 'pct' ? fmtPct : fmtRatio;
+      tip = def.tip;
+    }
+    const extraClass = def.synthetic
+      ? ' metric-tile-schedule'
+      : (def.format === 'pct' ? ' metric-tile-signal' : '');
+    const subHtml = (def.synthetic && def.metricKey === 'on_time_delivery_pct' && avgDeltaLabel)
+      ? `<div class="metric-tile-sub" style="font-size:11px;color:var(--gray-500);margin-top:4px">${esc(avgDeltaLabel)}</div>`
+      : '';
+    html += `<div class="metric-tile${extraClass}" title="${esc(tip)}">
+      <div class="metric-tile-icon">${def.icon}</div>
+      <div class="metric-tile-value" style="color:${metricTone(value)}">${fmt(value)}</div>
+      <div class="metric-tile-label">${esc(def.label)} ${infoIcon(def.metricKey)}</div>
+      ${subHtml}
+    </div>`;
+  }
   html += `</div>`;
 
   // ── CHART SECTIONS (rendered via tab shell, Task 13) ──
