@@ -234,7 +234,7 @@ def migrate_v12() -> None:
     - On subsequent runs, only runs INSERT OR IGNORE for the seed, so
       admin-added categories/practices survive.
     """
-    from backend.taxonomy_seed import CATEGORIES, PRACTICES
+    from backend.taxonomy_seed import CATEGORIES, CATEGORY_PRACTICE_PAIRS, PRACTICES
 
     with _db() as conn:
         existing_tables = {
@@ -253,6 +253,19 @@ def migrate_v12() -> None:
                 name TEXT NOT NULL,
                 description TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # 1b. Create category_practices junction table (many-to-many).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS category_practices (
+                category_id INTEGER NOT NULL,
+                practice_id INTEGER NOT NULL,
+                PRIMARY KEY (category_id, practice_id),
+                FOREIGN KEY (category_id) REFERENCES project_categories(id) ON DELETE CASCADE,
+                FOREIGN KEY (practice_id) REFERENCES practices(id) ON DELETE CASCADE
             )
             """
         )
@@ -293,6 +306,19 @@ def migrate_v12() -> None:
             conn.execute(
                 "INSERT OR IGNORE INTO project_categories (name, description) VALUES (?, ?)",
                 (name, None),
+            )
+
+        # 6. Seed category↔practice pairings (idempotent — PK is the pair).
+        cat_ids = {row["name"]: row["id"] for row in conn.execute("SELECT id, name FROM project_categories").fetchall()}
+        prac_ids = {row["code"]: row["id"] for row in conn.execute("SELECT id, code FROM practices").fetchall()}
+        for cat_name, prac_code in CATEGORY_PRACTICE_PAIRS:
+            cid = cat_ids.get(cat_name)
+            pid = prac_ids.get(prac_code)
+            if cid is None or pid is None:
+                continue  # defensive; should not happen given seed_taxonomy asserts
+            conn.execute(
+                "INSERT OR IGNORE INTO category_practices (category_id, practice_id) VALUES (?, ?)",
+                (cid, pid),
             )
 
         conn.commit()
@@ -763,9 +789,48 @@ def delete_user(user_id: int) -> bool:
 # ── Project Categories ───────────────────────────────────────────────────────
 
 def list_categories() -> list:
+    """Return all categories with their allowed practice ids + codes."""
     with _db() as conn:
         rows = conn.execute("SELECT * FROM project_categories ORDER BY name").fetchall()
+        cats = [dict(r) for r in rows]
+        # Attach allowed practices for each category from the junction table.
+        pairs = conn.execute("""
+            SELECT cp.category_id, p.id AS practice_id, p.code, p.name
+            FROM category_practices cp
+            JOIN practices p ON p.id = cp.practice_id
+            ORDER BY p.code
+        """).fetchall()
+        by_cat: dict = {}
+        for pr in pairs:
+            by_cat.setdefault(pr["category_id"], []).append(
+                {"id": pr["practice_id"], "code": pr["code"], "name": pr["name"]}
+            )
+        for c in cats:
+            c["practices"] = by_cat.get(c["id"], [])
+        return cats
+
+
+def get_practices_for_category(category_id: int) -> list:
+    """Return the practices allowed for a given category (empty list if none)."""
+    with _db() as conn:
+        rows = conn.execute("""
+            SELECT p.id, p.code, p.name
+            FROM practices p
+            JOIN category_practices cp ON cp.practice_id = p.id
+            WHERE cp.category_id = ?
+            ORDER BY p.code
+        """, (category_id,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def is_practice_allowed_for_category(category_id: int, practice_id: int) -> bool:
+    """Return True iff the (category_id, practice_id) pair is in category_practices."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM category_practices WHERE category_id = ? AND practice_id = ?",
+            (category_id, practice_id),
+        ).fetchone()
+        return row is not None
 
 
 def get_category(category_id: int) -> Optional[sqlite3.Row]:

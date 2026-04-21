@@ -393,8 +393,16 @@ async def create_project(
     if not cat:
         raise HTTPException(status_code=400, detail="Invalid category_id")
 
-    if body.practice_id is not None and not db.get_practice(body.practice_id):
-        raise HTTPException(status_code=400, detail="Invalid practice_id")
+    if body.practice_id is not None:
+        if not db.get_practice(body.practice_id):
+            raise HTTPException(status_code=400, detail="Invalid practice_id")
+        if not db.is_practice_allowed_for_category(body.category_id, body.practice_id):
+            allowed = db.get_practices_for_category(body.category_id)
+            codes = [a["code"] for a in allowed]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Practice is not allowed for this category. Allowed: {codes}",
+            )
 
     if len(body.pioneers) > MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
