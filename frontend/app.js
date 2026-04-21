@@ -841,7 +841,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     </div>
     <div class="table-wrapper">
     <table class="data-table portfolio-table">
-      <thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th><th class="r">Actions</th></tr></thead><tbody>`;
+      <thead><tr><th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th><th class="r">Actions</th></tr></thead><tbody>`;
   for (const row of filtered) {
     const m = row.metrics || {};
     const rowPioneers = row.pioneers || [];
@@ -855,6 +855,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     html += `<tr>
       <td><strong>${esc(row.project_name)}</strong></td>
       <td>${esc(row.category_name)}</td>
+      <td>${esc(row.practice_code || '—')}</td>
       <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
       <td>${schedCell}</td>
       <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${fmtRatio(m.delivery_speed)}</td>
