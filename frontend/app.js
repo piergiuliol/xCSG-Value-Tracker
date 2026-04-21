@@ -1735,7 +1735,9 @@ function renderDashboardCharts(dashboard, allProjects) {
   if (typeof echarts === 'undefined') return;
   Object.keys(ec).forEach(k => { ec[k].dispose(); delete ec[k]; });
   echarts.registerTheme;
-  const done = allProjects.filter(p => p.status === 'complete' && p.metrics);
+  // Include both 'complete' and 'partial' — metrics are computed as soon as one
+  // pioneer submits a response, so partial projects have meaningful data.
+  const done = allProjects.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
 
   // 1. SCATTER
   const s1 = ecInit('chartDisprove');
