@@ -794,6 +794,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     </div>
     <div class="chart-row">
       <div class="chart-card"><div class="chart-card-title">By Category</div><div class="chart-card-explain">Average xCSG advantage by deliverable type. Longer bars = stronger performance in that category.</div><div class="chart-body" style="height:260px"><div id="chartCategory" style="width:100%;height:100%"></div></div></div>
+      <div class="chart-card"><div class="chart-card-title">By Practice</div><div class="chart-card-explain">Average xCSG advantage by practice. Shows which practice delivers the most value.</div><div class="chart-body" style="height:260px"><div id="chartPractice" style="width:100%;height:100%"></div></div></div>
       <div class="chart-card"><div class="chart-card-title">By Pioneer</div><div class="chart-card-explain">Average xCSG advantage by pioneer lead. Shows which team members drive the most value.</div><div class="chart-body" style="height:260px"><div id="chartPioneer" style="width:100%;height:100%"></div></div></div>
     </div>
     <div class="chart-row" style="margin-top:20px">
@@ -1891,6 +1892,31 @@ function renderDashboardCharts(dashboard, allProjects) {
     }
   }
 
+  // 5b. PRACTICE BAR — mirror of category chart, groups by practice_code
+  const sPr = ecInit('chartPractice');
+  if (sPr && done.length) {
+    const byPr = {};
+    done.forEach(p => { const code = p.practice_code || 'Unassigned'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byPr[code]) byPr[code] = []; byPr[code].push(v); } });
+    let prE = Object.entries(byPr).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+    const prMore = prE.length > 8 ? prE.slice(8) : [];
+    prE = prE.slice(0, 8);
+    const prH = Math.max(260, prE.length * 38 + 40);
+    document.getElementById('chartPractice')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', prH + 'px');
+    if (prE.length) {
+      sPr.setOption({
+        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+          formatter: ps => { const d = prE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+        grid: { left: 140, right: 50, top: 5, bottom: prMore.length ? 25 : 10 },
+        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+        yAxis: { type: 'category', data: prE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
+        series: [{ type: 'bar', data: prE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
+        graphic: prMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${prMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
+      });
+    }
+  }
+
   // 6. PIONEER BAR (show all with 1+ projects)
   const s6 = ecInit('chartPioneer');
   if (s6 && done.length) {
@@ -2070,6 +2096,7 @@ async function renderExpert(token) {
     if (ctx.description) html += '<p class="context-description">' + esc(ctx.description) + '</p>';
     html += '<div class="context-grid">';
     html += '<div class="context-item"><span class="label">A1 \u2014 Deliverable Type</span><span class="value">' + esc(ctx.category_name) + '</span></div>';
+    html += '<div class="context-item"><span class="label">Practice</span><span class="value">' + esc(ctx.practice_code || '\u2014') + '</span></div>';
     html += '<div class="context-item"><span class="label">A2 \u2014 Engagement Stage</span><span class="value">' + esc(ctx.engagement_stage || '\u2014') + '</span></div>';
     html += '<div class="context-item"><span class="label">Pioneer</span><span class="value">' + esc(ctx.pioneer_name) + '</span></div>';
     html += '<div class="context-item"><span class="label">Timeline</span><span class="value">' + esc(ctx.date_started || '?') + ' \u2192 ' + esc(ctx.date_delivered || '?') + '</span></div>';
@@ -2428,10 +2455,11 @@ async function renderSettings() {
   const mc = document.getElementById('mainContent');
   const tabs = [
     { id: 'tabCategories', label: 'Categories', key: 'categories' },
+    { id: 'tabPractices', label: 'Practices', key: 'practices' },
     { id: 'tabNorms', label: 'Legacy Norms', key: 'norms' },
     { id: 'tabPassword', label: 'Change Password', key: 'password' },
   ];
-  if (isAdmin()) tabs.splice(2, 0, { id: 'tabUsers', label: 'Users', key: 'users' });
+  if (isAdmin()) tabs.splice(3, 0, { id: 'tabUsers', label: 'Users', key: 'users' });
 
   mc.innerHTML = `
     <div class="settings-tabs">
@@ -2443,10 +2471,11 @@ async function renderSettings() {
 
 function switchSettingsTab(tab) {
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  const tabMap = { categories: 'tabCategories', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword' };
+  const tabMap = { categories: 'tabCategories', practices: 'tabPractices', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword' };
   const el = document.getElementById(tabMap[tab]);
   if (el) el.classList.add('active');
   if (tab === 'categories') renderCategoriesTab();
+  else if (tab === 'practices') renderPracticesTab();
   else if (tab === 'users') renderUsersTab();
   else if (tab === 'password') renderPasswordTab();
   else renderNormsTab();
@@ -2544,6 +2573,108 @@ async function doDeleteCategory(id) {
     showToast('Category deleted');
     state.categories = [];
     renderCategoriesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PRACTICES SETTINGS TAB  (mirror of Categories)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function renderPracticesTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = '<div class="loading">Loading practices…</div>';
+  try {
+    const practices = await apiCall('GET', '/practices');
+    state.practices = practices;
+    const _isAdmin = isAdmin();
+
+    let html = '<div class="card">';
+    if (_isAdmin) {
+      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;gap:12px;align-items:center">
+        <input type="text" id="newPrCode" placeholder="Code (e.g. FOO)" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <input type="text" id="newPrName" placeholder="Name (defaults to code)" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <input type="text" id="newPrDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <button class="btn btn-primary btn-sm" onclick="addPractice()">Add</button>
+      </div>`;
+    }
+    html += `<table class="data-table"><thead><tr><th>Code</th><th>Name</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
+    for (const p of practices) {
+      const count = p.project_count || 0;
+      const deleteDisabled = count > 0;
+      html += `<tr>
+        <td><strong>${esc(p.code)}</strong></td>
+        <td>${esc(p.name)}</td>
+        <td>${esc(p.description || '—')}</td>
+        <td>${count}</td>
+        ${_isAdmin ? `<td class="actions-cell">
+          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deletePractice(" + p.id + ",'" + esc(p.code) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+        </td>` : ''}
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+    sc.innerHTML = html;
+  } catch (err) {
+    sc.innerHTML = `<div class="error-state">Failed to load practices: ${esc(err.message)}</div>`;
+  }
+}
+
+async function addPractice() {
+  const code = document.getElementById('newPrCode')?.value.trim();
+  const name = document.getElementById('newPrName')?.value.trim() || code;
+  const desc = document.getElementById('newPrDesc')?.value.trim() || null;
+  if (!code) { showToast('Practice code is required', 'error'); return; }
+  try {
+    await apiCall('POST', '/practices', { code, name, description: desc });
+    showToast('Practice created');
+    state.practices = [];
+    renderPracticesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function editPractice(id, name, desc) {
+  showModal(`
+    <h3>Edit Practice</h3>
+    <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editPrName" value="${esc(name)}"></div>
+    <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editPrDesc" value="${esc(desc)}"></div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="savePractice(${id})">Save</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function savePractice(id) {
+  const name = document.getElementById('editPrName')?.value.trim();
+  const desc = document.getElementById('editPrDesc')?.value.trim() || null;
+  if (!name) { showToast('Name is required', 'error'); return; }
+  try {
+    await apiCall('PUT', `/practices/${id}`, { name, description: desc });
+    hideModal();
+    showToast('Practice updated');
+    state.practices = [];
+    renderPracticesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deletePractice(id, code) {
+  showModal(`
+    <h3>Delete Practice</h3>
+    <p>Are you sure you want to delete <strong>${esc(code)}</strong>? This will fail if projects exist for this practice.</p>
+    <div class="form-actions">
+      <button class="btn btn-danger" onclick="doDeletePractice(${id})">Delete</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function doDeletePractice(id) {
+  hideModal();
+  try {
+    await apiCall('DELETE', `/practices/${id}`);
+    showToast('Practice deleted');
+    state.practices = [];
+    renderPracticesTab();
   } catch (err) { showToast(err.message, 'error'); }
 }
 
