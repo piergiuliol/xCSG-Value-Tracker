@@ -303,4 +303,5 @@ def build_schema_response() -> dict:
         "default_rounds": DEFAULT_ROUNDS,
         "max_rounds": MAX_ROUNDS_PER_PIONEER,
         "max_pioneers": MAX_PIONEERS_PER_PROJECT,
+        "dashboard": DASHBOARD_CONFIG,
     }

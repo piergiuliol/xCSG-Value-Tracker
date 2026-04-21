@@ -628,6 +628,24 @@ def test_norms():
                 test(f"Zero-completion category ({n.get('category_name')}) has null averages",
                      n.get("average_legacy_working_days") is None or n.get("average_legacy_team_size") is None)
 
+# ── L2. /api/schema endpoint ─────────────────────────────────────────────────
+
+def test_schema_endpoint():
+    print("\n── L2. /api/schema endpoint ──")
+    tk = admin_token()
+    r = requests.get(f"{BASE}/api/schema", headers=auth_h(tk))
+    test("GET /api/schema returns 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+    body = r.json()
+    test("schema response has dashboard key", "dashboard" in body)
+    dash = body.get("dashboard") or {}
+    test("schema.dashboard has tabs list", isinstance(dash.get("tabs"), list) and len(dash["tabs"]) == 4)
+    test("schema.dashboard has charts list", isinstance(dash.get("charts"), list) and len(dash["charts"]) == 16)
+    test("schema.dashboard has kpi_tiles list", isinstance(dash.get("kpi_tiles"), list) and len(dash["kpi_tiles"]) == 12)
+    test("schema.dashboard.thresholds.radar_axis_cap present",
+         isinstance((dash.get("thresholds") or {}).get("radar_axis_cap"), (int, float)))
+
 # ── M. Database Schema Checks ────────────────────────────────────────────────
 
 def test_schema():
@@ -715,6 +733,12 @@ def test_dashboard_config():
          sum(1 for c in dc["charts"] if c["tab"] == "trends") == 4)
     test("Breakdowns has 5 charts (3 bars + heatmap + mix)",
          sum(1 for c in dc["charts"] if c["tab"] == "breakdowns") == 5)
+    test("every tab has at least one chart",
+         all(any(c["tab"] == t for c in dc["charts"]) for t in tab_ids_set))
+    test("Overview has 2 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "overview") == 2)
+    test("Signals has 5 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "signals") == 5)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -747,6 +771,7 @@ def main():
     test_string_consistency()
     test_frontend_js()
     test_norms()
+    test_schema_endpoint()
     test_schema()
     test_dashboard_config()
 
