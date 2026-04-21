@@ -739,19 +739,15 @@ function applyFilters(allProjects, state) {
   });
 }
 
-function _renderDashboardView(allProjects, dashboard, filterCategory) {
+function _renderDashboardView(allProjects, dashboard) {
   const mc = document.getElementById('mainContent');
 
-  const filtered = filterCategory
-    ? allProjects.filter(p => (p.category_name || '') === filterCategory)
-    : allProjects;
-  const localMetrics = filterCategory ? _computeLocalMetrics(filtered) : dashboard;
+  const filtered = applyFilters(allProjects);
+  const localMetrics = filtered.length === allProjects.length ? dashboard : _computeLocalMetrics(filtered);
 
   const fmtRatio = value => value == null ? '\u2014' : `${round2(value)}\xd7`;
   const fmtPct = value => value == null ? '\u2014' : `${Math.round(value * 100)}%`;
   const metricTone = value => value == null ? 'var(--gray-400)' : value > 1.5 ? 'var(--success)' : value >= 1.0 ? 'var(--blue)' : value >= 0.8 ? 'var(--warning)' : 'var(--danger)';
-
-  const categories = [...new Set(allProjects.map(p => p.category_name).filter(Boolean))].sort();
 
   let html = '';
 
@@ -760,7 +756,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
   html += `<div class="hero-section">
     <div class="hero-left">
       <div class="hero-label">Portfolio Overview</div>
-      <div class="hero-title">${filterCategory ? esc(filterCategory) : 'All Categories'}</div>
+      <div class="hero-title">All Categories</div>
       <div class="hero-meta">${localMetrics.complete_projects || 0} completed of ${allProjects.length} total</div>
     </div>
     <div class="hero-right">
@@ -770,16 +766,8 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     </div>
   </div>`;
 
-  // ── SLICER BAR ──
-  html += `<div class="slicer-bar">
-    <span class="slicer-label">\u{1F50D} Filter:</span>
-    <button class="filter-chip ${!filterCategory ? 'filter-chip-active' : ''}" onclick="_sliceDashboard(null)">All</button>`;
-  for (const cat of categories) {
-    const count = allProjects.filter(p => p.category_name === cat).length;
-    const short = cat.length > 26 ? cat.slice(0, 23) + '\u2026' : cat;
-    html += `<button class="filter-chip ${filterCategory === cat ? 'filter-chip-active' : ''}" onclick="_sliceDashboard('${esc(cat)}')">${esc(short)} <span class="chip-count">${count}</span></button>`;
-  }
-  html += `</div>`;
+  // ── FILTER BAR (populated by Task 11) ──
+  html += `<div id="filterBar"></div>`;
 
   // ── KPI GRID ──
   const kpis = [
@@ -884,7 +872,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
   </div>`;
 
   // ── SCALING GATES ──
-  if (!filterCategory && dashboard.scaling_gates && dashboard.scaling_gates.length) {
+  if (filtered.length === allProjects.length && dashboard.scaling_gates && dashboard.scaling_gates.length) {
     const passed = dashboard.scaling_gates.filter(g => g.status === 'pass').length;
     const total = dashboard.scaling_gates.length;
     html += `<div class="dashboard-section">
@@ -950,9 +938,10 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
   requestAnimationFrame(() => renderDashboardCharts(localMetrics, filtered));
 }
 
-function _sliceDashboard(category) {
+function _reapplyFilters() {
   if (!_projectsCache || !_dashboardCache) return;
-  _renderDashboardView(_projectsCache, _dashboardCache, category);
+  _saveFilters();
+  _renderDashboardView(_projectsCache, _dashboardCache);
 }
 
 function barHTML(score, label) {
