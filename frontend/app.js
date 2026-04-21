@@ -23,6 +23,7 @@ const state = {
   user: null,
   token: sessionStorage.getItem('xcsg_token') || null,
   categories: [],
+  practices: [],
 };
 
 const charts = {};
@@ -466,6 +467,21 @@ async function loadCategories() {
   }
 }
 
+function practiceOptionsHTML(selected) {
+  return '<option value="">— Select Practice —</option>' +
+    state.practices.map(p => `<option value="${p.id}"${p.id == selected ? ' selected' : ''}>${esc(p.code)}</option>`).join('');
+}
+
+async function loadPractices() {
+  if (state.practices.length === 0 && state.token) {
+    try { state.practices = await apiCall('GET', '/practices'); } catch { /* ignore */ }
+  }
+}
+
+async function loadTaxonomy() {
+  await Promise.all([loadCategories(), loadPractices()]);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    AUTH
    ═══════════════════════════════════════════════════════════════════════ */
@@ -474,6 +490,7 @@ function handleLogout() {
   state.token = null;
   state.user = null;
   state.categories = [];
+  state.practices = [];
   sessionStorage.removeItem('xcsg_token');
   showScreen('login');
 }
@@ -530,7 +547,7 @@ async function route() {
   if (!state.token) { showScreen('login'); return; }
   showScreen('app');
 
-  await Promise.all([loadCategories(), loadSchema()]);
+  await Promise.all([loadTaxonomy(), loadSchema()]);
   if (thisRoute !== _routeCounter) return; // stale route — newer navigation happened
 
   // Hide write-only UI for viewers
@@ -977,7 +994,7 @@ function renderExpertAssessment(er, metrics) {
    ═══════════════════════════════════════════════════════════════════════ */
 
 async function renderNewProject(existing) {
-  await loadCategories();
+  await loadTaxonomy();
   const mc = document.getElementById('mainContent');
   const isEdit = !!existing;
   const p = existing || {};
@@ -988,6 +1005,10 @@ async function renderNewProject(existing) {
         <div class="form-row">
           <div class="form-group"><label>Project Name *</label><input type="text" id="fName" value="${esc(p.project_name || '')}" required></div>
           <div class="form-group"><label>Category * <span class="field-hint" data-hint="Deliverable type. Used for category norms, benchmarking, and the scaling gate &quot;Multi-engagement&quot; (at least 2 types required).">&#9432;</span></label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Practice <span class="field-hint" data-hint="The Alira Health practice leading this project. Optional but recommended for cross-practice reporting.">&#9432;</span></label><select id="fPractice">${practiceOptionsHTML(p.practice_id)}</select></div>
+          <div class="form-group"></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(p.client_name || '')}"></div>
@@ -1212,9 +1233,11 @@ async function renderNewProject(existing) {
       return;
     }
 
+    const practiceVal = document.getElementById('fPractice').value;
     const payload = {
       project_name: document.getElementById('fName').value,
       category_id: parseInt(document.getElementById('fCategory').value),
+      practice_id: practiceVal ? parseInt(practiceVal) : null,
       pioneer_name: pioneers[0].name,
       pioneer_email: pioneers[0].email,
       pioneers: pioneers,
@@ -1517,6 +1540,7 @@ async function renderProjects() {
     }
 
     const cats = [...new Set(rows.map(p => p.category_name).filter(Boolean))].sort();
+    const practices = [...new Set(rows.map(p => p.practice_code).filter(Boolean))].sort();
 
     const fmtScore = (v) => v == null ? '\u2014' : round2(v);
 
@@ -1532,10 +1556,14 @@ async function renderProjects() {
           <option value="">All Categories</option>
           ${cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
         </select>
+        <select id="practiceFilter" class="filter-select">
+          <option value="">All Practices</option>
+          ${practices.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+        </select>
         ${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>' : ''}
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
-        <th>Project</th><th>Category</th><th>Pioneers</th><th>Responses</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
+        <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th><th>Responses</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody>`;
 
     for (const p of rows) {
@@ -1576,9 +1604,10 @@ async function renderProjects() {
       const schedCell = schedDelta == null
         ? '<span style="color:var(--gray-400)">\u2014</span>'
         : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(p.date_expected_delivered)} \xb7 Delivered: ${esc(p.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
-      html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" onclick="window.location.hash='#edit/${p.id}'">
+      html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}" onclick="window.location.hash='#edit/${p.id}'">
         <td>${esc(p.project_name)}</td>
         <td>${esc(p.category_name || '\u2014')}</td>
+        <td>${esc(p.practice_code || '\u2014')}</td>
         <td title="${esc(pioneerTooltip)}">${esc(pioneerLabel)}</td>
         <td>${responsesLabel}</td>
         <td>${schedCell}</td>
@@ -1595,15 +1624,18 @@ async function renderProjects() {
     function applyProjectFilters() {
       const sf = document.getElementById('statusFilter')?.value || '';
       const cf = document.getElementById('catFilter')?.value || '';
+      const pf = document.getElementById('practiceFilter')?.value || '';
       document.querySelectorAll('#projectTable tbody tr').forEach(tr => {
         const show =
           (!sf || tr.dataset.status === sf) &&
-          (!cf || tr.dataset.cat === cf);
+          (!cf || tr.dataset.cat === cf) &&
+          (!pf || tr.dataset.practice === pf);
         tr.style.display = show ? '' : 'none';
       });
     }
     document.getElementById('statusFilter')?.addEventListener('change', applyProjectFilters);
     document.getElementById('catFilter')?.addEventListener('change', applyProjectFilters);
+    document.getElementById('practiceFilter')?.addEventListener('change', applyProjectFilters);
 
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load: ${esc(err.message)}</div>`;
