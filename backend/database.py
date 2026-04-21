@@ -833,6 +833,18 @@ def is_practice_allowed_for_category(category_id: int, practice_id: int) -> bool
         return row is not None
 
 
+def set_practices_for_category(category_id: int, practice_ids: list) -> None:
+    """Replace the practice attributions for a category with the given list."""
+    with _db() as conn:
+        conn.execute("DELETE FROM category_practices WHERE category_id = ?", (category_id,))
+        for pid in practice_ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO category_practices (category_id, practice_id) VALUES (?, ?)",
+                (category_id, int(pid)),
+            )
+        conn.commit()
+
+
 def get_category(category_id: int) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(

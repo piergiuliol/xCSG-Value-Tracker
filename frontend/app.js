@@ -2561,10 +2561,20 @@ async function addCategory() {
 }
 
 function editCategory(id, name, desc) {
+  const cat = state.categories.find(c => c.id == id);
+  const currentIds = new Set((cat?.practices || []).map(p => p.id));
+  const practiceCheckboxes = state.practices.map(p => `
+    <label style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;padding:4px 10px;border:1px solid var(--gray-300);border-radius:16px;cursor:pointer;user-select:none${currentIds.has(p.id) ? ';background:var(--brand-blue-50,#dbeafe);border-color:var(--brand-blue,#6EC1E4)' : ''}">
+      <input type="checkbox" class="cat-practice-cb" data-id="${p.id}" ${currentIds.has(p.id) ? 'checked' : ''}> <strong>${esc(p.code)}</strong>
+    </label>`).join('');
   showModal(`
     <h3>Edit Category</h3>
     <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editCatName" value="${esc(name)}"></div>
     <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editCatDesc" value="${esc(desc)}"></div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Allowed Practices <span class="field-hint" data-hint="When creating a project with this category, the Practice dropdown is limited to the codes checked here. Pick at least one.">&#9432;</span></label>
+      <div style="margin-top:6px">${practiceCheckboxes}</div>
+    </div>
     <div class="form-actions">
       <button class="btn btn-primary" onclick="saveCategory(${id})">Save</button>
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -2576,8 +2586,10 @@ async function saveCategory(id) {
   const name = document.getElementById('editCatName')?.value.trim();
   const desc = document.getElementById('editCatDesc')?.value.trim() || null;
   if (!name) { showToast('Name is required', 'error'); return; }
+  const practiceIds = Array.from(document.querySelectorAll('.cat-practice-cb:checked')).map(cb => parseInt(cb.dataset.id));
   try {
     await apiCall('PUT', `/categories/${id}`, { name, description: desc });
+    await apiCall('PUT', `/categories/${id}/practices`, { practice_ids: practiceIds });
     hideModal();
     showToast('Category updated');
     state.categories = [];

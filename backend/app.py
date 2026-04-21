@@ -270,6 +270,32 @@ async def update_category(
     return dict(db.get_category(category_id))
 
 
+@app.put("/api/categories/{category_id}/practices")
+async def set_category_practices_endpoint(
+    category_id: int,
+    body: dict,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    """Replace the practice attributions for a category. Body: {"practice_ids": [1, 2, ...]}."""
+    if not db.get_category(category_id):
+        raise HTTPException(status_code=404, detail="Category not found")
+    practice_ids = body.get("practice_ids", [])
+    if not isinstance(practice_ids, list):
+        raise HTTPException(status_code=400, detail="practice_ids must be a list")
+    for pid in practice_ids:
+        if not db.get_practice(int(pid)):
+            raise HTTPException(status_code=400, detail=f"Invalid practice id: {pid}")
+    db.set_practices_for_category(category_id, practice_ids)
+    db.log_activity(
+        current_user["sub"],
+        "category_practices_updated",
+        details=f"Updated practices for category #{category_id}: {practice_ids}",
+    )
+    # Return the fresh category (with practices list).
+    cats = db.list_categories()
+    return next((c for c in cats if c["id"] == category_id), {})
+
+
 @app.delete("/api/categories/{category_id}", status_code=204)
 async def delete_category(
     category_id: int,
