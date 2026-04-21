@@ -467,9 +467,30 @@ async function loadCategories() {
   }
 }
 
-function practiceOptionsHTML(selected) {
+function practiceOptionsHTML(selected, categoryId) {
+  // If a category is provided, restrict the dropdown to that category's allowed practices.
+  // Otherwise (no category yet or category unknown), show an empty placeholder.
+  let allowed = state.practices;
+  if (categoryId != null && categoryId !== '') {
+    const cat = state.categories.find(c => c.id == categoryId);
+    if (cat && Array.isArray(cat.practices)) {
+      const allowedIds = new Set(cat.practices.map(p => p.id));
+      allowed = state.practices.filter(p => allowedIds.has(p.id));
+    } else {
+      allowed = [];
+    }
+  } else {
+    allowed = [];
+  }
+  if (allowed.length === 0) {
+    return '<option value="">— Pick a category first —</option>';
+  }
+  if (allowed.length === 1) {
+    const p = allowed[0];
+    return `<option value="${p.id}" selected>${esc(p.code)}</option>`;
+  }
   return '<option value="">— Select Practice —</option>' +
-    state.practices.map(p => `<option value="${p.id}"${p.id == selected ? ' selected' : ''}>${esc(p.code)}</option>`).join('');
+    allowed.map(p => `<option value="${p.id}"${p.id == selected ? ' selected' : ''}>${esc(p.code)}</option>`).join('');
 }
 
 async function loadPractices() {
@@ -1009,7 +1030,7 @@ async function renderNewProject(existing) {
           <div class="form-group"><label>Category * <span class="field-hint" data-hint="Deliverable type. Used for category norms, benchmarking, and the scaling gate &quot;Multi-engagement&quot; (at least 2 types required).">&#9432;</span></label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Practice <span class="field-hint" data-hint="The Alira Health practice leading this project. Optional but recommended for cross-practice reporting.">&#9432;</span></label><select id="fPractice">${practiceOptionsHTML(p.practice_id)}</select></div>
+          <div class="form-group"><label>Practice <span class="field-hint" data-hint="The Alira Health practice leading this project. The list is filtered to the practices allowed for the selected category.">&#9432;</span></label><select id="fPractice">${practiceOptionsHTML(p.practice_id, p.category_id)}</select></div>
           <div class="form-group"></div>
         </div>
         <div class="form-row">
@@ -1182,6 +1203,12 @@ async function renderNewProject(existing) {
       }
     }
   }
+  // Category change → rebuild Practice dropdown with allowed-only options.
+  document.getElementById('fCategory').addEventListener('change', function () {
+    const pracSel = document.getElementById('fPractice');
+    if (pracSel) pracSel.innerHTML = practiceOptionsHTML(null, this.value);
+  });
+
   document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);
   document.getElementById('fDateExpected').addEventListener('change', updateCalendarDays);
   document.getElementById('fDateEnd').addEventListener('change', updateCalendarDays);
