@@ -199,6 +199,8 @@ def init_db() -> None:
     _migrate_expert_responses()
     migrate()
     migrate_v2()
+    migrate_v11()
+    migrate_round_tokens()
     migrate_v12()
 
     seed_data()
@@ -814,6 +816,69 @@ def category_has_projects(category_id: int) -> bool:
         return count > 0
 
 
+# ── Practices ────────────────────────────────────────────────────────────────
+
+def list_practices() -> list:
+    """Return all practices ordered by code, with project counts."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT pr.*,
+                      (SELECT COUNT(*) FROM projects p WHERE p.practice_id = pr.id) AS project_count
+               FROM practices pr
+               ORDER BY pr.code"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_practice(practice_id: int) -> Optional[sqlite3.Row]:
+    with _db() as conn:
+        return conn.execute(
+            "SELECT * FROM practices WHERE id = ?", (practice_id,)
+        ).fetchone()
+
+
+def create_practice(code: str, name: str, description: Optional[str] = None) -> int:
+    with _db() as conn:
+        cur = conn.execute(
+            "INSERT INTO practices (code, name, description) VALUES (?, ?, ?)",
+            (code, name, description),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def update_practice(practice_id: int, name: str, description: Optional[str] = None) -> bool:
+    """Update name and description. `code` is immutable once seeded."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE practices SET name = ?, description = ? WHERE id = ?",
+            (name, description, practice_id),
+        )
+        conn.commit()
+        return True
+
+
+def delete_practice(practice_id: int) -> bool:
+    """Delete a practice. Fails if any projects reference it."""
+    with _db() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE practice_id = ?", (practice_id,)
+        ).fetchone()[0]
+        if count > 0:
+            return False
+        conn.execute("DELETE FROM practices WHERE id = ?", (practice_id,))
+        conn.commit()
+        return True
+
+
+def practice_has_projects(practice_id: int) -> bool:
+    with _db() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE practice_id = ?", (practice_id,)
+        ).fetchone()[0]
+        return count > 0
+
+
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 def create_project(data: dict) -> int:
@@ -855,18 +920,19 @@ def create_project(data: dict) -> int:
     with _db() as conn:
         cur = conn.execute(
             """INSERT INTO projects
-               (created_by, project_name, category_id, client_name,
+               (created_by, project_name, category_id, practice_id, client_name,
                 pioneer_name, pioneer_email, description,
                 date_started, date_expected_delivered, date_delivered,
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
                 default_rounds, show_previous_answers, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
                 data["category_id"],
+                data.get("practice_id"),
                 data.get("client_name"),
                 pioneer_name_for_project,
                 pioneer_email_for_project,
@@ -920,9 +986,11 @@ def create_project(data: dict) -> int:
 def get_project(project_id: int) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
-            """SELECT p.*, pc.name as category_name
+            """SELECT p.*, pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE p.id = ?""",
             (project_id,),
         ).fetchone()
@@ -931,13 +999,16 @@ def get_project(project_id: int) -> Optional[sqlite3.Row]:
 def list_projects(
     status_filter: Optional[str] = None,
     category_id: Optional[int] = None,
+    practice_id: Optional[int] = None,
     pioneer: Optional[str] = None,
     client: Optional[str] = None,
 ) -> list:
     with _db() as conn:
-        query = """SELECT DISTINCT p.*, pc.name as category_name
+        query = """SELECT DISTINCT p.*, pc.name AS category_name,
+                          pr.code AS practice_code, pr.name AS practice_name
                    FROM projects p
-                   JOIN project_categories pc ON p.category_id = pc.id"""
+                   JOIN project_categories pc ON p.category_id = pc.id
+                   LEFT JOIN practices pr ON p.practice_id = pr.id"""
         params = []
         if pioneer:
             query += " JOIN project_pioneers pp ON pp.project_id = p.id"
@@ -948,6 +1019,9 @@ def list_projects(
         if category_id:
             query += " AND p.category_id = ?"
             params.append(category_id)
+        if practice_id:
+            query += " AND p.practice_id = ?"
+            params.append(practice_id)
         if pioneer:
             query += " AND pp.pioneer_name = ?"
             params.append(pioneer)
@@ -996,9 +1070,11 @@ def delete_project(project_id: int) -> bool:
 def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
-            """SELECT p.*, pc.name as category_name
+            """SELECT p.*, pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE p.expert_token = ?""",
             (token,),
         ).fetchone()
@@ -1117,18 +1193,20 @@ def get_round_token(token: str) -> Optional[dict]:
                       prt.token, prt.issued_at, prt.completed_at, prt.response_id,
                       pp.pioneer_name, pp.pioneer_email, pp.total_rounds, pp.show_previous,
                       pp.project_id,
-                      p.project_name, p.category_id, p.client_name,
+                      p.project_name, p.category_id, p.practice_id, p.client_name,
                       p.description, p.date_started, p.date_delivered,
                       p.xcsg_calendar_days, p.working_days, p.xcsg_team_size,
                       p.xcsg_revision_rounds, p.revision_depth, p.xcsg_scope_expansion,
                       p.engagement_revenue, p.legacy_calendar_days, p.legacy_team_size,
                       p.legacy_revision_rounds, p.legacy_overridden, p.engagement_stage,
                       p.default_rounds, p.show_previous_answers, p.status,
-                      pc.name AS category_name
+                      pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM pioneer_round_tokens prt
                JOIN project_pioneers pp ON prt.pioneer_id = pp.id
                JOIN projects p ON pp.project_id = p.id
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE prt.token = ?""",
             (token,),
         ).fetchone()
@@ -1458,9 +1536,11 @@ def list_complete_projects() -> list:
     """Return projects with status 'partial' or 'complete' (have at least some responses)."""
     with _db() as conn:
         rows = conn.execute(
-            """SELECT DISTINCT p.*, pc.name as category_name
+            """SELECT DISTINCT p.*, pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE p.status IN ('partial', 'complete')
                ORDER BY p.created_at ASC"""
         ).fetchall()
