@@ -2513,6 +2513,7 @@ async function renderCategoriesTab() {
   const sc = document.getElementById('settingsContent');
   sc.innerHTML = '<div class="loading">Loading categories\u2026</div>';
   try {
+    await loadPractices();
     const cats = await apiCall('GET', '/categories');
     state.categories = cats;
     const _isAdmin = isAdmin();
