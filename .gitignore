@@ -30,6 +30,9 @@ test-results/
 # Internal docs (specs, plans)
 docs/
 
+# Git worktrees (isolated dev workspaces)
+.worktrees/
+
 # Playwright snapshots
 *.yml
 !docker-compose.yml
