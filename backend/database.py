@@ -51,11 +51,20 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS practices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_by INTEGER NOT NULL,
                 project_name TEXT NOT NULL,
                 category_id INTEGER NOT NULL,
+                practice_id INTEGER,
                 client_name TEXT,
                 pioneer_name TEXT NOT NULL,
                 pioneer_email TEXT,
@@ -82,7 +91,8 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (created_by) REFERENCES users(id),
-                FOREIGN KEY (category_id) REFERENCES project_categories(id)
+                FOREIGN KEY (category_id) REFERENCES project_categories(id),
+                FOREIGN KEY (practice_id) REFERENCES practices(id)
             );
 
             CREATE TABLE IF NOT EXISTS expert_responses (
@@ -189,6 +199,7 @@ def init_db() -> None:
     _migrate_expert_responses()
     migrate()
     migrate_v2()
+    migrate_v12()
 
     seed_data()
 
@@ -205,6 +216,83 @@ def migrate() -> None:
             if col not in project_columns:
                 conn.execute(statement)
         conn.execute("UPDATE projects SET client_pulse = 'Not yet received' WHERE client_pulse IS NULL OR TRIM(client_pulse) = ''")
+        conn.commit()
+
+
+def migrate_v12() -> None:
+    """v1.2: add Practice as a peer field to Project Category.
+
+    - Creates `practices` table if missing.
+    - Adds `projects.practice_id` nullable FK column if missing.
+    - On first run (when practices table is newly created), destructively
+      wipes existing projects/responses/pioneers/round_tokens/legacy_norms
+      and the old generic project_categories seed, then reseeds
+      project_categories (79 rows) and practices (11 rows) from
+      backend.taxonomy_seed.
+    - On subsequent runs, only runs INSERT OR IGNORE for the seed, so
+      admin-added categories/practices survive.
+    """
+    from backend.taxonomy_seed import CATEGORIES, PRACTICES
+
+    with _db() as conn:
+        existing_tables = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        practices_existed = "practices" in existing_tables
+
+        # 1. Create practices table if missing.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS practices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # 2. Add projects.practice_id column if missing (nullable FK).
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "practice_id" not in project_columns:
+            conn.execute("ALTER TABLE projects ADD COLUMN practice_id INTEGER REFERENCES practices(id)")
+
+        # 3. First-run destructive reseed: only when practices did not pre-exist.
+        #    Wipes legacy data and the old 11 generic categories so the reseed
+        #    replaces them with the 79 CSV-derived categories.
+        if not practices_existed:
+            if "pioneer_round_tokens" in existing_tables:
+                conn.execute("DELETE FROM pioneer_round_tokens")
+            if "expert_responses" in existing_tables:
+                conn.execute("DELETE FROM expert_responses")
+            if "project_pioneers" in existing_tables:
+                conn.execute("DELETE FROM project_pioneers")
+            if "legacy_norms" in existing_tables:
+                conn.execute("DELETE FROM legacy_norms")
+            if "activity_log" in existing_tables:
+                conn.execute("UPDATE activity_log SET project_id = NULL")
+            if "projects" in existing_tables:
+                conn.execute("DELETE FROM projects")
+            if "project_categories" in existing_tables:
+                conn.execute("DELETE FROM project_categories")
+
+        # 4. Seed practices (idempotent — INSERT OR IGNORE on unique `code`).
+        for code, description in PRACTICES:
+            conn.execute(
+                "INSERT OR IGNORE INTO practices (code, name, description) VALUES (?, ?, ?)",
+                (code, code, description or None),
+            )
+
+        # 5. Seed project categories (idempotent — INSERT OR IGNORE on unique `name`).
+        for name in CATEGORIES:
+            conn.execute(
+                "INSERT OR IGNORE INTO project_categories (name, description) VALUES (?, ?)",
+                (name, None),
+            )
+
         conn.commit()
 
 
@@ -612,29 +700,11 @@ def seed_data() -> None:
                         (new_hash, row["id"]),
                     )
 
-        # Seed categories (V2 spec — 11 project categories)
-        SEED_CATEGORIES = [
-            ("CDD", "Commercial due diligence"),
-            ("Strategic Planning", "Strategic planning and advisory"),
-            ("Portfolio Management & Opportunity Assessment", "Portfolio strategy and opportunity evaluation"),
-            ("Pricing & Reimbursement", "Pricing strategy and reimbursement planning"),
-            ("Market Access Strategy", "Market access and reimbursement strategy"),
-            ("New Product Strategy", "New product planning and launch strategy"),
-            ("Strategic Surveillance & Competitive Intelligence", "Competitive intelligence and market monitoring"),
-            ("Evidence Generation & HEOR", "Health economics and outcomes research"),
-            ("Transaction Advisory", "M&A due diligence and transaction support"),
-            ("Market Research", "Primary and secondary market research"),
-            ("Regulatory Strategy", "Regulatory affairs and submission strategy"),
-        ]
-        for name, desc in SEED_CATEGORIES:
-            conn.execute(
-                "INSERT OR IGNORE INTO project_categories (name, description) VALUES (?, ?)",
-                (name, desc),
-            )
-
         conn.commit()
 
-        # V2: No seeded legacy norms — norms are computed from expert responses
+        # V1.2: project_categories + practices are seeded by migrate_v12 from
+        # backend/taxonomy_seed.py. No seeded legacy norms — norms are
+        # computed from expert responses.
 
 
 # ── Users ──────────────────────────────────────────────────────────────────────
