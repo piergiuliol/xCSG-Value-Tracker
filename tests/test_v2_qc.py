@@ -180,27 +180,39 @@ def test_expert_options():
             test(f"{field_name} contains em dash", "—" in all_text, f"no em dash in: {all_text[:80]}")
 
 def test_categories():
-    print("\n── C. Project Categories ──")
+    print("\n── C. Project Categories (seeded from CSV) ──")
     tk = admin_token()
     r = requests.get(f"{BASE}/api/categories", headers=auth_h(tk))
     test("GET /api/categories returns 200", r.status_code == 200, f"got {r.status_code}")
     if r.status_code != 200:
         return
-    
+
     cats = r.json()
-    test(f"Categories returned (expected 11)", len(cats) == 11, f"got {len(cats)}")
-    
-    # Check expected names
-    expected_names = [
-        "CDD", "Strategic Planning", "Portfolio Management",
-        "Pricing & Reimbursement", "Market Access Strategy", "New Product Strategy",
-        "Strategic Surveillance", "Evidence Generation", "Transaction Advisory",
-        "Market Research", "Regulatory Strategy",
-    ]
-    cat_names = [c["name"] for c in cats]
-    for name in expected_names:
-        found = any(name in cn for cn in cat_names)
-        test(f"Category '{name}' exists", found, f"available: {cat_names}")
+    test(f"Categories returned (expected 79)", len(cats) == 79, f"got {len(cats)}")
+
+    # Spot-check CSV-sourced names
+    cat_names = {c["name"] for c in cats}
+    for name in ["510(k)", "Regulatory Strategy", "Evidence Generation Strategy", "MAA/NDA", "Training", "Other"]:
+        test(f"Category '{name}' exists", name in cat_names, f"missing from {len(cat_names)} categories")
+
+
+def test_practices():
+    print("\n── C2. Practices ──")
+    tk = admin_token()
+    r = requests.get(f"{BASE}/api/practices", headers=auth_h(tk))
+    test("GET /api/practices returns 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+
+    practices = r.json()
+    test(f"Practices returned (expected 11)", len(practices) == 11, f"got {len(practices)}")
+
+    codes = {p["code"] for p in practices}
+    for code in ["RAM", "MAP", "NPS", "MCD", "RWE", "PEN", "RAP", "TAD", "CLI", "Other", "ALL"]:
+        test(f"Practice '{code}' exists", code in codes, f"missing from {sorted(codes)}")
+
+    # Each practice row should carry a project_count field
+    test("Practice rows carry project_count", all("project_count" in p for p in practices))
 
 # ── D. Create Deliverable / Project ───────────────────────────────────────────
 
@@ -208,18 +220,21 @@ def test_create_deliverable():
     print("\n── D. Create Deliverable ──")
     tk = admin_token()
     
-    # First get a valid category
+    # First get a valid category and a practice
     r = requests.get(f"{BASE}/api/categories", headers=auth_h(tk))
     cats = r.json()
     if not cats:
         test("Cannot test create - no categories", False)
         return
     cat_id = cats[0]["id"]
-    
+    prs = requests.get(f"{BASE}/api/practices", headers=auth_h(tk)).json()
+    practice_id = prs[0]["id"] if prs else None
+
     # Create with all V2 fields
     payload = {
         "project_name": "QA Test Deliverable",
         "category_id": cat_id,
+        "practice_id": practice_id,
         "pioneer_name": "Dr. QA",
         "client_name": "QA Client",
         "engagement_stage": "Active engagement",
@@ -239,11 +254,13 @@ def test_create_deliverable():
     if r.status_code in (200, 201):
         proj = r.json()
         test("Returns expert_token", "expert_token" in proj, f"keys: {list(proj.keys())}")
-        
+
         # Check working_days and engagement_revenue stored
         test("working_days stored", proj.get("working_days") == 8, f"got {proj.get('working_days')}")
         test("engagement_revenue stored", proj.get("engagement_revenue") == 100000, f"got {proj.get('engagement_revenue')}")
         test("revision_depth stored", proj.get("revision_depth") == "Cosmetic only", f"got {proj.get('revision_depth')}")
+        test("practice_id stored", proj.get("practice_id") == practice_id, f"got {proj.get('practice_id')}")
+        test("practice_code returned on project row", proj.get("practice_code") is not None, f"got {proj.get('practice_code')}")
         
         # Clean up
         requests.delete(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk))
@@ -665,6 +682,7 @@ def main():
     test_authentication()
     test_expert_options()
     test_categories()
+    test_practices()
     test_create_deliverable()
     test_expert_assessment()
     test_metrics()
