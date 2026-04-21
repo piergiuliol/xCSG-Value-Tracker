@@ -485,6 +485,7 @@ def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[
         "average_outcome_rate_ratio": average_advantage,
         "average_value_multiplier": average_advantage,
         "average_advantage": average_advantage,
+        "average_productivity_ratio": average_advantage,  # alias: productivity_ratio == xcsg_advantage
         "flywheel_health": flywheel_health,
         "machine_first_avg": machine_first_avg,
         "senior_led_avg": senior_led_avg,

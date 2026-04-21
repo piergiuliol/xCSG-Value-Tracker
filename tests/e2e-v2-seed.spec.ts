@@ -3,9 +3,9 @@ import { test, expect, Page } from '@playwright/test';
 const BASE = 'http://localhost:8077';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 20 real-world-ish projects across 9 practices, 3 outcome profiles.
-// Profiles: strong = high xCSG value; balanced = moderate gain; weak = legacy lead.
-// Each project gets 2 pioneers; a survey is submitted for the first pioneer.
+// 20 real-world projects across 9 practices, 3 outcome profiles.
+// Uses explicit xcsg_calendar_days so xCSG delivery is realistically short
+// compared to legacy working-days, producing meaningful metric ratios.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Profile = 'strong' | 'balanced' | 'weak';
@@ -13,9 +13,10 @@ type Profile = 'strong' | 'balanced' | 'weak';
 interface ProjectSpec {
   name: string;
   client: string;
-  categoryName: string;  // must match a seeded category
-  practiceCode: string;  // must match a seeded practice
-  team: string;
+  categoryName: string;
+  practiceCode: string;   // must be allowed for the category by the M2M seed
+  team: string;           // xCSG team size
+  xcsgDays: number;       // xCSG working days (the actual delivery effort, not calendar span)
   revs: string;
   dateStart: string;
   dateEnd: string;
@@ -27,48 +28,52 @@ interface ProjectSpec {
   profile: Profile;
 }
 
+// Profile → realistic (xcsgDays, legacy_days, legacy_team)
+// Strong:  xCSG is 3-5× faster, higher quality
+// Balanced: xCSG is 1.5-2× faster, moderate gain
+// Weak:    xCSG roughly matches legacy
+
 const PROJECTS: ProjectSpec[] = [
-  // RAM (4) — Regulatory Affairs Medical Devices
-  { name: '510(k) Submission — CardioFlow Valve',  client: 'Medtronic',       categoryName: '510(k)',                               practiceCode: 'RAM', team: '3', revs: '2', dateStart: '2026-01-15', dateEnd: '2026-03-20', revDepth: 'Moderate rework', scope: 'No',  pulse: 'Exceeded expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Dr. Elena Rossi', 'Marco Bianchi'], profile: 'strong' },
-  { name: 'PMA Pathway — NeuroMonitor',             client: 'Abbott',          categoryName: 'PMA',                                  practiceCode: 'RAM', team: '5', revs: '3', dateStart: '2025-10-01', dateEnd: '2026-02-28', revDepth: 'Major rework',    scope: 'Yes expanded scope', pulse: 'Met expectations',    stage: 'Active engagement',           pioneers: ['Julia Varga',    'Kenji Tanaka'], profile: 'balanced' },
-  { name: 'De Novo — DiaSense',                     client: 'DiaSense',        categoryName: 'De Novo',                              practiceCode: 'RAM', team: '2', revs: '1', dateStart: '2026-02-01', dateEnd: '2026-03-25', revDepth: 'Cosmetic only',   scope: 'No',  pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Sarah Chen',     'Luca Conti'],   profile: 'strong' },
-  { name: 'EU MDR Gap Analysis — OrthoPro',         client: 'OrthoPro',        categoryName: 'Gap Analysis',                         practiceCode: 'RAM', team: '2', revs: '0', dateStart: '2026-02-15', dateEnd: '2026-03-10', revDepth: 'No revisions needed', scope: 'No', pulse: 'Met expectations',  stage: 'Active engagement',           pioneers: ['Anika Patel',    'Tomasz Nowak'], profile: 'balanced' },
+  // RAM (4)
+  { name: '510(k) Submission — CardioFlow Valve',  client: 'Medtronic',       categoryName: '510(k)',                               practiceCode: 'RAM', team: '3', xcsgDays: 7,  revs: '2', dateStart: '2026-01-15', dateEnd: '2026-02-05', revDepth: 'Moderate rework',     scope: 'No',                 pulse: 'Exceeded expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Dr. Elena Rossi', 'Marco Bianchi'], profile: 'strong' },
+  { name: 'PMA Pathway — NeuroMonitor',             client: 'Abbott',          categoryName: 'PMA',                                  practiceCode: 'RAM', team: '5', xcsgDays: 22, revs: '3', dateStart: '2025-10-01', dateEnd: '2025-11-28', revDepth: 'Major rework',        scope: 'Yes expanded scope', pulse: 'Met expectations',      stage: 'Active engagement',           pioneers: ['Julia Varga',     'Kenji Tanaka'], profile: 'balanced' },
+  { name: 'De Novo — DiaSense',                     client: 'DiaSense',        categoryName: 'De Novo',                              practiceCode: 'RAM', team: '2', xcsgDays: 6,  revs: '1', dateStart: '2026-02-01', dateEnd: '2026-02-20', revDepth: 'Cosmetic only',       scope: 'No',                 pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Sarah Chen',      'Luca Conti'],  profile: 'strong' },
+  { name: 'EU MDR Gap Analysis — OrthoPro',         client: 'OrthoPro',        categoryName: 'Gap Analysis',                         practiceCode: 'RAM', team: '2', xcsgDays: 4,  revs: '0', dateStart: '2026-02-15', dateEnd: '2026-02-26', revDepth: 'No revisions needed', scope: 'No',                 pulse: 'Met expectations',      stage: 'Active engagement',           pioneers: ['Anika Patel',     'Tomasz Nowak'], profile: 'balanced' },
 
-  // MAP (3) — Market Access & Pricing
-  { name: 'Early MA Dossier — OncoNext',            client: 'Roche',           categoryName: 'Early Market Access',                  practiceCode: 'MAP', team: '4', revs: '1', dateStart: '2026-01-10', dateEnd: '2026-03-15', revDepth: 'Cosmetic only',   scope: 'No',  pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Priya Shah',     'Aisha Patel'],  profile: 'strong' },
-  { name: 'HEOR Model — RareBio',                   client: 'RareBio',         categoryName: 'Health Economics (e.g., HEOR Modelling like CE, BIM)', practiceCode: 'MAP', team: '3', revs: '2', dateStart: '2025-12-01', dateEnd: '2026-03-05', revDepth: 'Moderate rework', scope: 'No',  pulse: 'Met expectations',    stage: 'Post-engagement (follow-on)', pioneers: ['Carlos Mendez',  'Sofia Rivera'], profile: 'balanced' },
-  { name: 'Payer Value Story — AlzMed',             client: 'AlzMed',          categoryName: 'Payer Value Story Payer Objection Handler', practiceCode: 'MAP', team: '3', revs: '2', dateStart: '2026-01-20', dateEnd: '2026-03-18', revDepth: 'Moderate rework', scope: 'Yes expanded scope', pulse: 'Met expectations',  stage: 'Active engagement',   pioneers: ['Fatima Yusuf',   'Raj Kapoor'],   profile: 'balanced' },
+  // MAP (3)
+  { name: 'Early MA Dossier — OncoNext',            client: 'Roche',           categoryName: 'Early Market Access',                  practiceCode: 'MAP', team: '4', xcsgDays: 10, revs: '1', dateStart: '2026-01-10', dateEnd: '2026-02-02', revDepth: 'Cosmetic only',       scope: 'No',                 pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Priya Shah',      'Aisha Patel'], profile: 'strong' },
+  { name: 'HEOR Model — RareBio',                   client: 'RareBio',         categoryName: 'Health Economics (e.g., HEOR Modelling like CE, BIM)', practiceCode: 'MAP', team: '3', xcsgDays: 18, revs: '2', dateStart: '2025-12-01', dateEnd: '2026-01-15', revDepth: 'Moderate rework', scope: 'No', pulse: 'Met expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Carlos Mendez',  'Sofia Rivera'], profile: 'balanced' },
+  { name: 'Payer Value Story — AlzMed',             client: 'AlzMed',          categoryName: 'Payer Value Story Payer Objection Handler', practiceCode: 'MAP', team: '3', xcsgDays: 12, revs: '2', dateStart: '2026-01-20', dateEnd: '2026-02-18', revDepth: 'Moderate rework', scope: 'Yes expanded scope', pulse: 'Met expectations', stage: 'Active engagement', pioneers: ['Fatima Yusuf',   'Raj Kapoor'], profile: 'balanced' },
 
-  // NPS (2) — New Product Strategy
-  { name: 'Brand Strategy Refresh — NeuroSphere',   client: 'Bristol Myers',   categoryName: 'Brand Strategy',                       practiceCode: 'NPS', team: '3', revs: '3', dateStart: '2025-11-15', dateEnd: '2026-03-05', revDepth: 'Major rework',    scope: 'Yes expanded scope', pulse: 'Below expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Natalie Wong',   'Hugo Meyer'],   profile: 'weak' },
-  { name: 'NPP — Immuno-Oncology Launch',           client: 'Merck',           categoryName: 'New Product Planning/Strategy',        practiceCode: 'NPS', team: '4', revs: '2', dateStart: '2026-01-05', dateEnd: '2026-04-10', revDepth: 'Moderate rework', scope: 'No',  pulse: 'Met expectations',    stage: 'Active engagement',           pioneers: ['Dr. Ines Correia','Ben Schneider'], profile: 'balanced' },
+  // NPS (2)
+  { name: 'Brand Strategy Refresh — NeuroSphere',   client: 'Bristol Myers',   categoryName: 'Brand Strategy',                       practiceCode: 'NPS', team: '3', xcsgDays: 24, revs: '3', dateStart: '2025-11-15', dateEnd: '2026-01-20', revDepth: 'Major rework',        scope: 'Yes expanded scope', pulse: 'Below expectations',     stage: 'Post-engagement (follow-on)', pioneers: ['Natalie Wong',    'Hugo Meyer'],  profile: 'weak' },
+  { name: 'NPP — Immuno-Oncology Launch',           client: 'Merck',           categoryName: 'New Product Planning/Strategy',        practiceCode: 'NPS', team: '4', xcsgDays: 16, revs: '2', dateStart: '2026-01-05', dateEnd: '2026-02-20', revDepth: 'Moderate rework',     scope: 'No',                 pulse: 'Met expectations',      stage: 'Active engagement',           pioneers: ['Dr. Ines Correia','Ben Schneider'],profile: 'balanced' },
 
-  // MCD (3) — Management Consulting / Due Diligence
-  { name: 'CDD — CNS Therapeutics Inc.',            client: 'KKR',             categoryName: 'Commercial Due Diligence',             practiceCode: 'MCD', team: '5', revs: '1', dateStart: '2026-02-01', dateEnd: '2026-03-20', revDepth: 'Cosmetic only',   scope: 'No',  pulse: 'Exceeded expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Alex Voinov',    'Mei-Lin Chang'], profile: 'strong' },
-  { name: 'Opportunity Assessment — Rare GI',       client: 'GI Therapeutics', categoryName: 'Opportunity Assessment (Market and/ or Product) (e.g., market landscape analysis, market research, opportunity assessment)', practiceCode: 'MCD', team: '3', revs: '2', dateStart: '2025-12-10', dateEnd: '2026-02-15', revDepth: 'Moderate rework', scope: 'No', pulse: 'Met expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Diego Alvarez',  'Yuki Sato'],    profile: 'balanced' },
-  { name: 'Portfolio Prioritization — MidPharma',   client: 'MidPharma',       categoryName: 'Portfolio Management/ TA & Indication Prioritization', practiceCode: 'MCD', team: '4', revs: '1', dateStart: '2026-01-22', dateEnd: '2026-03-22', revDepth: 'Cosmetic only', scope: 'No', pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Isabelle Laurent','Tom Fischer'], profile: 'strong' },
+  // MCD (3)
+  { name: 'CDD — CNS Therapeutics Inc.',            client: 'KKR',             categoryName: 'Commercial Due Diligence',             practiceCode: 'MCD', team: '5', xcsgDays: 8,  revs: '1', dateStart: '2026-02-01', dateEnd: '2026-02-20', revDepth: 'Cosmetic only',       scope: 'No',                 pulse: 'Exceeded expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Alex Voinov',     'Mei-Lin Chang'],profile: 'strong' },
+  { name: 'Opportunity Assessment — Rare GI',       client: 'GI Therapeutics', categoryName: 'Opportunity Assessment (Market and/ or Product) (e.g., market landscape analysis, market research, opportunity assessment)', practiceCode: 'MCD', team: '3', xcsgDays: 12, revs: '2', dateStart: '2025-12-10', dateEnd: '2026-01-15', revDepth: 'Moderate rework', scope: 'No', pulse: 'Met expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Diego Alvarez',  'Yuki Sato'],    profile: 'balanced' },
+  { name: 'Portfolio Prioritization — MidPharma',   client: 'MidPharma',       categoryName: 'Portfolio Management/ TA & Indication Prioritization', practiceCode: 'MCD', team: '4', xcsgDays: 9,  revs: '1', dateStart: '2026-01-22', dateEnd: '2026-02-15', revDepth: 'Cosmetic only', scope: 'No', pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Isabelle Laurent','Tom Fischer'], profile: 'strong' },
 
-  // RWE (2) — Real-World Evidence
-  { name: 'Retrospective RWE — DiabetES Cohort',    client: 'Sanofi',          categoryName: 'Retrospective study',                  practiceCode: 'RWE', team: '2', revs: '2', dateStart: '2026-01-08', dateEnd: '2026-03-28', revDepth: 'Moderate rework', scope: 'No',  pulse: 'Met expectations',    stage: 'Active engagement',           pioneers: ['Léa Dubois',     'Ravi Kumar'],   profile: 'balanced' },
-  { name: 'RWE Data Analysis — Long COVID',         client: 'AstraZeneca',     categoryName: 'Data analysis',                        practiceCode: 'RWE', team: '3', revs: '1', dateStart: '2026-02-01', dateEnd: '2026-04-01', revDepth: 'Cosmetic only',   scope: 'No',  pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Chiara Romano',  'Peter Lindqvist'], profile: 'strong' },
+  // RWE (2)
+  { name: 'Retrospective RWE — DiabetES Cohort',    client: 'Sanofi',          categoryName: 'Retrospective study',                  practiceCode: 'RWE', team: '2', xcsgDays: 15, revs: '2', dateStart: '2026-01-08', dateEnd: '2026-02-18', revDepth: 'Moderate rework',     scope: 'No',                 pulse: 'Met expectations',      stage: 'Active engagement',           pioneers: ['Léa Dubois',      'Ravi Kumar'],  profile: 'balanced' },
+  { name: 'RWE Data Analysis — Long COVID',         client: 'AstraZeneca',     categoryName: 'Data analysis',                        practiceCode: 'RWE', team: '3', xcsgDays: 10, revs: '1', dateStart: '2026-02-01', dateEnd: '2026-02-25', revDepth: 'Cosmetic only',       scope: 'No',                 pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Chiara Romano',   'Peter Lindqvist'], profile: 'strong' },
 
-  // RAP (3) — Regulatory Affairs Pharma
-  { name: 'MAA Submission — CardiaX',               client: 'Novartis',        categoryName: 'MAA/NDA',                              practiceCode: 'RAP', team: '5', revs: '2', dateStart: '2025-11-01', dateEnd: '2026-03-30', revDepth: 'Moderate rework', scope: 'No',  pulse: 'Met expectations',    stage: 'Post-engagement (follow-on)', pioneers: ['Dr. Hans Meyer', 'Sofia Rivera'], profile: 'balanced' },
-  { name: 'IND — GeneRise',                         client: 'GeneRise',        categoryName: 'IND and IND Related',                  practiceCode: 'RAP', team: '3', revs: '4', dateStart: '2025-09-01', dateEnd: '2026-02-20', revDepth: 'Major rework',    scope: 'Yes expanded scope', pulse: 'Below expectations', stage: 'Post-engagement (follow-on)', pioneers: ['Dr. Olga Petrova','Marcus König'], profile: 'weak' },
-  { name: 'Regulatory Roadmap — RareEye',           client: 'RareEye',         categoryName: 'Regulatory Roadmap',                   practiceCode: 'RAP', team: '2', revs: '0', dateStart: '2026-02-10', dateEnd: '2026-03-18', revDepth: 'No revisions needed', scope: 'No', pulse: 'Exceeded expectations', stage: 'Active engagement',   pioneers: ['Ashley Park',    'Lucia Martinez'], profile: 'strong' },
+  // RAP (3) — one uses the "Regulatory Strategy" category which is allowed under RAM+RAP; we pick RAP
+  { name: 'MAA Submission — CardiaX',               client: 'Novartis',        categoryName: 'MAA/NDA',                              practiceCode: 'RAP', team: '5', xcsgDays: 20, revs: '2', dateStart: '2025-11-01', dateEnd: '2026-01-10', revDepth: 'Moderate rework',     scope: 'No',                 pulse: 'Met expectations',      stage: 'Post-engagement (follow-on)', pioneers: ['Dr. Hans Meyer',  'Sofia Rivera'],profile: 'balanced' },
+  { name: 'IND — GeneRise',                         client: 'GeneRise',        categoryName: 'IND and IND Related',                  practiceCode: 'RAP', team: '3', xcsgDays: 30, revs: '4', dateStart: '2025-09-01', dateEnd: '2026-01-10', revDepth: 'Major rework',        scope: 'Yes expanded scope', pulse: 'Below expectations',     stage: 'Post-engagement (follow-on)', pioneers: ['Dr. Olga Petrova','Marcus König'], profile: 'weak' },
+  { name: 'Reg Strategy — RareEye (RAP)',           client: 'RareEye',         categoryName: 'Regulatory Strategy',                  practiceCode: 'RAP', team: '2', xcsgDays: 5,  revs: '0', dateStart: '2026-02-10', dateEnd: '2026-02-22', revDepth: 'No revisions needed', scope: 'No',                 pulse: 'Exceeded expectations', stage: 'Active engagement',           pioneers: ['Ashley Park',     'Lucia Martinez'],profile: 'strong' },
 
   // PEN (1)
-  { name: 'Patient Journey — Rare Disease X',       client: 'PatientsFirst',   categoryName: 'Patient Journey Definition',           practiceCode: 'PEN', team: '2', revs: '1', dateStart: '2026-01-30', dateEnd: '2026-03-12', revDepth: 'Cosmetic only',   scope: 'No',  pulse: 'Met expectations',    stage: 'Active engagement',           pioneers: ['Maya Greene',    'Daniel Ortiz'], profile: 'balanced' },
+  { name: 'Patient Journey — Rare Disease X',       client: 'PatientsFirst',   categoryName: 'Patient Journey Definition',           practiceCode: 'PEN', team: '2', xcsgDays: 7,  revs: '1', dateStart: '2026-01-30', dateEnd: '2026-02-15', revDepth: 'Cosmetic only',       scope: 'No',                 pulse: 'Met expectations',      stage: 'Active engagement',           pioneers: ['Maya Greene',     'Daniel Ortiz'],profile: 'balanced' },
 
   // TAD (1)
-  { name: 'Sell-Side M&A — BioAurora',              client: 'BioAurora',       categoryName: 'Sell-Side M&A',                        practiceCode: 'TAD', team: '6', revs: '1', dateStart: '2025-12-15', dateEnd: '2026-03-01', revDepth: 'Cosmetic only',   scope: 'No',  pulse: 'Not yet received',     stage: 'Active engagement',           pioneers: ['Ethan Cole',     'Emma Russo'],   profile: 'strong' },
+  { name: 'Sell-Side M&A — BioAurora',              client: 'BioAurora',       categoryName: 'Sell-Side M&A',                        practiceCode: 'TAD', team: '6', xcsgDays: 12, revs: '1', dateStart: '2025-12-15', dateEnd: '2026-01-20', revDepth: 'Cosmetic only',       scope: 'No',                 pulse: 'Not yet received',       stage: 'Active engagement',           pioneers: ['Ethan Cole',      'Emma Russo'],  profile: 'strong' },
 
   // CLI (1)
-  { name: 'Full-Service Trial — OncoRx Ph2',        client: 'OncoRx',          categoryName: 'Full Service Trial - Clinical Operations', practiceCode: 'CLI', team: '6', revs: '2', dateStart: '2025-10-20', dateEnd: '2026-02-28', revDepth: 'Moderate rework', scope: 'No',  pulse: 'Not yet received',     stage: 'Active engagement',           pioneers: ['Dr. Anil Rao',   'Grace Okoye'],  profile: 'balanced' },
+  { name: 'Full-Service Trial — OncoRx Ph2',        client: 'OncoRx',          categoryName: 'Full Service Trial - Clinical Operations', practiceCode: 'CLI', team: '6', xcsgDays: 25, revs: '2', dateStart: '2025-10-20', dateEnd: '2026-01-05', revDepth: 'Moderate rework', scope: 'No', pulse: 'Not yet received', stage: 'Active engagement', pioneers: ['Dr. Anil Rao',   'Grace Okoye'], profile: 'balanced' },
 ];
 
 function surveyPayload(profile: Profile) {
-  // Use EXACT option strings from schema.py SCORES dict.
   if (profile === 'strong') {
     return {
       b1_starting_point: 'From AI draft',
@@ -129,7 +134,7 @@ function surveyPayload(profile: Profile) {
       f1_feasibility: 'Feasible but at 2x+ the cost and time',
       f2_productization: 'Yes with moderate customization',
       g1_reuse_intent: 'Yes with reservations',
-      l1_legacy_working_days: 18,
+      l1_legacy_working_days: 20,
       l2_legacy_team_size: '3',
       l3_legacy_revision_depth: 'Moderate rework',
       l4_legacy_scope_expansion: 'No',
@@ -196,48 +201,7 @@ async function login(page: Page) {
   await page.waitForSelector('#appShell', { state: 'visible' });
 }
 
-async function createProjectUI(page: Page, spec: ProjectSpec, practices: any[], categories: any[]) {
-  const cat = categories.find(c => c.name === spec.categoryName);
-  const prac = practices.find(p => p.code === spec.practiceCode);
-  if (!cat) throw new Error(`category ${spec.categoryName} not found`);
-
-  await page.goto(`${BASE}/#new`);
-  await page.waitForSelector('#projectForm', { state: 'visible' });
-  await page.waitForSelector('#fCategory option:not([value=""])', { state: 'attached' });
-
-  await page.fill('#fName', spec.name);
-  await page.selectOption('#fCategory', { value: String(cat.id) });
-  await page.selectOption('#fPractice', { value: String(prac.id) });
-  await page.fill('#fClient', spec.client);
-  await page.selectOption('#fStage', spec.stage);
-  await page.selectOption('#fPulse', spec.pulse);
-  await page.fill('#fDateStart', spec.dateStart);
-  await page.fill('#fDateEnd', spec.dateEnd);
-  await page.fill('#fXTeam', spec.team);
-  await page.fill('#fRevisions', spec.revs);
-  await page.selectOption('#fRevDepth', spec.revDepth);
-  await page.selectOption('#fScopeExpansion', spec.scope);
-
-  // First pioneer
-  const pioneerInputs = page.locator('input[placeholder="Pioneer name"]');
-  await pioneerInputs.first().fill(spec.pioneers[0]);
-  await page.locator('input[placeholder="Email (optional)"]').first().fill(`${spec.pioneers[0].toLowerCase().replace(/[^a-z]/g, '.')}@alira.health`);
-
-  // Add second pioneer
-  await page.click('button:has-text("+ Add Pioneer")');
-  await pioneerInputs.nth(1).fill(spec.pioneers[1]);
-  await page.locator('input[placeholder="Email (optional)"]').nth(1).fill(`${spec.pioneers[1].toLowerCase().replace(/[^a-z]/g, '.')}@alira.health`);
-
-  await page.click('#projectForm button[type="submit"]');
-  // Wait for modal
-  await page.waitForSelector('.modal-overlay.active', { timeout: 10_000 });
-  // Dismiss
-  await page.click('.modal-card button.btn-secondary');
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-test.describe.serial('20-project real-world seed + metric verification', () => {
+test.describe.serial('20-project real-world seed + metric verification (v2: M2M + realistic days)', () => {
   let page: Page;
 
   test.beforeAll(async ({ browser }) => {
@@ -251,30 +215,36 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
     await expect(page).toHaveURL(/.*#portfolio/);
   });
 
-  test('02 — Seed 20 projects via API', async () => {
+  test('02 — Seed 20 projects via API (respecting M2M pair rules)', async () => {
     const result = await page.evaluate(async (projects) => {
       const token = sessionStorage.getItem('xcsg_token');
       const hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
       const cats = await (await fetch(`/api/categories`, { headers: hdr })).json();
       const pracs = await (await fetch(`/api/practices`, { headers: hdr })).json();
-      const catByName: Record<string, number> = {};
-      cats.forEach((c: any) => { catByName[c.name] = c.id; });
+      const catByName: Record<string, any> = {};
+      cats.forEach((c: any) => { catByName[c.name] = c; });
       const pracByCode: Record<string, number> = {};
       pracs.forEach((p: any) => { pracByCode[p.code] = p.id; });
 
       const ids: number[] = [];
       for (const p of projects) {
-        if (!catByName[p.categoryName]) throw new Error(`Unknown category: ${p.categoryName}`);
+        const cat = catByName[p.categoryName];
+        if (!cat) throw new Error(`Unknown category: ${p.categoryName}`);
         if (!pracByCode[p.practiceCode]) throw new Error(`Unknown practice: ${p.practiceCode}`);
+        const allowed = cat.practices.map((x: any) => x.code);
+        if (!allowed.includes(p.practiceCode)) {
+          throw new Error(`Practice ${p.practiceCode} not allowed for category ${p.categoryName}. Allowed: ${allowed}`);
+        }
         const body = {
           project_name: p.name,
-          category_id: catByName[p.categoryName],
+          category_id: cat.id,
           practice_id: pracByCode[p.practiceCode],
           client_name: p.client,
           engagement_stage: p.stage,
           client_pulse: p.pulse,
           date_started: p.dateStart,
           date_delivered: p.dateEnd,
+          working_days: p.xcsgDays,  // explicit xCSG working days
           xcsg_team_size: p.team,
           xcsg_revision_rounds: p.revs,
           revision_depth: p.revDepth,
@@ -304,7 +274,7 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
     await page.waitForTimeout(500);
     const rowCount = await page.locator('#projectTable tbody tr').count();
     expect(rowCount).toBe(20);
-    await page.screenshot({ fullPage: true, path: 'v2-seed-projects-list.png' });
+    await page.screenshot({ fullPage: true, path: 'v2b-seed-projects-list.png' });
     await page.waitForTimeout(1000);
   });
 
@@ -317,18 +287,15 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
       const hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
       const projects = await (await fetch(`/api/projects`, { headers: hdr })).json();
       let count = 0;
-      const results: Array<{ name: string; profile: string; status: number; text?: string }> = [];
       for (const p of projects) {
         const profile = (profileMap as Record<string, string>)[p.project_name];
         const body = profile === 'strong' ? strong : profile === 'weak' ? weak : balanced;
-        const firstPioneer = p.pioneers?.[0];
-        if (!firstPioneer) continue;
-        const tok = firstPioneer.rounds[0].token;
+        const tok = p.pioneers?.[0]?.rounds?.[0]?.token;
+        if (!tok) continue;
         const r = await fetch(`/api/expert/${tok}`, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
         if (r.ok) count++;
-        results.push({ name: p.project_name, profile, status: r.status, text: r.ok ? undefined : await r.text() });
       }
-      return { count, results };
+      return count;
     }, {
       profileMap: profilesByProjectName,
       strong: surveyPayload('strong'),
@@ -336,18 +303,14 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
       weak: surveyPayload('weak'),
     });
 
-    const failures = submitted.results.filter(r => r.status !== 201);
-    if (failures.length) {
-      console.log('[SURVEY] failures:', JSON.stringify(failures, null, 2));
-    }
-    console.log(`[SURVEY] submitted=${submitted.count} / 20`);
-    expect(submitted.count).toBe(20);
+    console.log(`[SURVEY] submitted=${submitted} / 20`);
+    expect(submitted).toBe(20);
   });
 
-  test('05 — Portfolio dashboard: metrics populated', async () => {
+  test('05 — Dashboard metrics populated (non-null)', async () => {
     await page.goto(`${BASE}/#portfolio`);
     await page.waitForSelector('.dashboard-section');
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
 
     const metrics = await page.evaluate(async () => {
       const tok = sessionStorage.getItem('xcsg_token');
@@ -355,24 +318,20 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
       return r.json();
     });
     console.log('[METRICS] summary:', JSON.stringify(metrics, null, 2));
+
     expect(metrics.total_projects).toBe(20);
     expect(metrics.complete_projects + metrics.pending_projects).toBe(20);
-    expect(metrics.average_effort_ratio).toBeGreaterThan(0);
+    expect(metrics.average_effort_ratio).toBeGreaterThan(1);  // xCSG should be meaningfully faster
     expect(metrics.average_quality_score).toBeGreaterThan(0);
-    expect(metrics.reuse_intent_avg).toBeGreaterThan(0);
-    // Dashboard should show "Passed" for Multi-engagement (≥2 deliverable types)
-    await page.screenshot({ fullPage: true, path: 'v2-seed-dashboard.png' });
+    expect(metrics.average_productivity_ratio).not.toBeNull();
+    expect(metrics.machine_first_avg).toBeGreaterThan(1);
+    expect(metrics.senior_led_avg).toBeGreaterThan(1);
+    expect(metrics.proprietary_knowledge_avg).toBeGreaterThan(1);
+
+    await page.screenshot({ fullPage: true, path: 'v2b-seed-dashboard.png' });
   });
 
-  test('06 — Breakdowns: By Practice card populated with 9 practices', async () => {
-    await page.goto(`${BASE}/#portfolio`);
-    await page.waitForSelector('#chartPractice');
-    await page.waitForTimeout(2000);
-    // Scroll to the breakdowns section
-    await page.evaluate(() => document.getElementById('chartPractice')?.scrollIntoView({ block: 'center' }));
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: 'v2-seed-by-practice.png' });
-    // Validate via API: 9 practices show projects
+  test('06 — By Practice chart has 9 bars', async () => {
     const byPractice = await page.evaluate(async () => {
       const tok = sessionStorage.getItem('xcsg_token');
       const r = await fetch(`/api/projects`, { headers: { Authorization: `Bearer ${tok}` } });
@@ -382,10 +341,10 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
       return groups;
     });
     console.log('[DATA] project count by practice:', JSON.stringify(byPractice, null, 2));
-    expect(Object.keys(byPractice).length).toBeGreaterThanOrEqual(9);
+    expect(Object.keys(byPractice).length).toBe(9);
   });
 
-  test('07 — Scaling gates: Multi-engagement + at least 2 more pass', async () => {
+  test('07 — Scaling gates: at least 3 pass', async () => {
     const gates = await page.evaluate(async () => {
       const tok = sessionStorage.getItem('xcsg_token');
       const r = await fetch(`/api/metrics/scaling-gates`, { headers: { Authorization: `Bearer ${tok}` } });
@@ -394,30 +353,26 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
     console.log('[METRICS] scaling gates:');
     gates.gates.forEach((g: any) => console.log(`  [${g.status.toUpperCase().padEnd(7)}] ${g.name}: ${g.detail}`));
     expect(gates.gates.find((g: any) => g.name === 'Multi-engagement').status).toBe('pass');
-    // With 20 projects across 9 practices, Multi-engagement passes trivially.
-    // Effort-reduction / D2 reuse / adoption-rate gates depend on nuanced survey
-    // data — they often sit just below threshold until real data accrues.
-    expect(gates.passed_count).toBeGreaterThanOrEqual(1);
+    expect(gates.passed_count).toBeGreaterThanOrEqual(3);
   });
 
-  test('08 — Filter projects list by practice RAM', async () => {
+  test('08 — Filter projects list by practice RAM → 4 rows', async () => {
     await page.goto(`${BASE}/#projects`);
     await page.waitForSelector('#practiceFilter');
     await page.selectOption('#practiceFilter', 'RAM');
     await page.waitForTimeout(500);
     const visibleRows = await page.locator('#projectTable tbody tr:not([style*="display: none"])').count();
-    expect(visibleRows).toBe(4);  // 4 RAM projects
-    await page.screenshot({ path: 'v2-seed-ram-filter.png' });
+    expect(visibleRows).toBe(4);
+    await page.screenshot({ path: 'v2b-seed-ram-filter.png' });
   });
 
-  test('09 — Settings > Practices shows 11 practices with project counts', async () => {
+  test('09 — Settings > Practices shows 11 practices with project counts summing to 20', async () => {
     await page.goto(`${BASE}/#settings`);
     await page.waitForSelector('#tabPractices');
     await page.click('#tabPractices');
     await page.waitForSelector('.data-table tbody tr');
     const rowCount = await page.locator('.data-table tbody tr').count();
     expect(rowCount).toBe(11);
-    // Sum of project counts must be 20
     const total = await page.evaluate(() => {
       const rows = document.querySelectorAll('.data-table tbody tr');
       let sum = 0;
@@ -428,6 +383,27 @@ test.describe.serial('20-project real-world seed + metric verification', () => {
       return sum;
     });
     expect(total).toBe(20);
-    await page.screenshot({ fullPage: true, path: 'v2-seed-practices-tab.png' });
+    await page.screenshot({ fullPage: true, path: 'v2b-seed-practices-tab.png' });
+  });
+
+  test('10 — M2M rule: Regulatory Strategy / MCD is rejected', async () => {
+    const result = await page.evaluate(async () => {
+      const tok = sessionStorage.getItem('xcsg_token');
+      const hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` };
+      const cats = await (await fetch(`/api/categories`, { headers: hdr })).json();
+      const pracs = await (await fetch(`/api/practices`, { headers: hdr })).json();
+      const regStrat = cats.find((c: any) => c.name === 'Regulatory Strategy');
+      const mcd = pracs.find((p: any) => p.code === 'MCD');
+      const body = {
+        project_name: 'illegal pair', category_id: regStrat.id, practice_id: mcd.id,
+        xcsg_team_size: '2', xcsg_revision_rounds: '1',
+        pioneers: [{ name: 'x' }],
+      };
+      const r = await fetch(`/api/projects`, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
+      return { status: r.status, body: await r.text() };
+    });
+    console.log('[M2M] illegal pair response:', result.status, result.body.slice(0, 120));
+    expect(result.status).toBe(400);
+    expect(result.body).toContain('not allowed for this category');
   });
 });
