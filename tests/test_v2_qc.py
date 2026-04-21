@@ -669,7 +669,7 @@ def test_dashboard_config():
     dc = getattr(_schema, "DASHBOARD_CONFIG", None)
     test("DASHBOARD_CONFIG exists", isinstance(dc, dict))
     test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 4)
-    test("DASHBOARD_CONFIG has charts (list, may be empty this task)", isinstance(dc.get("charts"), list))
+    test("DASHBOARD_CONFIG has charts list", isinstance(dc.get("charts"), list))
     th = dc.get("thresholds", {})
     test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
     test("thresholds.quarterly_bucket_min_quarters is int >= 2", isinstance(th.get("quarterly_bucket_min_quarters"), int) and th["quarterly_bucket_min_quarters"] >= 2)
@@ -694,6 +694,27 @@ def test_dashboard_config():
     tab_ids_set = {x["id"] for x in dc["tabs"]}
     test("every kpi_tile.tab is a known tab id",
          all(t["tab"] in tab_ids_set for t in dc["kpi_tiles"]))
+
+    CHART_TYPES = {
+        "scatter_disprove", "radar_gains",
+        "timeline_per_project", "timeline_quarterly", "timeline_cumulative", "cohort_learning_curve",
+        "bar_by_category", "bar_by_practice", "bar_by_pioneer",
+        "heatmap_practice_quarter", "area_category_mix",
+        "donut_client_pulse", "donut_reuse_intent", "scatter_schedule", "track_scaling_gates",
+        "table_portfolio",
+    }
+    test("every chart has id/tab/type/title",
+         all({"id", "tab", "type", "title"} <= set(c.keys()) for c in dc["charts"]))
+    test("every chart.tab is a known tab id",
+         all(c["tab"] in tab_ids_set for c in dc["charts"]))
+    test("every chart.type is in CHART_TYPES",
+         all(c["type"] in CHART_TYPES for c in dc["charts"]))
+    test("chart ids are unique",
+         len({c["id"] for c in dc["charts"]}) == len(dc["charts"]))
+    test("Trends tab has 4 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "trends") == 4)
+    test("Breakdowns has 5 charts (3 bars + heatmap + mix)",
+         sum(1 for c in dc["charts"] if c["tab"] == "breakdowns") == 5)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
