@@ -693,7 +693,24 @@ def main():
     test_frontend_js()
     test_norms()
     test_schema()
-    
+
+    # ── DASHBOARD_CONFIG ──────────────────────────────────────────────────────────
+    from backend import schema as _schema
+    dc = getattr(_schema, "DASHBOARD_CONFIG", None)
+    test("DASHBOARD_CONFIG exists", isinstance(dc, dict))
+    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 4)
+    test("DASHBOARD_CONFIG has kpi_tiles (list, may be empty this task)", isinstance(dc.get("kpi_tiles"), list))
+    test("DASHBOARD_CONFIG has charts (list, may be empty this task)", isinstance(dc.get("charts"), list))
+    th = dc.get("thresholds", {})
+    test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
+    test("thresholds.quarterly_bucket_min_quarters is int >= 2", isinstance(th.get("quarterly_bucket_min_quarters"), int) and th["quarterly_bucket_min_quarters"] >= 2)
+    test("thresholds.cohort_min_projects is int >= 2", isinstance(th.get("cohort_min_projects"), int) and th["cohort_min_projects"] >= 2)
+    test("thresholds.bar_top_n is int >= 3", isinstance(th.get("bar_top_n"), int) and th["bar_top_n"] >= 3)
+    tone = th.get("metric_tone", {})
+    test("metric_tone.success_above is float", isinstance(tone.get("success_above"), (int, float)))
+    test("metric_tone.blue_above is float", isinstance(tone.get("blue_above"), (int, float)))
+    test("metric_tone.warning_above is float", isinstance(tone.get("warning_above"), (int, float)))
+
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
     print("=" * 70)

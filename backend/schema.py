@@ -186,6 +186,26 @@ METRICS = {
     "client_pulse_avg":            {"label": "Client Pulse", "format": "pct", "icon": "\u2764", "tip": "How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below."},
 }
 
+# ── Dashboard configuration (single source of truth for the frontend) ───────
+
+DASHBOARD_CONFIG = {
+    "tabs": [
+        {"id": "overview",    "label": "Overview",    "icon": "\U0001F30D"},
+        {"id": "trends",      "label": "Trends",      "icon": "\U0001F4C8"},
+        {"id": "breakdowns",  "label": "Breakdowns",  "icon": "\U0001F4CA"},
+        {"id": "signals",     "label": "Signals & Gates", "icon": "\U0001F680"},
+    ],
+    "kpi_tiles": [],   # populated in Task 2
+    "charts": [],      # populated in Task 3
+    "thresholds": {
+        "radar_axis_cap": 3.0,
+        "quarterly_bucket_min_quarters": 6,
+        "cohort_min_projects": 3,
+        "bar_top_n": 8,
+        "metric_tone": {"success_above": 1.5, "blue_above": 1.0, "warning_above": 0.8},
+    },
+}
+
 # ── Norms column definitions ────────────────────────────────────────────────
 
 NORMS_COLUMNS = [
