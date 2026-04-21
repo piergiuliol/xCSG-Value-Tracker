@@ -2522,10 +2522,20 @@ async function renderCategoriesTab() {
 
     let html = '<div class="card">';
     if (_isAdmin) {
-      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;gap:12px;align-items:center">
-        <input type="text" id="newCatName" placeholder="Category name" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
-        <input type="text" id="newCatDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
-        <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
+      const addPracCheckboxes = state.practices.map(p => `
+        <label style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;padding:2px 8px;border:1px solid var(--gray-300);border-radius:14px;cursor:pointer;user-select:none;font-size:12px">
+          <input type="checkbox" class="new-cat-prac-cb" data-id="${p.id}"> <strong>${esc(p.code)}</strong>
+        </label>`).join('');
+      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:12px;align-items:center">
+          <input type="text" id="newCatName" placeholder="Category name" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+          <input type="text" id="newCatDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+          <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--gray-500);font-weight:600">Attribute practices:</span>
+          ${addPracCheckboxes}
+        </div>
       </div>`;
     }
     html += `<table class="data-table"><thead><tr><th>Name</th><th>Practices</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
@@ -2555,8 +2565,12 @@ async function addCategory() {
   const name = document.getElementById('newCatName')?.value.trim();
   const desc = document.getElementById('newCatDesc')?.value.trim() || null;
   if (!name) { showToast('Category name is required', 'error'); return; }
+  const practiceIds = Array.from(document.querySelectorAll('.new-cat-prac-cb:checked')).map(cb => parseInt(cb.dataset.id));
   try {
-    await apiCall('POST', '/categories', { name, description: desc });
+    const cat = await apiCall('POST', '/categories', { name, description: desc });
+    if (practiceIds.length > 0 && cat && cat.id) {
+      await apiCall('PUT', `/categories/${cat.id}/practices`, { practice_ids: practiceIds });
+    }
     showToast('Category created');
     state.categories = [];
     renderCategoriesTab();
