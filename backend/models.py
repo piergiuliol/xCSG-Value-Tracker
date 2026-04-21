@@ -282,6 +282,10 @@ class MetricsSummary(BaseModel):
     machine_first_avg: float
     senior_led_avg: float
     proprietary_knowledge_avg: float
+    average_quality_ratio: Optional[float] = None
+    rework_efficiency_avg: Optional[float] = None
+    client_impact_avg: Optional[float] = None
+    data_independence_avg: Optional[float] = None
     checkpoint: int
     projects_to_next_checkpoint: int
 

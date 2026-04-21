@@ -646,6 +646,20 @@ def test_schema_endpoint():
     test("schema.dashboard.thresholds.radar_axis_cap present",
          isinstance((dash.get("thresholds") or {}).get("radar_axis_cap"), (int, float)))
 
+# ── L3. MetricsSummary endpoint fields ───────────────────────────────────────
+
+def test_metrics_summary_fields():
+    """Regression guard: MetricsSummary model must not silently drop these keys."""
+    print("\n── L3. MetricsSummary endpoint fields ──")
+    tk = admin_token()
+    r = requests.get(f"{BASE}/api/metrics/summary", headers=auth_h(tk))
+    test("GET /api/metrics/summary 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+    body = r.json()
+    for key in ("average_quality_ratio", "rework_efficiency_avg", "client_impact_avg", "data_independence_avg"):
+        test(f"summary exposes {key}", key in body, f"missing from response keys")
+
 # ── M. Database Schema Checks ────────────────────────────────────────────────
 
 def test_schema():
@@ -772,6 +786,7 @@ def main():
     test_frontend_js()
     test_norms()
     test_schema_endpoint()
+    test_metrics_summary_fields()
     test_schema()
     test_dashboard_config()
 
