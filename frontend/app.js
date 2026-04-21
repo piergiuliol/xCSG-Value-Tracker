@@ -739,6 +739,85 @@ function applyFilters(allProjects, state) {
   });
 }
 
+function uniq(xs) { return [...new Set(xs)]; }
+
+function renderFilterBar(allProjects) {
+  const el = document.getElementById('filterBar');
+  if (!el) return;
+
+  const practices  = uniq(allProjects.map(p => p.practice_code || '—')).sort();
+  const categories = uniq(allProjects.map(p => p.category_name || '—')).sort();
+  const pioneers   = uniq(allProjects.flatMap(p => (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || ''))).filter(Boolean).sort();
+
+  const summary = (setRef, total) =>
+    !setRef.size ? 'All' : setRef.size === 1 ? [...setRef][0] : `${setRef.size} of ${total}`;
+
+  const btn = (key, label, sum) =>
+    `<button class="filter-chip ${sum === 'All' ? '' : 'active'}" data-filter="${key}">${label}: ${esc(sum)} ▾</button>`;
+
+  el.className = 'filter-bar';
+  el.innerHTML =
+      btn('practices',  'Practice',  summary(filterState.practices,  practices.length))
+    + btn('categories', 'Category',  summary(filterState.categories, categories.length))
+    + btn('pioneers',   'Pioneer',   summary(filterState.pioneers,   pioneers.length))
+    + btn('projects',   'Projects',  filterState.projects.size ? `${filterState.projects.size} of ${allProjects.length}` : 'All')
+    + btn('delivered',  'Delivered', (filterState.delivered_from || filterState.delivered_to) ? `${filterState.delivered_from || '…'} → ${filterState.delivered_to || '…'}` : 'all time')
+    + `<button class="filter-chip" data-filter="clear">Clear</button>`;
+
+  el.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () =>
+    _openFilterPopover(b.dataset.filter, b, { practices, categories, pioneers, allProjects })));
+}
+
+function _openFilterPopover(key, anchor, lists) {
+  document.querySelectorAll('.filter-popover').forEach(p => p.remove());
+  if (key === 'clear') { clearFilters(); _reapplyFilters(); return; }
+
+  const pop = document.createElement('div');
+  pop.className = 'filter-popover';
+  const r = anchor.getBoundingClientRect();
+  pop.style.top  = (window.scrollY + r.bottom + 6) + 'px';
+  pop.style.left = (window.scrollX + r.left)      + 'px';
+
+  const renderMulti = (setRef, options) => options.map(opt =>
+    `<label><input type="checkbox" value="${esc(opt)}" ${setRef.has(opt) ? 'checked' : ''}> ${esc(opt)}</label>`
+  ).join('');
+
+  if (key === 'practices')  pop.innerHTML = renderMulti(filterState.practices,  lists.practices);
+  if (key === 'categories') pop.innerHTML = renderMulti(filterState.categories, lists.categories);
+  if (key === 'pioneers')   pop.innerHTML = renderMulti(filterState.pioneers,   lists.pioneers);
+  if (key === 'projects')   pop.innerHTML = lists.allProjects.map(p =>
+    `<label><input type="checkbox" data-id="${p.id}" ${!filterState.projects.size || filterState.projects.has(p.id) ? 'checked' : ''}> ${esc(p.project_name)}</label>`
+  ).join('');
+  if (key === 'delivered')  pop.innerHTML =
+      `<label>From <input type="date" id="fFrom" value="${filterState.delivered_from || ''}"></label>`
+    + `<label>To <input type="date" id="fTo"   value="${filterState.delivered_to   || ''}"></label>`;
+
+  document.body.appendChild(pop);
+
+  pop.addEventListener('change', e => {
+    if (key === 'practices' || key === 'categories' || key === 'pioneers') {
+      const set = filterState[key];
+      if (e.target.checked) set.add(e.target.value); else set.delete(e.target.value);
+    } else if (key === 'projects') {
+      const id = Number(e.target.dataset.id);
+      if (e.target.checked) filterState.projects.add(id); else filterState.projects.delete(id);
+      // If every project is ticked, collapse to "All" by clearing the set
+      if (filterState.projects.size === lists.allProjects.length) filterState.projects.clear();
+    } else if (key === 'delivered') {
+      filterState.delivered_from = document.getElementById('fFrom').value || null;
+      filterState.delivered_to   = document.getElementById('fTo').value   || null;
+    }
+    _reapplyFilters();
+  });
+
+  setTimeout(() => document.addEventListener('click', function close(e) {
+    if (!pop.contains(e.target) && e.target !== anchor) {
+      pop.remove();
+      document.removeEventListener('click', close);
+    }
+  }), 0);
+}
+
 function _renderDashboardView(allProjects, dashboard) {
   const mc = document.getElementById('mainContent');
 
@@ -935,6 +1014,7 @@ function _renderDashboardView(allProjects, dashboard) {
   html += `</tbody></table></div></div>`;
 
   mc.innerHTML = html;
+  renderFilterBar(allProjects);
   requestAnimationFrame(() => renderDashboardCharts(localMetrics, filtered));
 }
 
