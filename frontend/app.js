@@ -862,9 +862,9 @@ function _renderDashboardView(allProjects, dashboard) {
 
   const fmtRatio = value => value == null ? '\u2014' : `${round2(value)}\xd7`;
   const fmtPct = value => value == null ? '\u2014' : `${Math.round(value * 100)}%`;
-  const metricTone = value => {
+  const metricTone = (value, toneKey = 'metric_tone') => {
     if (value == null) return 'var(--gray-400)';
-    const t = schema.dashboard.thresholds.metric_tone;
+    const t = schema.dashboard.thresholds[toneKey] || schema.dashboard.thresholds.metric_tone;
     if (value > t.success_above) return 'var(--success)';
     if (value >= t.blue_above) return 'var(--blue)';
     if (value >= t.warning_above) return 'var(--warning)';
@@ -938,7 +938,7 @@ function _renderDashboardView(allProjects, dashboard) {
       : '';
     html += `<div class="metric-tile${extraClass}" title="${esc(tip)}">
       <div class="metric-tile-icon">${def.icon}</div>
-      <div class="metric-tile-value" style="color:${metricTone(value)}">${fmt(value)}</div>
+      <div class="metric-tile-value" style="color:${metricTone(value, def.format === 'pct' ? 'pct_tone' : 'metric_tone')}">${fmt(value)}</div>
       <div class="metric-tile-label">${esc(def.label)} ${infoIcon(def.metricKey)}</div>
       ${subHtml}
     </div>`;

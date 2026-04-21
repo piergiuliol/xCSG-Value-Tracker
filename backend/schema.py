@@ -258,6 +258,7 @@ DASHBOARD_CONFIG = {
         "cohort_min_projects": 3,
         "bar_top_n": 8,
         "metric_tone": {"success_above": 1.5, "blue_above": 1.0, "warning_above": 0.8},
+        "pct_tone":    {"success_above": 0.8, "blue_above": 0.6, "warning_above": 0.4},
     },
 }
 
