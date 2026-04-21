@@ -818,6 +818,42 @@ function _openFilterPopover(key, anchor, lists) {
   }), 0);
 }
 
+let _activeTab = 'overview';
+
+function renderTabShell(mountEl) {
+  const tabs = schema.dashboard.tabs;
+  const charts = schema.dashboard.charts;
+  mountEl.insertAdjacentHTML('beforeend',
+    `<div class="tab-bar">${tabs.map(t =>
+      `<div class="tab ${t.id === _activeTab ? 'active' : ''}" data-tab="${t.id}">${t.icon} ${esc(t.label)}</div>`
+    ).join('')}</div>`
+  );
+  for (const t of tabs) {
+    const tabCharts = charts.filter(c => c.tab === t.id);
+    const body = tabCharts.map(c => `
+      <div class="chart-card" data-chart-id="${c.id}">
+        <div class="chart-card-title">${esc(c.title)}</div>
+        <div class="chart-card-explain">${esc(c.subtitle || '')}</div>
+        <div class="chart-body" ${c.height ? `style="height:${c.height}px"` : ''}>
+          <div id="${c.id}" style="width:100%;height:100%"></div>
+        </div>
+      </div>`).join('');
+    mountEl.insertAdjacentHTML('beforeend',
+      `<div class="tab-panel ${t.id === _activeTab ? 'active' : ''}" data-panel="${t.id}">${body}</div>`);
+  }
+  mountEl.querySelectorAll('.tab-bar .tab').forEach(el =>
+    el.addEventListener('click', () => _selectTab(el.dataset.tab, mountEl))
+  );
+}
+
+function _selectTab(id, mountEl) {
+  _activeTab = id;
+  mountEl.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === id));
+  mountEl.querySelectorAll('.tab-panel').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
+  // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes
+  renderDashboardCharts(_dashboardCache, applyFilters(_projectsCache));
+}
+
 function _renderDashboardView(allProjects, dashboard) {
   const mc = document.getElementById('mainContent');
 
@@ -901,54 +937,8 @@ function _renderDashboardView(allProjects, dashboard) {
   </div>`;
   html += `</div>`;
 
-  // ── CHART SECTIONS ──
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83c\udf0d</div>
-      <div><h2 class="section-title">Thesis Validation</h2><p class="section-subtitle">Disprove matrix and multi-dimensional gains</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">Disprove Matrix</div><div class="chart-card-explain">Each dot is a project. Top-right = faster AND better quality. Bottom-left = model failing.</div><div class="chart-body" style="height:380px"><div id="chartDisprove" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">Gains Radar</div><div class="chart-card-explain">Average scores across the six flywheel dimensions. The dashed line is baseline (1\xd7). Larger area = stronger advantage.</div><div class="chart-body" style="height:380px"><div id="chartRadar" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
-
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83d\udcc8</div>
-      <div><h2 class="section-title">Performance Trends</h2><p class="section-subtitle">How xCSG advantage evolves over time</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">xCSG Value Gain Over Time</div><div class="chart-card-explain">Quality per person-day (xCSG vs legacy) per project, ordered by delivery date. Rising = improving efficiency.</div><div class="chart-body" style="height:320px"><div id="chartAdvantageTrend" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">Speed, Quality &amp; Value Gain</div><div class="chart-card-explain">All three ratios over time. Value Gain (dashed) = quality per person-day vs legacy. All above 1\xd7 = xCSG outperforms.</div><div class="chart-body" style="height:320px"><div id="chartSpeedQuality" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
-
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\u23f1</div>
-      <div><h2 class="section-title">Delivery Discipline</h2><p class="section-subtitle">Schedule variance by project</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">Schedule Variance</div><div class="chart-card-explain">Each dot is a project. Y = days between actual and expected delivery. Below 0 = early, above 0 = late. Only projects with both dates appear.</div><div class="chart-body" style="height:320px"><div id="chartSchedule" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
-
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83d\udcca</div>
-      <div><h2 class="section-title">Breakdowns</h2><p class="section-subtitle">Performance by category, pioneer, and signal</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">By Category</div><div class="chart-card-explain">Average xCSG advantage by deliverable type. Longer bars = stronger performance in that category.</div><div class="chart-body" style="height:260px"><div id="chartCategory" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">By Practice</div><div class="chart-card-explain">Average xCSG advantage by practice. Shows which practice delivers the most value.</div><div class="chart-body" style="height:260px"><div id="chartPractice" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">By Pioneer</div><div class="chart-card-explain">Average xCSG advantage by pioneer lead. Shows which team members drive the most value.</div><div class="chart-body" style="height:260px"><div id="chartPioneer" style="width:100%;height:100%"></div></div></div>
-    </div>
-    <div class="chart-row" style="margin-top:20px">
-      <div class="chart-card"><div class="chart-card-title">Client Pulse</div><div class="chart-card-explain">How clients rated the deliverable: exceeded, met, or below expectations.</div><div class="chart-body" style="height:320px"><div id="chartPulse" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">Reuse Intent</div><div class="chart-card-explain">Would experts choose xCSG again? Enthusiastic = yes without hesitation.</div><div class="chart-body" style="height:320px"><div id="chartReuse" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
+  // ── CHART SECTIONS (rendered via tab shell, Task 13) ──
+  html += `<div id="tabContainer"></div>`;
 
   // ── SCALING GATES ──
   if (filtered.length === allProjects.length && dashboard.scaling_gates && dashboard.scaling_gates.length) {
@@ -1015,6 +1005,7 @@ function _renderDashboardView(allProjects, dashboard) {
 
   mc.innerHTML = html;
   renderFilterBar(allProjects);
+  renderTabShell(document.getElementById('tabContainer'));
   requestAnimationFrame(() => renderDashboardCharts(localMetrics, filtered));
 }
 

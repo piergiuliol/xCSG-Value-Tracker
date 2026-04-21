@@ -4335,3 +4335,10 @@ th .metric-info-btn {
   padding: 10px 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.08);
 }
 .filter-popover label { display: block; padding: 4px 0; font-size: 13px; cursor: pointer; }
+
+/* ─── Dashboard tab shell (Task 13) ──────────────────────────────────────── */
+.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--gray-200); margin: 10px 0 16px; }
+.tab-bar .tab { padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 14px; color: var(--gray-500); }
+.tab-bar .tab.active { color: var(--navy); border-bottom-color: var(--blue); font-weight: 600; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
