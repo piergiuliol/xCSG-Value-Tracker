@@ -754,6 +754,26 @@ def test_dashboard_config():
     test("Signals has 5 charts",
          sum(1 for c in dc["charts"] if c["tab"] == "signals") == 5)
 
+# ── O. Seed profile EXPERT_FIELDS coverage ───────────────────────────────────
+
+def test_seed_field_coverage():
+    """Every EXPERT_FIELDS key must appear in every seed profile dict."""
+    print("\n── O. Seed profile coverage (every EXPERT_FIELDS key) ──")
+    import importlib.util, pathlib
+    from backend.schema import EXPERT_FIELDS
+    seed_path = pathlib.Path("tests/seed_20_projects.py")
+    spec = importlib.util.spec_from_file_location("seed_module", seed_path)
+    seed_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(seed_mod)
+
+    # Heuristic: profile dicts are module-level, uppercase names, and carry c6_self_assessment
+    profiles = {name: obj for name, obj in vars(seed_mod).items()
+                if name.isupper() and isinstance(obj, dict) and obj.get("c6_self_assessment")}
+    test("seed defines at least 3 profiles", len(profiles) >= 3, detail=f"found {list(profiles.keys())}")
+    for pname, pdict in profiles.items():
+        missing = [k for k in EXPERT_FIELDS if k not in pdict]
+        test(f"seed profile {pname} covers all EXPERT_FIELDS", not missing, detail=f"missing={missing}")
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -789,6 +809,7 @@ def main():
     test_metrics_summary_fields()
     test_schema()
     test_dashboard_config()
+    test_seed_field_coverage()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
