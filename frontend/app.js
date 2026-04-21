@@ -2522,20 +2522,9 @@ async function renderCategoriesTab() {
 
     let html = '<div class="card">';
     if (_isAdmin) {
-      const addPracCheckboxes = state.practices.map(p => `
-        <label style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;padding:2px 8px;border:1px solid var(--gray-300);border-radius:14px;cursor:pointer;user-select:none;font-size:12px">
-          <input type="checkbox" class="new-cat-prac-cb" data-id="${p.id}"> <strong>${esc(p.code)}</strong>
-        </label>`).join('');
-      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;flex-direction:column;gap:10px">
-        <div style="display:flex;gap:12px;align-items:center">
-          <input type="text" id="newCatName" placeholder="Category name" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
-          <input type="text" id="newCatDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
-          <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-size:12px;color:var(--gray-500);font-weight:600">Attribute practices:</span>
-          ${addPracCheckboxes}
-        </div>
+      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:13px;color:var(--gray-500)">Categories drive project classification. Each category is attributed one or more practices; projects inherit practice choice from the category.</div>
+        <button class="btn btn-primary btn-sm" onclick="openAddCategoryModal()">+ Add Category</button>
       </div>`;
     }
     html += `<table class="data-table"><thead><tr><th>Name</th><th>Practices</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
@@ -2561,16 +2550,38 @@ async function renderCategoriesTab() {
   }
 }
 
+function openAddCategoryModal() {
+  const practiceCheckboxes = state.practices.map(p => `
+    <label style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;padding:4px 10px;border:1px solid var(--gray-300);border-radius:16px;cursor:pointer;user-select:none">
+      <input type="checkbox" class="new-cat-prac-cb" data-id="${p.id}"> <strong>${esc(p.code)}</strong>
+    </label>`).join('');
+  showModal(`
+    <h3>New Category</h3>
+    <div class="form-group" style="margin-bottom:16px"><label>Name *</label><input type="text" id="newCatName" placeholder="e.g. 510(k)" autofocus></div>
+    <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="newCatDesc" placeholder="Optional"></div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Allowed Practices <span class="field-hint" data-hint="Tick every practice that is allowed to use this category. At project creation time the Practice dropdown is filtered to this list.">&#9432;</span></label>
+      <div style="margin-top:6px">${practiceCheckboxes}</div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="addCategory()">Create</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
 async function addCategory() {
   const name = document.getElementById('newCatName')?.value.trim();
   const desc = document.getElementById('newCatDesc')?.value.trim() || null;
   if (!name) { showToast('Category name is required', 'error'); return; }
   const practiceIds = Array.from(document.querySelectorAll('.new-cat-prac-cb:checked')).map(cb => parseInt(cb.dataset.id));
+  if (practiceIds.length === 0) { showToast('Pick at least one practice', 'error'); return; }
   try {
     const cat = await apiCall('POST', '/categories', { name, description: desc });
-    if (practiceIds.length > 0 && cat && cat.id) {
+    if (cat && cat.id) {
       await apiCall('PUT', `/categories/${cat.id}/practices`, { practice_ids: practiceIds });
     }
+    hideModal();
     showToast('Category created');
     state.categories = [];
     renderCategoriesTab();
