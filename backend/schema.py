@@ -195,7 +195,25 @@ DASHBOARD_CONFIG = {
         {"id": "breakdowns",  "label": "Breakdowns",  "icon": "\U0001F4CA"},
         {"id": "signals",     "label": "Signals & Gates", "icon": "\U0001F680"},
     ],
-    "kpi_tiles": [],   # populated in Task 2
+    "kpi_tiles": [
+        # (Each tile draws its label/icon/tooltip/format from METRICS[metric_key])
+        # `server_key` is the key in the /api/dashboard/metrics response dict.
+        {"tab": "overview", "metric_key": "delivery_speed",              "server_key": "average_effort_ratio"},
+        {"tab": "overview", "metric_key": "output_quality",              "server_key": "average_quality_ratio"},
+        {"tab": "overview", "metric_key": "rework_efficiency",           "server_key": "rework_efficiency_avg"},
+        {"tab": "overview", "metric_key": "machine_first_score",         "server_key": "machine_first_avg"},
+        {"tab": "overview", "metric_key": "senior_led_score",            "server_key": "senior_led_avg"},
+        {"tab": "overview", "metric_key": "proprietary_knowledge_score", "server_key": "proprietary_knowledge_avg"},
+        {"tab": "overview", "metric_key": "client_impact",               "server_key": "client_impact_avg"},
+        {"tab": "overview", "metric_key": "data_independence",           "server_key": "data_independence_avg"},
+        {"tab": "overview", "metric_key": "reuse_intent_avg",            "server_key": "reuse_intent_avg"},
+        {"tab": "overview", "metric_key": "ai_survival_avg",             "server_key": "ai_survival_avg"},
+        {"tab": "overview", "metric_key": "client_pulse_avg",            "server_key": "client_pulse_avg"},
+        # Synthetic: On-Time Delivery is computed client-side from schedule deltas
+        {"tab": "overview", "metric_key": "on_time_delivery_pct", "synthetic": True,
+         "label": "On-Time Delivery", "format": "pct", "icon": "⏱",
+         "tip": "Proportion of projects delivered on or before their expected date."},
+    ],
     "charts": [],      # populated in Task 3
     "thresholds": {
         "radar_axis_cap": 3.0,

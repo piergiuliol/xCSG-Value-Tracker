@@ -658,8 +658,42 @@ def test_schema():
     legacy_cols = ["l1_legacy_working_days", "l2_legacy_team_size", "l3_legacy_revision_depth", "l13_legacy_c7_depth", "l14_legacy_c8_decision", "l15_legacy_e1_decision", "l16_legacy_b6_data"]
     for col in legacy_cols:
         test(f"expert_responses has {col}", col in exp_cols)
-    
+
     conn.close()
+
+# ── N. DASHBOARD_CONFIG ───────────────────────────────────────────────────────
+
+def test_dashboard_config():
+    print("\n── N. DASHBOARD_CONFIG ──")
+    from backend import schema as _schema
+    dc = getattr(_schema, "DASHBOARD_CONFIG", None)
+    test("DASHBOARD_CONFIG exists", isinstance(dc, dict))
+    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 4)
+    test("DASHBOARD_CONFIG has charts (list, may be empty this task)", isinstance(dc.get("charts"), list))
+    th = dc.get("thresholds", {})
+    test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
+    test("thresholds.quarterly_bucket_min_quarters is int >= 2", isinstance(th.get("quarterly_bucket_min_quarters"), int) and th["quarterly_bucket_min_quarters"] >= 2)
+    test("thresholds.cohort_min_projects is int >= 2", isinstance(th.get("cohort_min_projects"), int) and th["cohort_min_projects"] >= 2)
+    test("thresholds.bar_top_n is int >= 3", isinstance(th.get("bar_top_n"), int) and th["bar_top_n"] >= 3)
+    tone = th.get("metric_tone", {})
+    test("metric_tone.success_above is float", isinstance(tone.get("success_above"), (int, float)))
+    test("metric_tone.blue_above is float", isinstance(tone.get("blue_above"), (int, float)))
+    test("metric_tone.warning_above is float", isinstance(tone.get("warning_above"), (int, float)))
+
+    # (added in Task 2 to harden Task 1 config)
+    test("tab ids are unique", len({t["id"] for t in dc["tabs"]}) == len(dc["tabs"]))
+    test("every tab has id/label/icon", all({"id", "label", "icon"} <= set(t.keys()) for t in dc["tabs"]))
+    test("metric_tone ordering (success > blue > warning)",
+         tone["success_above"] > tone["blue_above"] > tone["warning_above"])
+
+    # kpi_tiles assertions (Task 2)
+    test("kpi_tiles has 12 entries", isinstance(dc["kpi_tiles"], list) and len(dc["kpi_tiles"]) == 12)
+    test("every kpi_tile.metric_key exists in METRICS or is synthetic",
+         all(t["metric_key"] in _schema.METRICS or t.get("synthetic") is True for t in dc["kpi_tiles"]))
+    test("every kpi_tile has tab field", all("tab" in t for t in dc["kpi_tiles"]))
+    tab_ids_set = {x["id"] for x in dc["tabs"]}
+    test("every kpi_tile.tab is a known tab id",
+         all(t["tab"] in tab_ids_set for t in dc["kpi_tiles"]))
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -693,23 +727,7 @@ def main():
     test_frontend_js()
     test_norms()
     test_schema()
-
-    # ── DASHBOARD_CONFIG ──────────────────────────────────────────────────────────
-    from backend import schema as _schema
-    dc = getattr(_schema, "DASHBOARD_CONFIG", None)
-    test("DASHBOARD_CONFIG exists", isinstance(dc, dict))
-    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 4)
-    test("DASHBOARD_CONFIG has kpi_tiles (list, may be empty this task)", isinstance(dc.get("kpi_tiles"), list))
-    test("DASHBOARD_CONFIG has charts (list, may be empty this task)", isinstance(dc.get("charts"), list))
-    th = dc.get("thresholds", {})
-    test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
-    test("thresholds.quarterly_bucket_min_quarters is int >= 2", isinstance(th.get("quarterly_bucket_min_quarters"), int) and th["quarterly_bucket_min_quarters"] >= 2)
-    test("thresholds.cohort_min_projects is int >= 2", isinstance(th.get("cohort_min_projects"), int) and th["cohort_min_projects"] >= 2)
-    test("thresholds.bar_top_n is int >= 3", isinstance(th.get("bar_top_n"), int) and th["bar_top_n"] >= 3)
-    tone = th.get("metric_tone", {})
-    test("metric_tone.success_above is float", isinstance(tone.get("success_above"), (int, float)))
-    test("metric_tone.blue_above is float", isinstance(tone.get("blue_above"), (int, float)))
-    test("metric_tone.warning_above is float", isinstance(tone.get("warning_above"), (int, float)))
+    test_dashboard_config()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
