@@ -774,6 +774,9 @@ def test_seed_field_coverage():
         missing = [k for k in EXPERT_FIELDS if k not in pdict]
         test(f"seed profile {pname} covers all EXPERT_FIELDS", not missing, detail=f"missing={missing}")
 
+# Aggregate parity (no-filter client aggregates == /api/dashboard/metrics) is
+# enforced by tests/e2e-dashboard-redesign.spec.ts > "no-filter parity".
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
