@@ -65,6 +65,19 @@ class CategoryUpdate(BaseModel):
     description: Optional[str] = None
 
 
+# ── Practices ────────────────────────────────────────────────────────────────
+
+class PracticeCreate(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+
+
+class PracticeUpdate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 def _validate_project_dates(date_started, date_delivered):
@@ -83,6 +96,7 @@ def _validate_project_dates(date_started, date_delivered):
 class ProjectCreate(BaseModel):
     project_name: str
     category_id: int
+    practice_id: Optional[int] = None
     client_name: Optional[str] = None
     pioneers: List[PioneerCreate] = []
     default_rounds: int = 1
@@ -114,6 +128,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     project_name: Optional[str] = None
     category_id: Optional[int] = None
+    practice_id: Optional[int] = None
     client_name: Optional[str] = None
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
@@ -197,6 +212,8 @@ class ExpertContextResponse(BaseModel):
     project_id: int
     project_name: str
     category_name: str
+    practice_code: Optional[str] = None
+    practice_name: Optional[str] = None
     description: Optional[str] = None
     client_name: Optional[str]
     pioneer_name: str
@@ -228,6 +245,8 @@ class ProjectMetrics(BaseModel):
     id: int
     project_name: str
     category_name: str
+    practice_code: Optional[str] = None
+    practice_name: Optional[str] = None
     pioneer_name: str
     client_name: Optional[str]
     xcsg_person_days: Optional[float]
@@ -271,6 +290,8 @@ class TrendPoint(BaseModel):
     id: int
     project_name: str
     category_name: str
+    practice_code: Optional[str] = None
+    practice_name: Optional[str] = None
     pioneer_name: str
     effort_ratio: Optional[float]
     quality_score: Optional[float]

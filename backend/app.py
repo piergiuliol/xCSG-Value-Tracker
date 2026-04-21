@@ -30,6 +30,8 @@ from backend.models import (
     MetricsSummary,
     PioneerCreate,
     PioneerUpdate,
+    PracticeCreate,
+    PracticeUpdate,
     ProjectCreate,
     ProjectUpdate,
     RegisterRequest,
@@ -286,12 +288,74 @@ async def delete_category(
     )
 
 
+# ── Practices ────────────────────────────────────────────────────────────────
+
+@app.get("/api/practices")
+async def list_practices_endpoint(current_user: dict = Depends(auth.get_current_user)):
+    return db.list_practices()
+
+
+@app.post("/api/practices", status_code=201)
+async def create_practice_endpoint(
+    body: PracticeCreate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    try:
+        practice_id = db.create_practice(body.code, body.name, body.description)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Practice code already exists")
+    practice = db.get_practice(practice_id)
+    db.log_activity(
+        current_user["sub"],
+        "practice_created",
+        details=f"Created practice '{body.code}'",
+    )
+    return dict(practice)
+
+
+@app.put("/api/practices/{practice_id}")
+async def update_practice_endpoint(
+    practice_id: int,
+    body: PracticeUpdate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    practice = db.get_practice(practice_id)
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
+    db.update_practice(practice_id, body.name, body.description)
+    db.log_activity(
+        current_user["sub"],
+        "practice_updated",
+        details=f"Updated practice '{body.name}'",
+    )
+    return dict(db.get_practice(practice_id))
+
+
+@app.delete("/api/practices/{practice_id}", status_code=204)
+async def delete_practice_endpoint(
+    practice_id: int,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    practice = db.get_practice(practice_id)
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
+    ok = db.delete_practice(practice_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Cannot delete practice with existing projects")
+    db.log_activity(
+        current_user["sub"],
+        "practice_deleted",
+        details=f"Deleted practice '{practice['code']}'",
+    )
+
+
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/projects")
 async def list_projects(
     status_filter: Optional[str] = Query(None, alias="status"),
     category_id: Optional[int] = Query(None),
+    practice_id: Optional[int] = Query(None),
     pioneer: Optional[str] = Query(None),
     client: Optional[str] = Query(None),
     current_user: dict = Depends(auth.get_current_user),
@@ -299,6 +363,7 @@ async def list_projects(
     projects = db.list_projects(
         status_filter=status_filter,
         category_id=category_id,
+        practice_id=practice_id,
         pioneer=pioneer,
         client=client,
     )
@@ -327,6 +392,9 @@ async def create_project(
     cat = db.get_category(body.category_id)
     if not cat:
         raise HTTPException(status_code=400, detail="Invalid category_id")
+
+    if body.practice_id is not None and not db.get_practice(body.practice_id):
+        raise HTTPException(status_code=400, detail="Invalid practice_id")
 
     if len(body.pioneers) > MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
@@ -623,6 +691,8 @@ async def get_expert_context(token: str):
         project_id=project_id,
         project_name=tok["project_name"],
         category_name=tok["category_name"],
+        practice_code=tok.get("practice_code"),
+        practice_name=tok.get("practice_name"),
         description=tok.get("description"),
         client_name=tok.get("client_name"),
         pioneer_name=tok["pioneer_name"],
