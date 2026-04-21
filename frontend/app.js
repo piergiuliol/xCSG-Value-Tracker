@@ -2525,12 +2525,14 @@ async function renderCategoriesTab() {
         <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
       </div>`;
     }
-    html += `<table class="data-table"><thead><tr><th>Name</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
+    html += `<table class="data-table"><thead><tr><th>Name</th><th>Practices</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
     for (const c of cats) {
       const count = c.project_count || 0;
       const deleteDisabled = count > 0;
+      const pracBadges = (c.practices || []).map(p => `<span class="practice-badge">${esc(p.code)}</span>`).join(' ');
       html += `<tr>
         <td><strong>${esc(c.name)}</strong></td>
+        <td>${pracBadges || '<span style="color:var(--gray-400)">\u2014</span>'}</td>
         <td>${esc(c.description || '\u2014')}</td>
         <td>${count}</td>
         ${_isAdmin ? `<td class="actions-cell">
