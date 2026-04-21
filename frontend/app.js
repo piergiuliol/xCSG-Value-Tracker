@@ -680,6 +680,65 @@ async function renderPortfolio() {
 }
 
 
+// ── Filter engine ───────────────────────────────────────────────────────────
+
+const DEFAULT_FILTERS = () => ({
+  practices: new Set(), categories: new Set(), pioneers: new Set(), projects: new Set(),
+  delivered_from: null, delivered_to: null,
+});
+
+let filterState = _loadFilters();
+
+function _loadFilters() {
+  try {
+    const raw = localStorage.getItem(DASHBOARD.filterStorageKey);
+    if (!raw) return DEFAULT_FILTERS();
+    const j = JSON.parse(raw);
+    return {
+      practices:  new Set(j.practices  || []),
+      categories: new Set(j.categories || []),
+      pioneers:   new Set(j.pioneers   || []),
+      projects:   new Set((j.projects  || []).map(Number)),
+      delivered_from: j.delivered_from || null,
+      delivered_to:   j.delivered_to   || null,
+    };
+  } catch (_) { return DEFAULT_FILTERS(); }
+}
+
+function _saveFilters() {
+  localStorage.setItem(DASHBOARD.filterStorageKey, JSON.stringify({
+    practices:  [...filterState.practices],
+    categories: [...filterState.categories],
+    pioneers:   [...filterState.pioneers],
+    projects:   [...filterState.projects],
+    delivered_from: filterState.delivered_from,
+    delivered_to:   filterState.delivered_to,
+  }));
+}
+
+function clearFilters() {
+  filterState = DEFAULT_FILTERS();
+  _saveFilters();
+}
+
+function applyFilters(allProjects, state) {
+  state = state || filterState;
+  return allProjects.filter(p => {
+    if (state.practices.size   && !state.practices.has(p.practice_code || '—')) return false;
+    if (state.categories.size  && !state.categories.has(p.category_name || '—')) return false;
+    if (state.pioneers.size) {
+      const names = (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || '');
+      const any = names.some(n => state.pioneers.has(n)) || state.pioneers.has(p.pioneer_name);
+      if (!any) return false;
+    }
+    if (state.projects.size    && !state.projects.has(p.id)) return false;
+    const d = p.date_delivered;
+    if (state.delivered_from && (!d || d < state.delivered_from)) return false;
+    if (state.delivered_to   && (!d || d > state.delivered_to))   return false;
+    return true;
+  });
+}
+
 function _renderDashboardView(allProjects, dashboard, filterCategory) {
   const mc = document.getElementById('mainContent');
 
