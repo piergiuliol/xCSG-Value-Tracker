@@ -37,3 +37,5 @@ docs/
 *.yml
 !docker-compose.yml
 
+# Local-only assistant notes
+CLAUDE.md
