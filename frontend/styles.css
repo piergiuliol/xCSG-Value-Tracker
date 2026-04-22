@@ -569,13 +569,20 @@ legend {
   padding: 0;
   margin: 0 0 28px 0;
   width: 100%;
+  float: left;
+  clear: both;
   display: flex;
   align-items: center;
   gap: 14px;
   background: none;
   border: none;
   line-height: 1.2;
+  position: relative;
+  z-index: 1;
 }
+
+/* Clear the legend float so form rows that follow flow normally */
+fieldset > *:not(legend) { clear: both; }
 
 legend::before {
   content: '';
