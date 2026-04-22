@@ -2258,7 +2258,45 @@ registerChart('timeline_quarterly', (cfg, filtered) => {
       : undefined,
   });
 });
-registerChart('timeline_cumulative', (cfg) => { console.log('TODO Task 17:', cfg.id); });
+registerChart('timeline_cumulative', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.metrics && p.date_delivered)
+    .sort((a, b) => new Date(a.date_delivered) - new Date(b.date_delivered));
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const xs = done.map((_, i) => i + 1);
+  const running = { speed: [], quality: [], gain: [] };
+  const sums = { speed: 0, quality: 0, gain: 0 };
+  done.forEach((p, i) => {
+    sums.speed   += (p.metrics.delivery_speed      || 0);
+    sums.quality += (p.metrics.output_quality      || 0);
+    sums.gain    += (p.metrics.productivity_ratio  || 0);
+    running.speed.push(round2(sums.speed   / (i + 1)));
+    running.quality.push(round2(sums.quality / (i + 1)));
+    running.gain.push(round2(sums.gain    / (i + 1)));
+  });
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    grid: { left: 50, right: 40, top: 30, bottom: 50 },
+    xAxis: { type: 'category', data: xs, name: 'nth project', nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: '× vs legacy', axisLine: { lineStyle: { color: pal.gray200 } }, axisLabel: { color: pal.gray500 } },
+    series: [
+      { name: 'Speed',      type: 'line', data: running.speed,   smooth: true,
+        lineStyle: { color: pal.blue,    width: 2.5 }, itemStyle: { color: pal.blue } },
+      { name: 'Quality',    type: 'line', data: running.quality, smooth: true,
+        lineStyle: { color: pal.success, width: 2.5 }, itemStyle: { color: pal.success } },
+      { name: 'Value Gain', type: 'line', data: running.gain,    smooth: true,
+        lineStyle: { color: pal.indigo,  width: 3 },   itemStyle: { color: pal.indigo } },
+      { type: 'line', markLine: { symbol: 'none', lineStyle: { color: pal.gray, type: 'dashed' },
+        data: [{ yAxis: 1.0, label: { formatter: 'Baseline 1×', position: 'end', color: pal.gray400, fontSize: 11 } }] } },
+    ],
+  });
+});
 registerChart('cohort_learning_curve', (cfg) => { console.log('TODO Task 18:', cfg.id); });
 registerChart('heatmap_practice_quarter', (cfg) => { console.log('TODO Task 19:', cfg.id); });
 registerChart('area_category_mix', (cfg) => { console.log('TODO Task 20:', cfg.id); });
