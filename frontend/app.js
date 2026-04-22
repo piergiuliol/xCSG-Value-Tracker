@@ -2497,6 +2497,78 @@ function _expertClearStorage(token, round) {
 // Section metadata for accordion
 // EXPERT_SECTIONS removed — now served from /api/schema via getExpertSections()
 
+// Sections that carry pioneer answers (A is project context, not survey answers).
+const _PREV_SECTIONS_IN_ORDER = ['B', 'C', 'D', 'E', 'F', 'G', 'L'];
+
+function _formatSubmittedDate(iso) {
+  if (!iso) return '';
+  // Accept "2026-04-22T14:08:00Z" or "2026-04-22 14:08:00" — first 10 chars are the date.
+  const s = String(iso);
+  return s.length >= 10 ? s.slice(0, 10) : s;
+}
+
+/**
+ * Render a <details> accordion grouping expert responses by schema section.
+ * `responses` = array of response rows. Each row may contain: round_number,
+ * submitted_at, pioneer_name (optional, cross-pioneer rendering), plus field keys.
+ * Fields are looked up in `schema.fields` and grouped by `schema.fields[key].section`.
+ * Rows without schema.fields entries (id, pioneer_id, project_id, created_at,
+ * submitted_at, round_number, pioneer_name, ...) are skipped automatically.
+ * Empty / null / undefined values are skipped.
+ */
+function renderResponseAccordion(heading, responses) {
+  if (!responses || !responses.length) return '';
+  const fieldDefs = (schema && schema.fields) ? schema.fields : {};
+  const sectionDefs = (schema && schema.sections) ? schema.sections : {};
+
+  let out = '<details class="previous-responses"><summary>' + esc(heading) + '</summary>';
+  out += '<div class="prev-content">';
+
+  for (const r of responses) {
+    const roundNum = r.round_number != null ? r.round_number : '?';
+    const dateStr = _formatSubmittedDate(r.submitted_at);
+    const pioneerPrefix = r.pioneer_name ? esc(r.pioneer_name) + ' · ' : '';
+    const headerBits = [];
+    headerBits.push('Round ' + esc(String(roundNum)));
+    if (dateStr) headerBits.push('submitted ' + esc(dateStr));
+
+    out += '<div class="prev-round">';
+    out += '<div class="prev-round-header">' + pioneerPrefix + headerBits.join(' · ') + '</div>';
+
+    for (const secKey of _PREV_SECTIONS_IN_ORDER) {
+      const secMeta = sectionDefs[secKey];
+      if (!secMeta) continue;
+      // Collect populated fields from r that belong to this section.
+      const keys = Object.keys(r).filter(k => {
+        const fd = fieldDefs[k];
+        if (!fd || fd.section !== secKey) return false;
+        const v = r[k];
+        return v !== null && v !== undefined && v !== '';
+      });
+      if (!keys.length) continue;
+
+      out += '<div class="prev-section">';
+      out += '<div class="prev-section-title">'
+        + (secMeta.icon ? esc(secMeta.icon) + ' ' : '')
+        + esc(secKey) + ' — ' + esc(secMeta.title)
+        + '</div>';
+      out += '<dl class="prev-fields">';
+      for (const k of keys) {
+        const label = fieldDefs[k].label || k;
+        out += '<dt>' + esc(label) + '</dt>';
+        out += '<dd>' + esc(String(r[k])) + '</dd>';
+      }
+      out += '</dl>';
+      out += '</div>';
+    }
+
+    out += '</div>';
+  }
+
+  out += '</div></details>';
+  return out;
+}
+
 async function renderExpert(token) {
   const ec = document.getElementById('expertContent');
   ec.innerHTML = '<div class="loading">Loading assessment\u2026</div>';
@@ -2569,25 +2641,18 @@ async function renderExpert(token) {
         + '</div>';
     }
 
-    // Previous responses (if enabled and available)
+    // Previous responses (same pioneer, earlier rounds)
     if (ctx.show_previous && ctx.previous_responses && ctx.previous_responses.length) {
-      html += '<details class="previous-responses"><summary>View Your Previous Responses (' + ctx.previous_responses.length + ' round' + (ctx.previous_responses.length > 1 ? 's' : '') + ')</summary>';
-      html += '<div class="prev-content">';
-      for (let ri = 0; ri < ctx.previous_responses.length; ri++) {
-        const prev = ctx.previous_responses[ri];
-        html += '<div style="margin-bottom:16px"><strong style="color:var(--navy)">Round ' + (ri + 1) + '</strong></div>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:12px">';
-        const fieldDefs = schema ? schema.fields : {};
-        for (const [key, val] of Object.entries(prev)) {
-          if (key === 'id' || key === 'pioneer_id' || key === 'project_id' || key === 'round_number' || key === 'created_at' || val == null || val === '') continue;
-          const fd = fieldDefs[key];
-          const label = fd ? fd.label : key;
-          html += '<div><span style="font-size:12px;color:var(--gray-500)">' + esc(label) + '</span><br><span style="font-size:13px">' + esc(String(val)) + '</span></div>';
-        }
-        html += '</div>';
-        if (ri < ctx.previous_responses.length - 1) html += '<hr style="border:none;border-top:1px solid var(--gray-200);margin:8px 0">';
-      }
-      html += '</div></details>';
+      const n = ctx.previous_responses.length;
+      const heading = 'View Your Previous Responses (' + n + ' round' + (n === 1 ? '' : 's') + ')';
+      html += renderResponseAccordion(heading, ctx.previous_responses);
+    }
+
+    // Other pioneers' submitted responses (cross-pioneer visibility)
+    if (ctx.show_other_pioneers && ctx.other_pioneers_responses && ctx.other_pioneers_responses.length) {
+      const n = ctx.other_pioneers_responses.length;
+      const heading = "View Other Pioneers' Responses (" + n + ')';
+      html += renderResponseAccordion(heading, ctx.other_pioneers_responses);
     }
 
     // Sticky progress bar
@@ -2706,23 +2771,25 @@ async function renderExpert(token) {
         _expertClearStorage(token, currentRound);
         if (result.already_completed) {
           ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This round has already been recorded.</p></div>';
-        } else if (result.current_round && result.total_rounds && result.current_round < result.total_rounds) {
-          // More rounds remain, but the pioneer is done for this session.
-          // A fresh link will be sent by the PMO team when the next round opens.
-          ec.innerHTML = '<div class="expert-thankyou">'
-            + '<div class="thankyou-icon">&#10003;</div>'
-            + '<h2>Round ' + result.current_round + ' of ' + result.total_rounds + ' Complete</h2>'
-            + '<p>Your responses for this round have been recorded. Thank you!</p>'
-            + '<p style="margin-top:12px;color:var(--gray-600)">You will receive a new assessment link when the next round is scheduled by the PMO team.</p>'
-            + '</div>';
         } else {
           const m = result.metrics || {};
           const fmtX = v => v != null ? (Math.round(v * 100) / 100) + '\xd7' : '\u2014';
           const scoreColor = v => v == null ? '#9CA3AF' : v >= 2 ? '#10B981' : v >= 1 ? '#3B82F6' : v >= 0.5 ? '#F59E0B' : '#EF4444';
-          ec.innerHTML = '<div class="expert-thankyou">'
+          const curR = result.current_round;
+          const totR = result.total_rounds;
+          const isMultiRound = curR && totR && totR > 1;
+          const hasMoreRounds = isMultiRound && curR < totR;
+          const heading = hasMoreRounds
+            ? 'Round ' + curR + ' of ' + totR + ' Complete'
+            : 'Thank You!';
+          const intro = hasMoreRounds
+            ? 'Your responses for this round have been recorded. Here is a summary of the three flywheel scores computed from your answers.'
+            : 'Your assessment has been recorded. Here is a summary of the three flywheel scores computed from your responses.';
+
+          let thankYou = '<div class="expert-thankyou">'
             + '<div class="thankyou-icon">&#10003;</div>'
-            + '<h2>Thank You!</h2>'
-            + '<p>Your assessment has been recorded. Here is a summary of the three flywheel scores computed from your responses.</p>'
+            + '<h2>' + esc(heading) + '</h2>'
+            + '<p>' + esc(intro) + '</p>'
             + '<div class="expert-results-section">'
             + '<h3 style="color:#121F6B;margin:24px 0 8px;font-size:16px">How these scores are calculated</h3>'
             + '<p style="color:#6B7280;font-size:13px;margin-bottom:20px">Each score compares your xCSG responses (Sections B\u2013D) against your legacy estimates (Section L). A value of 1\xd7 means parity; above 1\xd7 means xCSG outperformed legacy on that dimension.</p>'
@@ -2747,7 +2814,26 @@ async function renderExpert(token) {
             + '<div class="accordion-metric-explain">Average of three comparisons: proprietary data use (D1 vs L10), knowledge reuse (D2 vs L11), and competitive moat (D3 vs L12).</div>'
             + '</div>'
 
-            + '</div></div>';
+            + '</div>';
+
+          // Auto-advance: if the backend issued a next-round token, show a CTA
+          // that takes the pioneer directly to Round N+1.
+          if (result.next_round_token) {
+            const nextRound = (curR || 1) + 1;
+            const ofTotal = totR ? ' of ' + totR : '';
+            thankYou += '<div class="expert-next-round-cta">'
+              + '<a href="#assess/' + esc(result.next_round_token) + '" class="btn btn-primary expert-next-round-btn">'
+              + 'Start Round ' + nextRound + ofTotal + ' \u2192'
+              + '</a>'
+              + '</div>';
+          } else if (hasMoreRounds) {
+            // Fallback: multi-round project where the next token was NOT auto-issued
+            // (e.g. a defensive backend race). Preserve the original "check later" notice.
+            thankYou += '<p style="margin-top:16px;color:var(--gray-600)">You will receive a new assessment link when the next round is scheduled by the PMO team.</p>';
+          }
+
+          thankYou += '</div>';
+          ec.innerHTML = thankYou;
         }
       } catch (err) {
         if (err.status === 422 && err.detail && Array.isArray(err.detail.missing_fields)) {
