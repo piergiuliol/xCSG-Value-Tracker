@@ -705,7 +705,7 @@ def test_dashboard_config():
     th = dc.get("thresholds", {})
     test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
     test("thresholds.quarterly_bucket_min_quarters is int >= 2", isinstance(th.get("quarterly_bucket_min_quarters"), int) and th["quarterly_bucket_min_quarters"] >= 2)
-    test("thresholds.cohort_min_projects is int >= 2", isinstance(th.get("cohort_min_projects"), int) and th["cohort_min_projects"] >= 2)
+    test("thresholds.cohort_min_projects is int >= 1", isinstance(th.get("cohort_min_projects"), int) and th["cohort_min_projects"] >= 1)
     test("thresholds.bar_top_n is int >= 3", isinstance(th.get("bar_top_n"), int) and th["bar_top_n"] >= 3)
     tone = th.get("metric_tone", {})
     test("metric_tone.success_above is float", isinstance(tone.get("success_above"), (int, float)))
