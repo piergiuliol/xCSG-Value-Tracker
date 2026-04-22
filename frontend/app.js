@@ -2297,7 +2297,64 @@ registerChart('timeline_cumulative', (cfg, filtered) => {
     ],
   });
 });
-registerChart('cohort_learning_curve', (cfg) => { console.log('TODO Task 18:', cfg.id); });
+registerChart('cohort_learning_curve', (cfg, filtered) => {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  host.innerHTML = '';  // clear previous render
+
+  const minN = schema.dashboard.thresholds.cohort_min_projects;
+  const byPractice = {};
+  for (const p of filtered.filter(x => x.metrics && x.date_delivered && x.practice_code)) {
+    (byPractice[p.practice_code] = byPractice[p.practice_code] || []).push(p);
+  }
+  const eligible = Object.entries(byPractice)
+    .filter(([, arr]) => arr.length >= minN)
+    .map(([code, arr]) => [code, arr.sort((a, b) => new Date(a.date_delivered) - new Date(b.date_delivered))]);
+
+  if (!eligible.length) {
+    host.style.display = 'flex';
+    host.style.alignItems = 'center';
+    host.style.justifyContent = 'center';
+    host.style.color = DASHBOARD.palette.gray400;
+    host.style.fontSize = '13px';
+    host.textContent = `No practice has ≥ ${minN} projects yet.`;
+    return;
+  }
+
+  host.style.display = 'grid';
+  host.style.gridTemplateColumns = 'repeat(auto-fill, minmax(220px, 1fr))';
+  host.style.gap = '12px';
+  host.style.overflow = 'auto';
+
+  const pal = DASHBOARD.palette;
+  for (const [code, arr] of eligible) {
+    const cell = document.createElement('div');
+    cell.style.height = '180px';
+    cell.innerHTML = `<div style="font-size:11px;color:${pal.gray500};margin-bottom:2px">${esc(code)} (n=${arr.length})</div>`
+                   + `<div class="cohort-mini" style="width:100%;height:calc(100% - 18px)"></div>`;
+    host.appendChild(cell);
+    const miniEl = cell.querySelector('.cohort-mini');
+    const mini = echarts.init(miniEl);
+    ec[`${cfg.id}_${code}`] = mini;
+    mini.setOption({
+      grid: { left: 30, right: 6, top: 6, bottom: 24 },
+      tooltip: { ...DASHBOARD.tooltip, trigger: 'axis',
+                 formatter: params => {
+                   const p = params[0];
+                   const project = arr[p.dataIndex];
+                   return `${esc(project.project_name)}<br>Value Gain: <strong>${p.value}×</strong>`;
+                 } },
+      xAxis: { type: 'category', data: arr.map((_, i) => i + 1), axisLabel: { fontSize: 10, color: pal.gray400 } },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10, color: pal.gray400 } },
+      series: [{ type: 'line',
+                 data: arr.map(p => round2(p.metrics.productivity_ratio || 0)),
+                 smooth: true,
+                 lineStyle: { color: pal.indigo, width: 2 },
+                 itemStyle: { color: pal.indigo },
+                 symbolSize: 6 }],
+    });
+  }
+});
 registerChart('heatmap_practice_quarter', (cfg) => { console.log('TODO Task 19:', cfg.id); });
 registerChart('area_category_mix', (cfg) => { console.log('TODO Task 20:', cfg.id); });
 
