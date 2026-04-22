@@ -632,11 +632,13 @@ function _avg(arr) {
 }
 
 function _computeLocalMetrics(projects) {
-  const completed = projects.filter(p => p.status === 'complete' && p.metrics);
-  const m = completed.map(p => p.metrics);
+  // Match the server's /api/dashboard/metrics behaviour — include both 'complete'
+  // and 'partial' projects (metrics are valid with ≥1 submitted response).
+  const withMetrics = projects.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
+  const m = withMetrics.map(p => p.metrics);
   return {
     total_projects: projects.length,
-    complete_projects: completed.length,
+    complete_projects: withMetrics.length,
     average_effort_ratio: _avg(m.map(x => x.delivery_speed)),
     average_quality_ratio: _avg(m.map(x => x.output_quality)),
     average_advantage: _avg(m.map(x => x.productivity_ratio)),

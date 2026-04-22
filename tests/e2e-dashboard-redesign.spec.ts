@@ -1,4 +1,4 @@
-import { test, expect, request, Page } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 // Types for app.js globals reachable inside page.evaluate.
 // `schema`, `_projectsCache`, `applyFilters`, `_computeLocalMetrics`, and `state`
@@ -18,81 +18,12 @@ declare function _computeLocalMetrics(projects: any[]): Record<string, number>;
  * and that every KPI tile and every chart container renders non-empty.
  *
  * Assumes port 8077 is up (playwright.config.ts webServer) and that 20
- * projects have already been seeded (see tests/seed_20_projects.py). The
- * seed only submits one pioneer's survey per project, leaving projects in
- * 'partial' status. The client-side `_computeLocalMetrics` only aggregates
- * projects with status === 'complete', so we submit the remaining pioneer
- * rounds in `beforeAll` to get every project to 'complete'. This is what
- * production data looks like once surveys are actually finished.
+ * projects have already been seeded (see tests/seed_20_projects.py).
+ * Both server aggregates and client-side _computeLocalMetrics include
+ * 'partial' and 'complete' projects, so partial seed state is fine.
  */
 
 const ADMIN = { username: 'admin', password: 'AliraAdmin2026!' };
-
-const STRONG_SURVEY = {
-  b1_starting_point: 'From AI draft',
-  b2_research_sources: 'Broad systematic synthesis (10+)',
-  b3_assembly_ratio: '>75% AI',
-  b4_hypothesis_first: 'Hypothesis-first',
-  b5_ai_survival: '>75%',
-  b6_data_analysis_split: '<25% on data',
-  c1_specialization: 'Deep specialist',
-  c2_directness: 'Expert authored',
-  c3_judgment_pct: '>75% judgment',
-  c6_self_assessment: 'Significantly better',
-  c7_analytical_depth: 'Exceptional',
-  c8_decision_readiness: 'Yes without caveats',
-  d1_proprietary_data: 'Yes',
-  d2_knowledge_reuse: 'Yes directly reused and extended',
-  d3_moat_test: 'No — proprietary inputs decisive',
-  e1_client_decision: 'Yes — informed a specific decision',
-  f1_feasibility: 'Not feasible',
-  f2_productization: 'Yes largely as-is',
-  g1_reuse_intent: 'Yes without hesitation',
-  l1_legacy_working_days: 30,
-  l2_legacy_team_size: '4+',
-  l3_legacy_revision_depth: 'Major rework',
-  l4_legacy_scope_expansion: 'Yes',
-  l5_legacy_client_reaction: 'Met expectations',
-  l6_legacy_b2_sources: 'A few targeted sources (2-4)',
-  l7_legacy_c1_specialization: 'Generalist',
-  l8_legacy_c2_directness: 'Expert reviewed only',
-  l9_legacy_c3_judgment: '25-50%',
-  l10_legacy_d1_proprietary: 'No',
-  l11_legacy_d2_reuse: 'No built from scratch',
-  l12_legacy_d3_moat: 'Yes — all inputs publicly available',
-  l13_legacy_c7_depth: 'Adequate',
-  l14_legacy_c8_decision: 'Needs significant additional work',
-  l15_legacy_e1_decision: 'Too early to tell',
-  l16_legacy_b6_data: '50-75%',
-};
-
-test.beforeAll(async () => {
-  // Ensure every seeded project is `complete` (i.e. every pioneer/round has a response).
-  // The seed script only submits a single pioneer's round, leaving status='partial',
-  // which would zero-out client-side `_computeLocalMetrics`.
-  const api = await request.newContext({ baseURL: 'http://localhost:8077' });
-
-  const loginResp = await api.post('/api/auth/login', {
-    data: { username: ADMIN.username, password: ADMIN.password },
-  });
-  const { access_token } = await loginResp.json();
-  const headers = { Authorization: `Bearer ${access_token}` };
-
-  const projects = await (await api.get('/api/projects', { headers })).json();
-
-  for (const pSummary of projects) {
-    const proj = await (await api.get(`/api/projects/${pSummary.id}`, { headers })).json();
-    for (const pioneer of proj.pioneers || []) {
-      if ((pioneer.response_count ?? 0) >= ((pioneer.total_rounds ?? 1) || 1)) continue;
-      for (const round of pioneer.rounds || []) {
-        if (round.status === 'complete') continue;
-        if (!round.token) continue;
-        await api.post(`/api/expert/${round.token}`, { data: STRONG_SURVEY });
-      }
-    }
-  }
-  await api.dispose();
-});
 
 async function login(page: Page) {
   await page.goto('/');
