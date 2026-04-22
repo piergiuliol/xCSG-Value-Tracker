@@ -645,6 +645,7 @@ function toggleCheckpointCard(cpId) {
 // Cache dashboard data for filtering
 let _dashboardCache = null;
 let _projectsCache = null;
+let _takeawaysCache = {};
 
 function _avg(arr) {
   const vals = arr.filter(v => v != null);
@@ -681,14 +682,16 @@ async function renderPortfolio() {
   const myRoute = _routeCounter;
 
   try {
-    const [dashboard, allProjects] = await Promise.all([
+    const [dashboard, allProjects, takeaways] = await Promise.all([
       apiCall('GET', '/dashboard/metrics'),
       apiCall('GET', '/projects'),
+      apiCall('GET', '/dashboard/takeaways').catch(() => ({})),
     ]);
     if (myRoute !== _routeCounter) return; // stale — user navigated away
 
     _dashboardCache = dashboard;
     _projectsCache = allProjects;
+    _takeawaysCache = takeaways || {};
 
     if (!allProjects.length) {
       mc.innerHTML = `<div class="empty-state"><h2>Welcome to the xCSG Value Tracker</h2><p>Start by creating your first project to begin measuring xCSG performance.</p>${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a>' : ''}</div>`;
@@ -852,14 +855,18 @@ function renderTabShell(mountEl) {
   );
   for (const t of tabs) {
     const tabCharts = charts.filter(c => c.tab === t.id);
-    const body = tabCharts.map(c => `
+    const body = tabCharts.map(c => {
+      const takeaway = _takeawaysCache[c.id];
+      return `
       <div class="chart-card" data-chart-id="${c.id}">
         <div class="chart-card-title">${esc(c.title)}</div>
+        ${takeaway ? `<div class="chart-card-takeaway">${esc(takeaway)}</div>` : ''}
         <div class="chart-card-explain">${esc(c.subtitle || '')}</div>
         <div class="chart-body" ${c.height ? `style="height:${c.height}px"` : ''}>
           <div id="${c.id}" style="width:100%;height:100%"></div>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     mountEl.insertAdjacentHTML('beforeend',
       `<div class="tab-panel ${t.id === _activeTab ? 'active' : ''}" data-panel="${t.id}">${body}</div>`);
   }
@@ -2481,6 +2488,86 @@ registerChart('heatmap_practice_quarter', (cfg, filtered) => {
                formatter: p => `${esc(practices[p.data[1]])} · ${esc(quarters[p.data[0]])}<br>Value Gain: <strong>${p.data[4] ?? p.data[2]}×</strong>${(p.data[4] ?? p.data[2]) > cap ? ` <em style="color:${pal.gray500}">(colour clipped at ${cap}×)</em>` : ''}<br>Projects: ${p.data[3]}` },
   });
 });
+function _renderRankedList(cfg, filtered, ordering) {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  host.innerHTML = '';
+  const done = filtered.filter(p => p.metrics && p.metrics.productivity_ratio != null);
+  if (!done.length) {
+    host.innerHTML = `<div style="display:flex;height:100%;align-items:center;justify-content:center;color:${DASHBOARD.palette.gray400};font-size:13px">Not enough data yet</div>`;
+    return;
+  }
+  const sorted = [...done].sort((a, b) =>
+    ordering === 'desc'
+      ? (b.metrics.productivity_ratio - a.metrics.productivity_ratio)
+      : (a.metrics.productivity_ratio - b.metrics.productivity_ratio)
+  );
+  const top = sorted.slice(0, 5);
+  const pal = DASHBOARD.palette;
+  host.innerHTML = `
+    <ol class="ranked-list">
+      ${top.map((p, i) => {
+        const v = round2(p.metrics.productivity_ratio);
+        const color = v > 1.5 ? pal.success : v >= 1 ? pal.blue : v >= 0.8 ? pal.warning : pal.danger;
+        return `
+          <li class="ranked-list-item">
+            <span class="ranked-list-rank">${i + 1}</span>
+            <a href="#edit/${p.id}" class="ranked-list-name" title="${esc(p.project_name)}">${esc(p.project_name)}</a>
+            <span class="ranked-list-meta">${esc(p.practice_code || '—')}</span>
+            <span class="ranked-list-value" style="color:${color}">${v}×</span>
+          </li>`;
+      }).join('')}
+    </ol>`;
+}
+
+registerChart('ranked_list_top',    (cfg, filtered) => _renderRankedList(cfg, filtered, 'desc'));
+registerChart('ranked_list_bottom', (cfg, filtered) => _renderRankedList(cfg, filtered, 'asc'));
+
+registerChart('timeline_effort', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.date_delivered && p.metrics && p.metrics.xcsg_person_days != null);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const quarterOf = d => {
+    const dt = new Date(d);
+    return DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+  };
+  const byQ = {};
+  for (const p of done) {
+    const k = quarterOf(p.date_delivered);
+    (byQ[k] = byQ[k] || []).push(p.metrics.xcsg_person_days);
+  }
+  const labels = Object.keys(byQ).sort();
+  const xcsgAvg = labels.map(k => round2(byQ[k].reduce((a,b)=>a+b,0) / byQ[k].length));
+  // Also include avg of legacy person-days per project per quarter if available
+  const byQLegacy = {};
+  for (const p of done) {
+    if (p.metrics && p.metrics.legacy_person_days != null) {
+      const k = quarterOf(p.date_delivered);
+      (byQLegacy[k] = byQLegacy[k] || []).push(p.metrics.legacy_person_days);
+    }
+  }
+  const legacyAvg = labels.map(k => (byQLegacy[k] && byQLegacy[k].length) ? round2(byQLegacy[k].reduce((a,b)=>a+b,0) / byQLegacy[k].length) : null);
+
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    grid: { left: 50, right: 30, top: 42, bottom: 50 },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: 'Person-days', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+    series: [
+      { name: 'xCSG',   type: 'line', data: xcsgAvg,   smooth: true,
+        lineStyle: { color: pal.indigo, width: 3 }, itemStyle: { color: pal.indigo } },
+      { name: 'Legacy', type: 'line', data: legacyAvg, smooth: true,
+        lineStyle: { color: pal.gray, width: 2, type: 'dashed' }, itemStyle: { color: pal.gray } },
+    ],
+  });
+});
+
 registerChart('area_category_mix', (cfg, filtered) => {
   const s = ecInit(cfg.id);
   if (!s) return;
