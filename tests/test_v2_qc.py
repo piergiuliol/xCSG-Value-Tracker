@@ -1001,6 +1001,8 @@ def test_dashboard_takeaways():
     # Takeaways ≤ 80 chars (≤ 60 is the target, allow slack)
     too_long = {cid: v for cid, v in body.items() if len(v) > 80}
     test("takeaways are concise", not too_long, detail=f"too_long={too_long}")
+    empty = {cid: v for cid, v in body.items() if not v or not v.strip()}
+    test("takeaways are all non-empty", not empty, detail=f"empty={list(empty.keys())}")
 
 
 def main():
