@@ -920,6 +920,8 @@ def _build_averaged_complete_projects() -> list:
             avg["id"] = p["id"]
             avg["project_name"] = p["project_name"]
             avg["category_name"] = p["category_name"]
+            avg["practice_code"] = p.get("practice_code")
+            avg["practice_name"] = p.get("practice_name")
             avg["pioneer_name"] = p.get("pioneer_name", "")
             avg["date_started"] = p.get("date_started")
             avg["date_delivered"] = p.get("date_delivered")
