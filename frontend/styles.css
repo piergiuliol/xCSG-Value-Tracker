@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    xCSG Value Tracker — Alira Health Brand System
-   Fonts: Roboto (Google Fonts)
+   Typography: Inter (sans, UI) + Instrument Serif (display, editorial accents)
    ═══════════════════════════════════════════════════════════════════════════ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
 
 /* ── CSS Custom Properties ─────────────────────────────────────────────────── */
 :root {
@@ -50,6 +50,31 @@
   --shadow:    0 1px 3px rgba(0,0,0,0.1);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.12);
   --shadow-lg: 0 20px 60px rgba(0,0,0,0.25);
+
+  /* Typography */
+  --font-sans:    'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Instrument Serif', 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale */
+  --text-xs:   11px;
+  --text-sm:   12px;
+  --text-base: 14px;
+  --text-md:   15px;
+  --text-lg:   18px;
+  --text-xl:   22px;
+  --text-2xl:  28px;
+  --text-3xl:  36px;
+  --text-4xl:  48px;
+
+  /* Type styling */
+  --tracking-tight: -0.015em;
+  --tracking-snug:  -0.005em;
+  --tracking-wide:   0.04em;
+  --tracking-label:  0.08em;
+  --leading-tight: 1.15;
+  --leading-snug:  1.35;
+  --leading-body:  1.55;
 }
 
 /* ── Reset ──────────────────────────────────────────────────────────────────── */
@@ -64,11 +89,49 @@ html, body {
 }
 
 body {
-  font-family: 'Roboto', sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
   color: var(--gray-700);
   background: var(--gray-100);
+  font-feature-settings: 'cv11' 1, 'ss01' 1, 'ss03' 1;   /* Inter: single-storey a, open 4, curved l */
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Display typography — editorial accents ───────────────────────────────── */
+/* Use for hero numbers, page titles, marketing copy — NOT dense UI text */
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: var(--tracking-snug);
+  font-feature-settings: 'liga' 1, 'dlig' 1;
+}
+
+/* Tabular numbers: metric values, table numeric columns — aligns digit widths */
+.num-tabular,
+.metric-tile-value,
+.hero-big-number,
+.portfolio-table td.r,
+.data-table td.r,
+td.r,
+th.r {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv11' 1, 'ss01' 1;
+}
+
+/* Small-caps label style — for overline labels, form legends, tile labels */
+.text-label,
+.metric-tile-label,
+.hero-label,
+.slicer-label,
+.label {
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--gray-500);
 }
 
 /* ── Top-Level Container Management ─────────────────────────────────────────── */
@@ -362,7 +425,7 @@ body {
   border-radius: var(--radius);
   font-size: 14px;
   font-weight: 500;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   cursor: pointer;
   transition: all 0.15s;
   border: none;
@@ -418,7 +481,7 @@ body {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   transition: all 0.15s;
   display: inline-flex;
   align-items: center;
@@ -435,7 +498,7 @@ body {
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   transition: all 0.15s;
 }
 
@@ -621,7 +684,7 @@ button.round-chip-clickable:hover {
   border: 1px solid var(--gray-300);
   border-radius: var(--radius);
   font-size: 14px;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   transition: border-color 0.2s, box-shadow 0.2s;
   outline: none;
   background: #fff;
@@ -1102,17 +1165,22 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
 }
 
 .section-title {
-  font-size: 17px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
   color: var(--navy);
   margin: 0;
-  line-height: 1.2;
+  line-height: 1.15;
+  letter-spacing: var(--tracking-tight);
 }
 
 .section-subtitle {
-  font-size: 13px;
-  color: var(--gray-400);
-  margin: 3px 0 0;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-base);
+  color: var(--gray-500);
+  margin: 4px 0 0;
+  line-height: 1.4;
 }
 
 .filter-chip {
@@ -1156,13 +1224,13 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   color: #fff;
 }
 
-.hero-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.5); margin-bottom: 6px; }
-.hero-title { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin: 0; }
-.hero-meta { font-size: 14px; color: rgba(255,255,255,0.6); margin-top: 6px; }
+.hero-label { font-family: var(--font-sans); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-label); color: rgba(255,255,255,0.55); margin-bottom: 8px; }
+.hero-title { font-family: var(--font-display); font-size: 44px; font-weight: 400; letter-spacing: var(--tracking-tight); line-height: 1.05; margin: 0; font-feature-settings: 'liga' 1, 'dlig' 1; }
+.hero-meta { font-size: var(--text-base); color: rgba(255,255,255,0.65); margin-top: 10px; }
 .hero-right { text-align: right; }
-.hero-big-number { font-size: 48px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
-.hero-big-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,0.5); margin-top: 6px; }
-.hero-explain { font-size: 11px; color: rgba(255,255,255,0.35); margin-top: 4px; max-width: 200px; text-align: right; line-height: 1.3; }
+.hero-big-number { font-family: var(--font-display); font-size: 72px; font-weight: 400; letter-spacing: var(--tracking-tight); line-height: 1; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+.hero-big-label { font-family: var(--font-sans); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-label); color: rgba(255,255,255,0.55); margin-top: 10px; }
+.hero-explain { font-size: var(--text-xs); color: rgba(255,255,255,0.45); margin-top: 6px; max-width: 220px; text-align: right; line-height: 1.4; font-style: italic; font-family: var(--font-display); }
 
 .slicer-bar {
   display: flex;
@@ -1236,8 +1304,8 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   font-size: 20px; flex-shrink: 0;
 }
 
-.section-title { font-size: 18px; font-weight: 700; color: var(--navy); margin: 0; letter-spacing: -0.3px; }
-.section-subtitle { font-size: 13px; color: var(--gray-400); margin: 3px 0 0; }
+.section-title { font-family: var(--font-display); font-size: 26px; font-weight: 400; color: var(--navy); margin: 0; letter-spacing: var(--tracking-tight); line-height: 1.15; }
+.section-subtitle { font-family: var(--font-display); font-style: italic; font-size: var(--text-base); color: var(--gray-500); margin: 4px 0 0; line-height: 1.4; }
 
 .gates-progress-ring {
   margin-left: auto;
@@ -1263,20 +1331,23 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
 .chart-card:hover { box-shadow: 0 6px 24px rgba(0,0,0,0.06); }
 
 .chart-card-title {
+  font-family: var(--font-display);
   padding: 16px 20px 0;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 400;
   color: var(--navy);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.2;
 }
 
 .chart-card-explain {
-  padding: 2px 20px 0;
-  font-size: 12px;
+  padding: 4px 20px 14px;
+  font-size: var(--text-sm);
   color: var(--gray-500);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
-.chart-body { position: relative; padding: 8px 12px 12px; }
+.chart-body { position: relative; padding: 12px 12px 12px; }
 
 .gates-track { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 
@@ -1331,19 +1402,13 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
 }
 
 .dashboard-header h1 {
-  font-size: 24px;
-  font-weight: 800;
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: 400;
   color: var(--navy);
-  letter-spacing: -0.5px;
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.1;
   margin: 0;
-}
-
-.section-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--navy);
-  margin-bottom: 16px;
-  margin-top: 8px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1394,7 +1459,7 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   background: #fff;
   color: var(--gray-500);
   cursor: pointer;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   transition: all 0.15s;
 }
 
@@ -1543,7 +1608,7 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   border: 1px solid var(--gray-300);
   border-radius: var(--radius);
   font-size: 14px;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   background: #fff;
   cursor: pointer;
   outline: none;
@@ -1642,7 +1707,7 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   border: 1px solid var(--gray-300);
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   background: #fff;
   outline: none;
 }
@@ -1660,7 +1725,7 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   transition: all 0.15s;
 }
 
@@ -1728,7 +1793,7 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   border: 1px solid var(--gray-300);
   border-radius: var(--radius);
   font-size: 13px;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   background: #fff;
   cursor: pointer;
   outline: none;
@@ -1849,7 +1914,7 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
   border: 1px solid var(--gray-300);
   border-radius: var(--radius);
   font-size: 14px;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   background: #fff;
   cursor: pointer;
   outline: none;
@@ -1913,10 +1978,13 @@ tbody tr:hover { background: #DBEAFE; cursor: default; }
 }
 
 .expert-thankyou h2 {
-  font-size: 24px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 400;
   color: var(--navy);
-  margin-bottom: 8px;
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.1;
+  margin-bottom: 10px;
 }
 
 .expert-thankyou p {
@@ -2304,7 +2372,7 @@ th.text-right { text-align: right; }
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   transition: all 0.15s;
 }
 
@@ -2354,7 +2422,7 @@ th.text-right { text-align: right; }
   font-weight: 500;
   color: var(--gray-500);
   cursor: pointer;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   transition: all 0.15s;
 }
 
@@ -2473,7 +2541,7 @@ th.text-right { text-align: right; }
   font-size: 12px;
   color: var(--gray-500);
   cursor: pointer;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   margin-left: auto;
 }
 .filter-reset:hover {
@@ -2914,7 +2982,7 @@ input[type="range"].xcsg-slider::-moz-range-thumb {
   justify-content: space-between;
   margin-bottom: 20px;
 }
-.norms-v2-header h1 { font-size: 20px; font-weight: 700; color: var(--navy); }
+.norms-v2-header h1 { font-family: var(--font-display); font-size: 32px; font-weight: 400; color: var(--navy); letter-spacing: var(--tracking-tight); line-height: 1.1; }
 .norms-v2-category {
   background: #fff;
   border: 1px solid var(--gray-200);
@@ -2994,7 +3062,7 @@ input[type="range"].xcsg-slider::-moz-range-thumb {
   border: 1px solid var(--gray-300);
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
 }
 
 /* Geography checkboxes in norm forms */
@@ -3032,7 +3100,7 @@ input[type="range"].xcsg-slider::-moz-range-thumb {
   border: 1px solid var(--gray-300);
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-sans);
   background: #fff;
 }
 
@@ -4060,9 +4128,12 @@ th .metric-info-btn {
   flex-shrink: 0;
 }
 .meth-section-title {
-  font-size: 18px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 400;
   color: var(--navy);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.15;
   margin: 0;
 }
 .meth-section-subtitle {
