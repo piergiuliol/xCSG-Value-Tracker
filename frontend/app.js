@@ -343,7 +343,7 @@ async function route() {
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
     projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log',
-    monitoring: 'Monitoring', methodology: 'How Scores Work'
+    monitoring: 'Monitoring', methodology: 'How Scores Work', notes: 'Notes'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
 
@@ -358,6 +358,7 @@ async function route() {
   else if (hash === '#settings') renderSettings();
   else if (hash === '#norms') renderNormsPage();
   else if (hash === '#activity') renderActivity();
+  else if (hash === '#notes') renderNotes();
   else if (hash === '#methodology') renderMethodology();
   else renderPortfolio();
 }
@@ -3492,6 +3493,167 @@ async function renderActivity() {
     }
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load activity: ${esc(err.message)}</div>`;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NOTES FEED (#notes)
+   Voice of the expert — filterable + searchable qualitative feedback.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+let _notesFilterState = {
+  practice: '',
+  category: '',
+  pioneer: '',
+  from: '',
+  to: '',
+  search: '',
+};
+
+let _notesSearchDebounce = null;
+
+function _buildNotesQuery() {
+  const p = new URLSearchParams();
+  if (_notesFilterState.practice) p.set('practice_code', _notesFilterState.practice);
+  if (_notesFilterState.category) p.set('category_id', _notesFilterState.category);
+  if (_notesFilterState.pioneer)  p.set('pioneer_name', _notesFilterState.pioneer);
+  if (_notesFilterState.from)     p.set('delivered_from', _notesFilterState.from);
+  if (_notesFilterState.to)       p.set('delivered_to', _notesFilterState.to);
+  if (_notesFilterState.search)   p.set('search', _notesFilterState.search);
+  const qs = p.toString();
+  return '/notes' + (qs ? '?' + qs : '');
+}
+
+async function renderNotes() {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Loading notes…</div>';
+  const myRoute = _routeCounter;
+  try {
+    const [notes, cats, practices] = await Promise.all([
+      apiCall('GET', _buildNotesQuery()),
+      apiCall('GET', '/categories'),
+      apiCall('GET', '/practices'),
+    ]);
+    if (myRoute !== _routeCounter) return;
+    mc.innerHTML = _notesPageHTML(notes || [], cats || [], practices || []);
+    _wireNotesFilters();
+  } catch (err) {
+    mc.innerHTML = `<div class="error-state">Failed to load notes: ${esc(err.message)}</div>`;
+  }
+}
+
+function _notesPageHTML(notes, cats, practices) {
+  const s = _notesFilterState;
+
+  // Pioneer options: distinct names seen in the current result set.
+  const pioneerNames = [...new Set(notes.map(n => n.pioneer_name).filter(Boolean))].sort();
+
+  const catOpts = cats.map(c => {
+    const sel = String(c.id) === String(s.category) ? ' selected' : '';
+    return '<option value="' + esc(c.id) + '"' + sel + '>' + esc(c.name) + '</option>';
+  }).join('');
+  const practiceOpts = practices.map(p => {
+    const code = p.code || p.practice_code || '';
+    const name = p.name || p.practice_name || code;
+    const sel = code === s.practice ? ' selected' : '';
+    return '<option value="' + esc(code) + '"' + sel + '>' + esc(name) + '</option>';
+  }).join('');
+  const pioneerOpts = pioneerNames.map(n => {
+    const sel = n === s.pioneer ? ' selected' : '';
+    return '<option value="' + esc(n) + '"' + sel + '>' + esc(n) + '</option>';
+  }).join('');
+
+  let feed;
+  if (!notes.length) {
+    feed = '<div class="notes-empty">No notes match the current filters.</div>';
+  } else {
+    feed = '<div class="notes-feed">';
+    for (const n of notes) {
+      const when = n.submitted_at ? String(n.submitted_at).slice(0, 10) : '—';
+      const meta = [
+        n.practice_code || '—',
+        n.category_name || '—',
+        n.pioneer_name || '—',
+        'Round ' + (n.round_number || '?'),
+        when,
+      ].map(esc).join(' · ');
+      feed += '<div class="notes-card">'
+        + '<div class="notes-card-header">'
+        + '<a href="#edit/' + esc(n.project_id) + '" class="notes-card-project">' + esc(n.project_name || '—') + '</a>'
+        + '<span class="notes-card-meta">' + meta + '</span>'
+        + '</div>'
+        + '<div class="notes-card-body">' + esc(n.notes || '').replace(/\n/g, '<br>') + '</div>'
+        + '</div>';
+    }
+    feed += '</div>';
+  }
+
+  return ''
+    + '<div class="notes-header">'
+    + '<h1>Notes</h1>'
+    + '<p class="notes-header-subtitle">Voice of the expert — qualitative feedback across every project.</p>'
+    + '</div>'
+    + '<div class="notes-filter-bar">'
+    + '<input type="text" id="notesSearch" placeholder="Search in notes…" value="' + esc(s.search) + '">'
+    + '<select id="notesPractice"><option value="">All practices</option>' + practiceOpts + '</select>'
+    + '<select id="notesCategory"><option value="">All categories</option>' + catOpts + '</select>'
+    + '<select id="notesPioneer"><option value="">All pioneers</option>' + pioneerOpts + '</select>'
+    + '<input type="date" id="notesFrom" value="' + esc(s.from) + '">'
+    + '<input type="date" id="notesTo" value="' + esc(s.to) + '">'
+    + '<button class="btn btn-secondary" type="button" onclick="_clearNotesFilters()">Clear</button>'
+    + '<button class="btn btn-primary" type="button" onclick="_exportNotesExcel()">Export (xlsx)</button>'
+    + '</div>'
+    + feed;
+}
+
+function _wireNotesFilters() {
+  const search = document.getElementById('notesSearch');
+  if (search) {
+    search.addEventListener('input', function() {
+      if (_notesSearchDebounce) clearTimeout(_notesSearchDebounce);
+      _notesSearchDebounce = setTimeout(() => {
+        _notesFilterState.search = search.value.trim();
+        renderNotes();
+      }, 300);
+    });
+  }
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => {
+      _notesFilterState[key] = el.value;
+      renderNotes();
+    });
+  };
+  bind('notesPractice', 'practice');
+  bind('notesCategory', 'category');
+  bind('notesPioneer', 'pioneer');
+  bind('notesFrom', 'from');
+  bind('notesTo', 'to');
+}
+
+function _clearNotesFilters() {
+  _notesFilterState = { practice: '', category: '', pioneer: '', from: '', to: '', search: '' };
+  renderNotes();
+}
+
+async function _exportNotesExcel() {
+  try {
+    const res = await fetch(API + '/export/excel', {
+      headers: { 'Authorization': 'Bearer ' + state.token },
+    });
+    if (!res.ok) { showToast('Export failed', 'error'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'xCSG_Value_Export.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('Export downloaded');
+  } catch (err) {
+    showToast('Export failed: ' + err.message, 'error');
   }
 }
 
