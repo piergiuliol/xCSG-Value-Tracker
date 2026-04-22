@@ -946,70 +946,9 @@ function _renderDashboardView(allProjects, dashboard) {
   html += `</div>`;
 
   // ── CHART SECTIONS (rendered via tab shell, Task 13) ──
+  // Scaling Gates and Portfolio Table are now rendered as chart types inside
+  // the tab shell (track_scaling_gates + table_portfolio — see registry).
   html += `<div id="tabContainer"></div>`;
-
-  // ── SCALING GATES ──
-  if (filtered.length === allProjects.length && dashboard.scaling_gates && dashboard.scaling_gates.length) {
-    const passed = dashboard.scaling_gates.filter(g => g.status === 'pass').length;
-    const total = dashboard.scaling_gates.length;
-    html += `<div class="dashboard-section">
-      <div class="section-header">
-        <div class="section-icon">\ud83d\ude80</div>
-        <div><h2 class="section-title">Scaling Gates</h2><p class="section-subtitle">${passed}/${total} passed</p></div>
-        <div class="gates-progress-ring">${passed}/${total}</div>
-      </div>
-      <div class="gates-track">`;
-    for (const g of dashboard.scaling_gates) {
-      const ok = g.status === 'pass';
-      html += `<div class="gate-card ${ok ? 'gate-pass' : 'gate-pending'}">
-        <div class="gate-status">${ok ? '\u2713' : '\u2715'}</div>
-        <div class="gate-info">
-          <div class="gate-name">${esc(g.name)}</div>
-          <div class="gate-threshold">${esc(g.description || '')}</div>
-          <div class="gate-detail">${esc(g.detail)}</div>
-        </div>
-      </div>`;
-    }
-    html += `</div>
-      <div class="gates-legend">
-        <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-pass">\u2713</span> Passed</span>
-        <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-fail">\u2715</span> Not yet met</span>
-      </div>
-    </div>`;
-  }
-
-  // ── PORTFOLIO TABLE ──
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83d\udccb</div>
-      <div><h2 class="section-title">Portfolio</h2><p class="section-subtitle">${filtered.length} engagement${filtered.length !== 1 ? 's' : ''}</p></div>
-    </div>
-    <div class="table-wrapper">
-    <table class="data-table portfolio-table">
-      <thead><tr><th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th><th class="r">Actions</th></tr></thead><tbody>`;
-  for (const row of filtered) {
-    const m = row.metrics || {};
-    const rowPioneers = row.pioneers || [];
-    const rowPioneerNames = rowPioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
-    const pioneerDisplay = rowPioneerNames.length > 0 ? rowPioneerNames.length + ' pioneer' + (rowPioneerNames.length !== 1 ? 's' : '') : esc(row.pioneer_name || '\u2014');
-    const pioneerTooltip = rowPioneerNames.join(', ') || row.pioneer_name || '';
-    const schedDelta = scheduleDelta(row.date_expected_delivered, row.date_delivered);
-    const schedCell = schedDelta == null
-      ? '<span style="color:var(--gray-400)">\u2014</span>'
-      : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(row.date_expected_delivered)} \xb7 Delivered: ${esc(row.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
-    html += `<tr>
-      <td><strong>${esc(row.project_name)}</strong></td>
-      <td>${esc(row.category_name)}</td>
-      <td>${esc(row.practice_code || '—')}</td>
-      <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
-      <td>${schedCell}</td>
-      <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${fmtRatio(m.delivery_speed)}</td>
-      <td class="r" style="color:${metricTone(m.output_quality)};font-weight:700">${fmtRatio(m.output_quality)}</td>
-      <td class="r" style="color:${metricTone(m.productivity_ratio)};font-weight:800">${fmtRatio(m.productivity_ratio)}</td>
-      <td class="r"><a href="#edit/${row.id}" class="table-link">Open</a></td>
-    </tr>`;
-  }
-  html += `</tbody></table></div></div>`;
 
   mc.innerHTML = html;
   renderFilterBar(allProjects);
@@ -1858,323 +1797,417 @@ function tip() {
 }
 function axisLbl() { return { color: '#6B7280', fontSize: 12, fontFamily: 'Inter, system-ui' }; }
 
-function renderDashboardCharts(dashboard, allProjects) {
+// ── Chart renderer registry ────────────────────────────────────────────────
+const CHART_RENDERERS = {};
+
+function registerChart(type, fn) { CHART_RENDERERS[type] = fn; }
+
+function renderDashboardCharts(dashboard, filtered) {
   if (typeof echarts === 'undefined') return;
-  Object.keys(ec).forEach(k => { ec[k].dispose(); delete ec[k]; });
-  echarts.registerTheme;
-  // Include both 'complete' and 'partial' — metrics are computed as soon as one
-  // pioneer submits a response, so partial projects have meaningful data.
-  const done = allProjects.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
+  // Dispose all existing ECharts instances
+  Object.keys(ec).forEach(k => { try { ec[k].dispose(); } catch (_) {} delete ec[k]; });
 
-  // 1. SCATTER
-  const s1 = ecInit('chartDisprove');
-  if (s1 && done.length) {
-    const pts = done.map(p => {
-      const m = p.metrics;
-      if (m.delivery_speed == null || m.output_quality == null) return null;
-      const q = (m.delivery_speed >= 1 && m.output_quality >= 1);
-      return { value: [m.delivery_speed, m.output_quality], name: p.project_name, pioneer: p.pioneer_name, client: p.client_name, cat: p.category_name, good: q };
-    }).filter(Boolean);
-    if (pts.length) {
-      const maxX = Math.max(...pts.map(p => p.value[0])) * 1.15;
-      const maxY = Math.max(...pts.map(p => p.value[1])) * 1.15;
-      s1.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${d.name}</b><br><span style="opacity:.6">${d.pioneer} · ${d.client}</span><br><br>Speed: <b>${d.value[0]}×</b> &nbsp; Quality: <b>${d.value[1]}×</b>`; } },
-        grid: { left: 55, right: 30, top: 30, bottom: 45 },
-        xAxis: { type: 'value', max: maxX, name: 'Delivery Speed', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        yAxis: { type: 'value', max: maxY, name: 'Output Quality', nameLocation: 'middle', nameGap: 35, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        series: [{ type: 'scatter', data: pts.map(d => ({
-          value: d.value,
-          symbolSize: 28,
-          itemStyle: { color: d.good ? C.green : C.orange, borderColor: '#fff', borderWidth: 2, shadowBlur: 8, shadowColor: d.good ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)' },
-        })), emphasis: { scale: 1.5, itemStyle: { shadowBlur: 16 } },
-          markLine: { silent: true, symbol: 'none', lineStyle: { color: '#D1D5DB', type: 'dashed', width: 1.5 },
-            data: [{ xAxis: 1 }, { yAxis: 1 }] } }],
-        graphic: [
-          { type: 'text', right: 30, top: 15, style: { text: '\u2713 Thesis Validated', fill: 'rgba(16,185,129,0.5)', fontSize: 13, fontWeight: 600 } },
-          { type: 'text', left: 30, bottom: 55, style: { text: '\u2717 Model Failing', fill: 'rgba(239,68,68,0.4)', fontSize: 13, fontWeight: 600 } },
-        ],
-      });
-    }
-  }
-
-  // 2. RADAR
-  const s2 = ecInit('chartRadar');
-  if (s2) {
-    const labels = ['Machine-First', 'Senior-Led', 'Knowledge', 'Rework Eff.', 'Client Impact', 'Data Ind.'];
-    const vals = [dashboard.machine_first_avg, dashboard.senior_led_avg, dashboard.proprietary_knowledge_avg,
-      dashboard.rework_efficiency_avg, dashboard.client_impact_avg, dashboard.data_independence_avg];
-    const vp = labels.map((l, i) => ({ l, v: vals[i] })).filter(p => p.v != null);
-    if (vp.length) {
-      const maxVal = Math.max(...vp.map(p => p.v), 2) * 1.15;
-      s2.setOption({
-        tooltip: { ...tip(), trigger: 'item' },
-        legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 16, itemHeight: 8, itemGap: 24 },
-        radar: { shape: 'circle', indicator: vp.map(p => ({ name: p.l, max: maxVal })),
-          axisName: { color: '#374151', fontSize: 12, fontWeight: 500 },
-          splitArea: { areaStyle: { color: ['rgba(243,244,246,0.6)', 'rgba(255,255,255,0.6)'] } },
-          splitLine: { lineStyle: { color: C.gray200 } }, axisLine: { lineStyle: { color: C.gray200 } } },
-        series: [{ type: 'radar', data: [
-          { value: vp.map(p => p.v), name: 'xCSG Average', areaStyle: { color: 'rgba(99,102,241,0.2)' },
-            lineStyle: { color: C.indigo, width: 3 }, itemStyle: { color: C.indigo, borderWidth: 2, borderColor: '#fff' }, symbol: 'circle', symbolSize: 8 },
-          { value: vp.map(() => 1.0), name: 'Baseline', lineStyle: { color: C.gray, type: 'dashed', width: 1.5 },
-            itemStyle: { color: 'transparent' }, areaStyle: { color: 'transparent' }, symbol: 'none' },
-        ] }],
-      });
-    }
-  }
-
-  // 3. ADVANTAGE TREND
-  const s3 = ecInit('chartAdvantageTrend');
-  if (s3 && done.length) {
-    const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
-    const td = sorted.map(p => ({ d: p.date_delivered || p.date_started, v: p.metrics.productivity_ratio, n: p.project_name })).filter(d => d.v != null);
-    if (td.length) {
-      s3.setOption({
-        tooltip: { ...tip(), trigger: 'axis', formatter: ps => { const d = td[ps[0].dataIndex]; return `<b>${d.n}</b><br>xCSG Value Gain: <b>${d.v}\xd7</b>`; } },
-        grid: { left: 55, right: 20, top: 15, bottom: 35 },
-        xAxis: { type: 'category', data: td.map(d => new Date(d.d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
-          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
-        yAxis: { type: 'value', name: 'xCSG Value Gain', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
-          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        series: [{ type: 'line', data: td.map(d => d.v), smooth: 0.4, symbol: 'circle', symbolSize: 10, showSymbol: true,
-          lineStyle: { color: C.navy, width: 3.5 },
-          itemStyle: { color: C.navy, borderWidth: 3, borderColor: '#fff' },
-          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(18,31,107,0.15)' }, { offset: 1, color: 'rgba(18,31,107,0.01)' }] } },
-          emphasis: { itemStyle: { shadowBlur: 12, shadowColor: 'rgba(18,31,107,0.3)' } },
-          markLine: { silent: true, symbol: 'none', data: [{ yAxis: 1 }], lineStyle: { color: '#D1D5DB', type: 'dashed' }, label: { show: false } } }],
-      });
-    }
-  }
-
-  // 4. SPEED vs QUALITY
-  const s4 = ecInit('chartSpeedQuality');
-  if (s4 && done.length) {
-    const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
-    const lbl = sorted.map(p => new Date(p.date_delivered || p.date_started).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-    s4.setOption({
-      tooltip: { ...tip(), trigger: 'axis' },
-      legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 18, itemHeight: 3, itemGap: 24 },
-      grid: { left: 55, right: 20, top: 15, bottom: 40 },
-      xAxis: { type: 'category', data: lbl, axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
-      yAxis: { type: 'value', name: 'Ratio', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
-        axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-      series: [
-        { type: 'line', name: 'Speed', data: sorted.map(p => p.metrics.delivery_speed), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
-          lineStyle: { color: C.blue, width: 3 }, itemStyle: { color: C.blue, borderWidth: 2, borderColor: '#fff' } },
-        { type: 'line', name: 'Quality', data: sorted.map(p => p.metrics.output_quality), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
-          lineStyle: { color: C.navy, width: 3 }, itemStyle: { color: C.navy, borderWidth: 2, borderColor: '#fff' } },
-        { type: 'line', name: 'Value Gain', data: sorted.map(p => p.metrics.productivity_ratio), smooth: 0.4, symbol: 'diamond', symbolSize: 9, showSymbol: true,
-          lineStyle: { color: C.green, width: 3, type: 'dashed' }, itemStyle: { color: C.green, borderWidth: 2, borderColor: '#fff' } },
-      ],
-    });
-  }
-
-  // 4b. SCHEDULE VARIANCE — one dot per project, Y = actual - expected (days)
-  const sSched = ecInit('chartSchedule');
-  if (sSched) {
-    const pts = allProjects
-      .map(p => {
-        const delta = scheduleDelta(p.date_expected_delivered, p.date_delivered);
-        if (delta == null) return null;
-        return { name: p.project_name, cat: p.category_name, delta, expected: p.date_expected_delivered, actual: p.date_delivered };
-      })
-      .filter(Boolean)
-      .sort((a, b) => new Date(a.actual) - new Date(b.actual));
-    if (pts.length) {
-      const maxAbs = Math.max(...pts.map(p => Math.abs(p.delta)), 1);
-      const ySpan = Math.ceil(maxAbs * 1.2);
-      sSched.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${esc(d.name)}</b><br><span style="opacity:.7">${esc(d.cat || '')}</span><br><br>Expected: <b>${d.expected}</b><br>Delivered: <b>${d.actual}</b><br>Delta: <b>${formatScheduleDelta(d.delta)}</b>`; } },
-        grid: { left: 60, right: 30, top: 30, bottom: 50 },
-        xAxis: { type: 'category', data: pts.map((_, i) => i + 1), name: 'Project (chronological)', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 10 } },
-        yAxis: { type: 'value', name: 'Days (actual \u2212 expected)', nameLocation: 'middle', nameGap: 45, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          min: -ySpan, max: ySpan,
-          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(),
-          splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        series: [{
-          type: 'scatter',
-          data: pts.map((d, i) => ({
-            value: [i, d.delta],
-            symbolSize: 22,
-            itemStyle: {
-              color: d.delta <= 0 ? C.green : (d.delta <= 3 ? C.orange : '#EF4444'),
-              borderColor: '#fff', borderWidth: 2,
-              shadowBlur: 6, shadowColor: d.delta <= 0 ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.3)',
-            },
-          })),
-          markLine: { silent: true, symbol: 'none', lineStyle: { color: '#9CA3AF', width: 1.5 }, data: [{ yAxis: 0 }], label: { show: false } },
-          emphasis: { scale: 1.4 },
-        }],
-        graphic: [
-          { type: 'text', right: 30, top: 10, style: { text: 'Late \u25b2', fill: 'rgba(239,68,68,0.55)', fontSize: 12, fontWeight: 600 } },
-          { type: 'text', right: 30, bottom: 60, style: { text: 'Early \u25bc', fill: 'rgba(16,185,129,0.55)', fontSize: 12, fontWeight: 600 } },
-        ],
-      });
-    } else {
-      sSched.setOption({
-        graphic: [{ type: 'text', left: 'center', top: 'middle', style: { text: 'No projects with both expected and actual delivery dates yet.', fill: '#9CA3AF', fontSize: 13 } }],
-      });
-    }
-  }
-
-  // 5. CATEGORY BAR (show all with 1+ projects)
-  const s5 = ecInit('chartCategory');
-  if (s5 && done.length) {
-    const byCat = {};
-    done.forEach(p => { const c = p.category_name || 'Other'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byCat[c]) byCat[c] = []; byCat[c].push(v); } });
-    let catE = Object.entries(byCat).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-    const catMore = catE.length > 8 ? catE.slice(8) : [];
-    catE = catE.slice(0, 8);
-    // Auto-resize chart body height based on item count
-    const catH = Math.max(260, catE.length * 38 + 40);
-    document.getElementById('chartCategory')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', catH + 'px');
-    if (catE.length) {
-      s5.setOption({
-        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
-          formatter: ps => { const d = catE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
-        grid: { left: 180, right: 50, top: 5, bottom: catMore.length ? 25 : 10 },
-        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        yAxis: { type: 'category', data: catE.map(e => e.n.length > 30 ? e.n.slice(0, 27) + '\u2026' : e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
-        series: [{ type: 'bar', data: catE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
-          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
-          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
-        graphic: catMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${catMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
-      });
-    }
-  }
-
-  // 5b. PRACTICE BAR — mirror of category chart, groups by practice_code
-  const sPr = ecInit('chartPractice');
-  if (sPr && done.length) {
-    const byPr = {};
-    done.forEach(p => { const code = p.practice_code || 'Unassigned'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byPr[code]) byPr[code] = []; byPr[code].push(v); } });
-    let prE = Object.entries(byPr).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-    const prMore = prE.length > 8 ? prE.slice(8) : [];
-    prE = prE.slice(0, 8);
-    const prH = Math.max(260, prE.length * 38 + 40);
-    document.getElementById('chartPractice')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', prH + 'px');
-    if (prE.length) {
-      sPr.setOption({
-        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
-          formatter: ps => { const d = prE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
-        grid: { left: 140, right: 50, top: 5, bottom: prMore.length ? 25 : 10 },
-        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        yAxis: { type: 'category', data: prE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
-        series: [{ type: 'bar', data: prE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
-          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
-          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
-        graphic: prMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${prMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
-      });
-    }
-  }
-
-  // 6. PIONEER BAR (show all with 1+ projects)
-  const s6 = ecInit('chartPioneer');
-  if (s6 && done.length) {
-    const byP = {};
-    done.forEach(p => { const pn = p.pioneer_name || 'Unknown'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byP[pn]) byP[pn] = []; byP[pn].push(v); } });
-    let pE = Object.entries(byP).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-    const pMore = pE.length > 8 ? pE.slice(8) : [];
-    pE = pE.slice(0, 8);
-    const pH = Math.max(260, pE.length * 38 + 40);
-    document.getElementById('chartPioneer')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', pH + 'px');
-    if (pE.length) {
-      s6.setOption({
-        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
-          formatter: ps => { const d = pE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
-        grid: { left: 140, right: 50, top: 5, bottom: pMore.length ? 25 : 10 },
-        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        yAxis: { type: 'category', data: pE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl() },
-        series: [{ type: 'bar', data: pE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
-          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
-          emphasis: { itemStyle: { shadowBlur: 8 } } }],
-        graphic: pMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${pMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
-      });
-    }
-  }
-
-  // 7. DOUGHNUT — Client Pulse
-  const s7 = ecInit('chartPulse');
-  if (s7 && done.length) {
-    const pc = { 'Exceeded expectations': 0, 'Met expectations': 0, 'Below expectations': 0, 'Not yet received': 0 };
-    done.forEach(p => { const v = p.client_pulse; if (pc[v] !== undefined) pc[v]++; });
-    const responded = pc['Exceeded expectations'] + pc['Met expectations'] + pc['Below expectations'];
-    const totalPulse = responded + pc['Not yet received'];
-    if (totalPulse > 0) {
-      const data = [
-        { value: pc['Exceeded expectations'], name: 'Exceeded', itemStyle: { color: C.green } },
-        { value: pc['Met expectations'], name: 'Met', itemStyle: { color: C.blue } },
-        { value: pc['Below expectations'], name: 'Below', itemStyle: { color: C.red } },
-      ];
-      if (pc['Not yet received'] > 0) data.push({ value: pc['Not yet received'], name: 'Pending', itemStyle: { color: C.gray200 } });
-      s7.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
-        legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
-        series: [
-          { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
-            itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
-            label: { show: false },
-            emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
-              itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
-            data },
-          { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
-            label: { show: true, position: 'center', formatter: `{big|${responded}/${totalPulse}}\n{sub|responded}`,
-              rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
-                      sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
-            data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
-        ],
-      });
-    }
-  }
-
-  // 8. DOUGHNUT — Reuse Intent (from metrics score: 1.0=enthusiastic, 0.5=reserved, 0.0=no)
-  const s8 = ecInit('chartReuse');
-  if (s8 && done.length) {
-    let enthusiastic = 0, reserved = 0, noReuse = 0, pending = 0;
-    done.forEach(p => {
-      const s = p.metrics && p.metrics.reuse_intent_score;
-      if (s === 1.0) enthusiastic++;
-      else if (s === 0.5) reserved++;
-      else if (s != null && s === 0) noReuse++;
-      else pending++;
-    });
-    const responded = enthusiastic + reserved + noReuse;
-    const totalReuse = responded + pending;
-    if (totalReuse > 0) {
-      const data = [
-        { value: enthusiastic, name: 'Enthusiastic', itemStyle: { color: C.green } },
-        { value: reserved, name: 'Reserved', itemStyle: { color: C.orange } },
-        { value: noReuse, name: 'No', itemStyle: { color: C.red } },
-      ];
-      if (pending > 0) data.push({ value: pending, name: 'Pending', itemStyle: { color: C.gray200 } });
-      s8.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
-        legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
-        series: [
-          { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
-            itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
-            label: { show: false },
-            emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
-              itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
-            data },
-          { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
-            label: { show: true, position: 'center', formatter: `{big|${responded}/${totalReuse}}\n{sub|responded}`,
-              rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
-                      sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
-            data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
-        ],
-      });
-    }
+  const localMetrics = (filtered && _projectsCache && filtered.length === _projectsCache.length) ? dashboard : _computeLocalMetrics(filtered || []);
+  const activeCharts = schema.dashboard.charts.filter(c => c.tab === _activeTab);
+  for (const cfg of activeCharts) {
+    const fn = CHART_RENDERERS[cfg.type];
+    if (!fn) { console.warn('No renderer for chart.type', cfg.type, 'id=', cfg.id); continue; }
+    try { fn(cfg, filtered || [], localMetrics, dashboard); }
+    catch (err) { console.error('Chart render error for', cfg.id, err); }
   }
 }
+
+// Helper: filter to projects with metrics (used by several renderers)
+function _doneProjects(filtered) {
+  return filtered.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
+}
+
+// ── Registered renderers ───────────────────────────────────────────────────
+
+registerChart('scatter_disprove', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const pts = done.map(p => {
+    const m = p.metrics;
+    if (m.delivery_speed == null || m.output_quality == null) return null;
+    const q = (m.delivery_speed >= 1 && m.output_quality >= 1);
+    return { value: [m.delivery_speed, m.output_quality], name: p.project_name, pioneer: p.pioneer_name, client: p.client_name, cat: p.category_name, good: q };
+  }).filter(Boolean);
+  if (!pts.length) return;
+  const maxX = Math.max(...pts.map(p => p.value[0])) * 1.15;
+  const maxY = Math.max(...pts.map(p => p.value[1])) * 1.15;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'item',
+      formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${d.name}</b><br><span style="opacity:.6">${d.pioneer} · ${d.client}</span><br><br>Speed: <b>${d.value[0]}×</b> &nbsp; Quality: <b>${d.value[1]}×</b>`; } },
+    grid: { left: 55, right: 30, top: 30, bottom: 45 },
+    xAxis: { type: 'value', max: maxX, name: 'Delivery Speed', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+      axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+    yAxis: { type: 'value', max: maxY, name: 'Output Quality', nameLocation: 'middle', nameGap: 35, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+      axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+    series: [{ type: 'scatter', data: pts.map(d => ({
+      value: d.value,
+      symbolSize: 28,
+      itemStyle: { color: d.good ? C.green : C.orange, borderColor: '#fff', borderWidth: 2, shadowBlur: 8, shadowColor: d.good ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)' },
+    })), emphasis: { scale: 1.5, itemStyle: { shadowBlur: 16 } },
+      markLine: { silent: true, symbol: 'none', lineStyle: { color: '#D1D5DB', type: 'dashed', width: 1.5 },
+        data: [{ xAxis: 1 }, { yAxis: 1 }] } }],
+    graphic: [
+      { type: 'text', right: 30, top: 15, style: { text: '✓ Thesis Validated', fill: 'rgba(16,185,129,0.5)', fontSize: 13, fontWeight: 600 } },
+      { type: 'text', left: 30, bottom: 55, style: { text: '✗ Model Failing', fill: 'rgba(239,68,68,0.4)', fontSize: 13, fontWeight: 600 } },
+    ],
+  });
+});
+
+registerChart('radar_gains', (cfg, filtered, localMetrics, dashboard) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const labels = ['Machine-First', 'Senior-Led', 'Knowledge', 'Rework Eff.', 'Client Impact', 'Data Ind.'];
+  const vals = [dashboard.machine_first_avg, dashboard.senior_led_avg, dashboard.proprietary_knowledge_avg,
+    dashboard.rework_efficiency_avg, dashboard.client_impact_avg, dashboard.data_independence_avg];
+  const vp = labels.map((l, i) => ({ l, v: vals[i] })).filter(p => p.v != null);
+  if (!vp.length) return;
+  const maxVal = Math.max(...vp.map(p => p.v), 2) * 1.15;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'item' },
+    legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 16, itemHeight: 8, itemGap: 24 },
+    radar: { shape: 'circle', indicator: vp.map(p => ({ name: p.l, max: maxVal })),
+      axisName: { color: '#374151', fontSize: 12, fontWeight: 500 },
+      splitArea: { areaStyle: { color: ['rgba(243,244,246,0.6)', 'rgba(255,255,255,0.6)'] } },
+      splitLine: { lineStyle: { color: C.gray200 } }, axisLine: { lineStyle: { color: C.gray200 } } },
+    series: [{ type: 'radar', data: [
+      { value: vp.map(p => p.v), name: 'xCSG Average', areaStyle: { color: 'rgba(99,102,241,0.2)' },
+        lineStyle: { color: C.indigo, width: 3 }, itemStyle: { color: C.indigo, borderWidth: 2, borderColor: '#fff' }, symbol: 'circle', symbolSize: 8 },
+      { value: vp.map(() => 1.0), name: 'Baseline', lineStyle: { color: C.gray, type: 'dashed', width: 1.5 },
+        itemStyle: { color: 'transparent' }, areaStyle: { color: 'transparent' }, symbol: 'none' },
+    ] }],
+  });
+});
+
+// Merged advantage-trend + speed-vs-quality into a single 3-line chart.
+registerChart('timeline_per_project', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
+  const lbl = sorted.map(p => new Date(p.date_delivered || p.date_started).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis' },
+    legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 18, itemHeight: 3, itemGap: 24 },
+    grid: { left: 55, right: 20, top: 15, bottom: 40 },
+    xAxis: { type: 'category', data: lbl, axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
+    yAxis: { type: 'value', name: 'Ratio', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
+      axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+    series: [
+      { type: 'line', name: 'Speed', data: sorted.map(p => p.metrics.delivery_speed), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
+        lineStyle: { color: C.blue, width: 3 }, itemStyle: { color: C.blue, borderWidth: 2, borderColor: '#fff' } },
+      { type: 'line', name: 'Quality', data: sorted.map(p => p.metrics.output_quality), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
+        lineStyle: { color: C.navy, width: 3 }, itemStyle: { color: C.navy, borderWidth: 2, borderColor: '#fff' } },
+      { type: 'line', name: 'Value Gain', data: sorted.map(p => p.metrics.productivity_ratio), smooth: 0.4, symbol: 'diamond', symbolSize: 9, showSymbol: true,
+        lineStyle: { color: C.green, width: 3, type: 'dashed' }, itemStyle: { color: C.green, borderWidth: 2, borderColor: '#fff' } },
+    ],
+  });
+});
+
+registerChart('scatter_schedule', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const pts = filtered
+    .map(p => {
+      const delta = scheduleDelta(p.date_expected_delivered, p.date_delivered);
+      if (delta == null) return null;
+      return { name: p.project_name, cat: p.category_name, delta, expected: p.date_expected_delivered, actual: p.date_delivered };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.actual) - new Date(b.actual));
+  if (pts.length) {
+    const maxAbs = Math.max(...pts.map(p => Math.abs(p.delta)), 1);
+    const ySpan = Math.ceil(maxAbs * 1.2);
+    s.setOption({
+      tooltip: { ...tip(), trigger: 'item',
+        formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${esc(d.name)}</b><br><span style="opacity:.7">${esc(d.cat || '')}</span><br><br>Expected: <b>${d.expected}</b><br>Delivered: <b>${d.actual}</b><br>Delta: <b>${formatScheduleDelta(d.delta)}</b>`; } },
+      grid: { left: 60, right: 30, top: 30, bottom: 50 },
+      xAxis: { type: 'category', data: pts.map((_, i) => i + 1), name: 'Project (chronological)', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+        axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 10 } },
+      yAxis: { type: 'value', name: 'Days (actual − expected)', nameLocation: 'middle', nameGap: 45, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+        min: -ySpan, max: ySpan,
+        axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(),
+        splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+      series: [{
+        type: 'scatter',
+        data: pts.map((d, i) => ({
+          value: [i, d.delta],
+          symbolSize: 22,
+          itemStyle: {
+            color: d.delta <= 0 ? C.green : (d.delta <= 3 ? C.orange : '#EF4444'),
+            borderColor: '#fff', borderWidth: 2,
+            shadowBlur: 6, shadowColor: d.delta <= 0 ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.3)',
+          },
+        })),
+        markLine: { silent: true, symbol: 'none', lineStyle: { color: '#9CA3AF', width: 1.5 }, data: [{ yAxis: 0 }], label: { show: false } },
+        emphasis: { scale: 1.4 },
+      }],
+      graphic: [
+        { type: 'text', right: 30, top: 10, style: { text: 'Late ▲', fill: 'rgba(239,68,68,0.55)', fontSize: 12, fontWeight: 600 } },
+        { type: 'text', right: 30, bottom: 60, style: { text: 'Early ▼', fill: 'rgba(16,185,129,0.55)', fontSize: 12, fontWeight: 600 } },
+      ],
+    });
+  } else {
+    s.setOption({
+      graphic: [{ type: 'text', left: 'center', top: 'middle', style: { text: 'No projects with both expected and actual delivery dates yet.', fill: '#9CA3AF', fontSize: 13 } }],
+    });
+  }
+});
+
+registerChart('bar_by_category', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const byCat = {};
+  done.forEach(p => { const c = p.category_name || 'Other'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byCat[c]) byCat[c] = []; byCat[c].push(v); } });
+  let catE = Object.entries(byCat).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+  const catMore = catE.length > 8 ? catE.slice(8) : [];
+  catE = catE.slice(0, 8);
+  // Auto-resize chart body height based on item count (base from cfg.height)
+  const baseH = cfg.height || 260;
+  const catH = Math.max(baseH, catE.length * 38 + 40);
+  document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', catH + 'px');
+  if (!catE.length) return;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: ps => { const d = catE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+    grid: { left: 180, right: 50, top: 5, bottom: catMore.length ? 25 : 10 },
+    xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+    yAxis: { type: 'category', data: catE.map(e => e.n.length > 30 ? e.n.slice(0, 27) + '…' : e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
+    series: [{ type: 'bar', data: catE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+      barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
+    graphic: catMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${catMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
+  });
+});
+
+registerChart('bar_by_practice', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const byPr = {};
+  done.forEach(p => { const code = p.practice_code || 'Unassigned'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byPr[code]) byPr[code] = []; byPr[code].push(v); } });
+  let prE = Object.entries(byPr).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+  const prMore = prE.length > 8 ? prE.slice(8) : [];
+  prE = prE.slice(0, 8);
+  const baseH = cfg.height || 260;
+  const prH = Math.max(baseH, prE.length * 38 + 40);
+  document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', prH + 'px');
+  if (!prE.length) return;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: ps => { const d = prE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+    grid: { left: 140, right: 50, top: 5, bottom: prMore.length ? 25 : 10 },
+    xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+    yAxis: { type: 'category', data: prE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
+    series: [{ type: 'bar', data: prE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+      barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
+    graphic: prMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${prMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
+  });
+});
+
+registerChart('bar_by_pioneer', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const byP = {};
+  done.forEach(p => { const pn = p.pioneer_name || 'Unknown'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byP[pn]) byP[pn] = []; byP[pn].push(v); } });
+  let pE = Object.entries(byP).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+  const pMore = pE.length > 8 ? pE.slice(8) : [];
+  pE = pE.slice(0, 8);
+  const baseH = cfg.height || 260;
+  const pH = Math.max(baseH, pE.length * 38 + 40);
+  document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', pH + 'px');
+  if (!pE.length) return;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: ps => { const d = pE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+    grid: { left: 140, right: 50, top: 5, bottom: pMore.length ? 25 : 10 },
+    xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
+    yAxis: { type: 'category', data: pE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl() },
+    series: [{ type: 'bar', data: pE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+      barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+      emphasis: { itemStyle: { shadowBlur: 8 } } }],
+    graphic: pMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${pMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
+  });
+});
+
+registerChart('donut_client_pulse', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const pc = { 'Exceeded expectations': 0, 'Met expectations': 0, 'Below expectations': 0, 'Not yet received': 0 };
+  done.forEach(p => { const v = p.client_pulse; if (pc[v] !== undefined) pc[v]++; });
+  const responded = pc['Exceeded expectations'] + pc['Met expectations'] + pc['Below expectations'];
+  const totalPulse = responded + pc['Not yet received'];
+  if (totalPulse <= 0) return;
+  const data = [
+    { value: pc['Exceeded expectations'], name: 'Exceeded', itemStyle: { color: C.green } },
+    { value: pc['Met expectations'], name: 'Met', itemStyle: { color: C.blue } },
+    { value: pc['Below expectations'], name: 'Below', itemStyle: { color: C.red } },
+  ];
+  if (pc['Not yet received'] > 0) data.push({ value: pc['Not yet received'], name: 'Pending', itemStyle: { color: C.gray200 } });
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'item',
+      formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
+    legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
+    series: [
+      { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
+        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+        label: { show: false },
+        emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
+          itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
+        data },
+      { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
+        label: { show: true, position: 'center', formatter: `{big|${responded}/${totalPulse}}\n{sub|responded}`,
+          rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
+                  sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
+        data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
+    ],
+  });
+});
+
+registerChart('donut_reuse_intent', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  let enthusiastic = 0, reserved = 0, noReuse = 0, pending = 0;
+  done.forEach(p => {
+    const sc = p.metrics && p.metrics.reuse_intent_score;
+    if (sc === 1.0) enthusiastic++;
+    else if (sc === 0.5) reserved++;
+    else if (sc != null && sc === 0) noReuse++;
+    else pending++;
+  });
+  const responded = enthusiastic + reserved + noReuse;
+  const totalReuse = responded + pending;
+  if (totalReuse <= 0) return;
+  const data = [
+    { value: enthusiastic, name: 'Enthusiastic', itemStyle: { color: C.green } },
+    { value: reserved, name: 'Reserved', itemStyle: { color: C.orange } },
+    { value: noReuse, name: 'No', itemStyle: { color: C.red } },
+  ];
+  if (pending > 0) data.push({ value: pending, name: 'Pending', itemStyle: { color: C.gray200 } });
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'item',
+      formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
+    legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
+    series: [
+      { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
+        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+        label: { show: false },
+        emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
+          itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
+        data },
+      { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
+        label: { show: true, position: 'center', formatter: `{big|${responded}/${totalReuse}}\n{sub|responded}`,
+          rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
+                  sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
+        data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
+    ],
+  });
+});
+
+registerChart('track_scaling_gates', (cfg, filtered, localMetrics, dashboard) => {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  const gates = dashboard.scaling_gates || [];
+  if (!gates.length || (filtered && _projectsCache && filtered.length !== _projectsCache.length)) {
+    // Gates are defined against the FULL dataset; when filters are active they mean nothing.
+    host.innerHTML = '<div style="color:#9CA3AF;font-size:13px;padding:16px">Clear filters to see scaling-gate progress.</div>';
+    return;
+  }
+  const passed = gates.filter(g => g.status === 'pass').length;
+  const total = gates.length;
+  host.innerHTML = `
+    <div class="gates-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div>${passed}/${total} passed</div>
+      <div class="gates-progress-ring">${passed}/${total}</div>
+    </div>
+    <div class="gates-track">
+      ${gates.map(g => {
+        const ok = g.status === 'pass';
+        return `<div class="gate-card ${ok ? 'gate-pass' : 'gate-pending'}">
+          <div class="gate-status">${ok ? '✓' : '✕'}</div>
+          <div class="gate-info">
+            <div class="gate-name">${esc(g.name)}</div>
+            <div class="gate-threshold">${esc(g.description || '')}</div>
+            <div class="gate-detail">${esc(g.detail)}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="gates-legend">
+      <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-pass">✓</span> Passed</span>
+      <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-fail">✕</span> Not yet met</span>
+    </div>
+  `;
+});
+
+registerChart('table_portfolio', (cfg, filtered) => {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  host.style.height = 'auto';   // Table has no fixed height
+  host.innerHTML = `
+    <div class="table-wrapper">
+      <table class="data-table portfolio-table">
+        <thead><tr>
+          <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th>
+          <th title="Actual delivery vs. expected delivery.">Schedule</th>
+          <th class="r" title="Legacy person-days ÷ xCSG person-days. >1× = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th>
+          <th class="r" title="xCSG quality ÷ legacy quality. >1× = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th>
+          <th class="r" title="Quality per person-day: xCSG vs legacy.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th>
+          <th class="r">Actions</th>
+        </tr></thead>
+        <tbody>
+          ${filtered.map(row => {
+            const m = row.metrics || {};
+            const rowPioneers = row.pioneers || [];
+            const rowPioneerNames = rowPioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
+            const pioneerDisplay = rowPioneerNames.length > 0 ? rowPioneerNames.length + ' pioneer' + (rowPioneerNames.length !== 1 ? 's' : '') : esc(row.pioneer_name || '—');
+            const pioneerTooltip = rowPioneerNames.join(', ') || row.pioneer_name || '';
+            const schedDelta = scheduleDelta(row.date_expected_delivered, row.date_delivered);
+            const schedCell = schedDelta == null
+              ? '<span style="color:var(--gray-400)">—</span>'
+              : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(row.date_expected_delivered || '')} · Delivered: ${esc(row.date_delivered || '')}">${formatScheduleDelta(schedDelta)}</span>`;
+            const ratioFmt = v => v == null ? '—' : `${round2(v)}×`;
+            return `<tr>
+              <td><strong>${esc(row.project_name)}</strong></td>
+              <td>${esc(row.category_name || '—')}</td>
+              <td>${esc(row.practice_code || '—')}</td>
+              <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
+              <td>${schedCell}</td>
+              <td class="r" style="font-weight:700">${ratioFmt(m.delivery_speed)}</td>
+              <td class="r" style="font-weight:700">${ratioFmt(m.output_quality)}</td>
+              <td class="r" style="font-weight:800">${ratioFmt(m.productivity_ratio)}</td>
+              <td class="r"><a href="#edit/${row.id}" class="table-link">Open</a></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+});
+
+// ── TODO stubs (Tasks 16-20) ───────────────────────────────────────────────
+registerChart('timeline_quarterly', (cfg) => { console.log('TODO Task 16:', cfg.id); });
+registerChart('timeline_cumulative', (cfg) => { console.log('TODO Task 17:', cfg.id); });
+registerChart('cohort_learning_curve', (cfg) => { console.log('TODO Task 18:', cfg.id); });
+registerChart('heatmap_practice_quarter', (cfg) => { console.log('TODO Task 19:', cfg.id); });
+registerChart('area_category_mix', (cfg) => { console.log('TODO Task 20:', cfg.id); });
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
