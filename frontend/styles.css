@@ -552,7 +552,7 @@ th.r {
 fieldset {
   border: 1px solid var(--gray-200);
   border-radius: 12px;
-  padding: 64px 32px 32px;
+  padding: 88px 32px 40px;
   margin: 16px 0;
   background: #fff;
   position: relative;
