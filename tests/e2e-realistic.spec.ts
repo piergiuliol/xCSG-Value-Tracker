@@ -184,7 +184,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
       tokens.push(match![1]);
 
       await page.click('.modal-card .btn-secondary');
-      await page.waitForTimeout(300);
+      await page.waitForSelector('.modal-card', { state: 'detached' }).catch(() => {});
     }
 
     expect(tokens.length).toBe(20);
@@ -273,7 +273,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
     }
 
     await page.goto(BASE + '/#portfolio');
-    await page.waitForTimeout(2000);
+    await page.waitForSelector('#mainContent .metric-tile', { timeout: 8000 }).catch(() => {});
 
     const mc = page.locator('#mainContent');
 
@@ -294,7 +294,8 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
     // default Overview tab currently has 2 charts; across all tabs the schema
     // defines ~16 chart cards. Assert there are at least a couple rendered and
     // that explainer cards exist across tabs.
-    await page.waitForTimeout(2000); // allow charts to render
+    // Wait until at least one chart canvas is present instead of a blanket pause
+    await page.waitForFunction(() => document.querySelectorAll('.chart-body canvas').length > 0, null, { timeout: 8000 }).catch(() => {});
     const chartCanvases = await page.locator('.chart-body canvas').count();
     console.log(`  Chart canvases rendered: ${chartCanvases}`);
     expect(chartCanvases).toBeGreaterThanOrEqual(2);
@@ -306,7 +307,8 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
     // Portfolio table + scaling gates live on the "Signals & Gates" tab in the
     // redesigned dashboard — click through to assert those still render.
     await page.locator('.tab-bar .tab', { hasText: /Signals/ }).click();
-    await page.waitForTimeout(800);
+    await page.waitForSelector('.tab-panel[data-panel="signals"].active').catch(() => {});
+    await page.waitForTimeout(400);
 
     const tableRows = await mc.locator('.portfolio-table tbody tr').count();
     expect(tableRows).toBe(20);
@@ -420,7 +422,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
   // ─── QA: NORMS TAB ─────────────────────────────────────────────────────
   test('QA: Norms tab renders with computed metrics', { timeout: 15_000 }, async () => {
     await page.goto(BASE + '/#norms');
-    await page.waitForTimeout(2000);
+    await page.waitForFunction(() => (document.getElementById('mainContent')?.textContent || '').trim().length > 0, null, { timeout: 8000 }).catch(() => {});
 
     const mc = page.locator('#mainContent');
     await expect(mc.locator('table')).toBeVisible({ timeout: 8000 });
@@ -457,7 +459,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
   test('QA: Project detail shows expert assessment', { timeout: 30_000 }, async () => {
     // Navigate directly to first project edit view
     await page.goto(BASE + '/#edit/1');
-    await page.waitForTimeout(3000);
+    await page.waitForSelector('#mainContent form, #mainContent .edit-project', { timeout: 8000 }).catch(() => {});
 
     const mc = page.locator('#mainContent');
 
@@ -493,7 +495,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
   // ─── QA: FILTER / SLICER WORKS ─────────────────────────────────────────
   test('QA: Dashboard category filter works', { timeout: 15_000 }, async () => {
     await page.goto(BASE + '/#portfolio');
-    await page.waitForTimeout(2000);
+    await page.waitForSelector('#mainContent .filter-chip', { timeout: 8000 }).catch(() => {});
 
     // Click a category chip (CDD should have 5 projects)
     const cddChip = page.locator('.filter-chip', { hasText: 'CDD' });
@@ -520,7 +522,11 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
     const routes = ['#portfolio', '#projects', '#norms', '#settings', '#activity'];
     for (const hash of routes) {
       await page.evaluate((h) => { window.location.hash = h; }, hash);
-      await page.waitForTimeout(1500);
+      await page.waitForFunction(
+        () => (document.getElementById('mainContent')?.textContent || '').trim().length > 0,
+        null,
+        { timeout: 8000 },
+      ).catch(() => {});
       const content = await page.locator('#mainContent').textContent();
       expect((content || '').trim().length).toBeGreaterThan(0);
       console.log(`  ✓ ${hash} rendered (${content!.length} chars)`);

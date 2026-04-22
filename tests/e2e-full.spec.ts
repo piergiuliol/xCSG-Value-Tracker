@@ -76,7 +76,7 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
 
     // Close modal
     await page.click('.modal-card .btn-secondary');
-    await page.waitForTimeout(500);
+    await page.waitForSelector('.modal-card', { state: 'detached' }).catch(() => {});
   });
 
   // ─── TEST 3: Expert assessment ───────────────────────────────────────
@@ -138,8 +138,16 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
       }
     }
 
-    // Wait for progress to update
-    await page.waitForTimeout(500);
+    // Wait for the submit button to become enabled (its disabled state is driven
+    // by the progress calculation; if it never enables, the next assert surfaces it).
+    await page.waitForFunction(
+      () => {
+        const b = document.querySelector('#expertSubmitBtn') as HTMLButtonElement | null;
+        return b && !b.disabled;
+      },
+      null,
+      { timeout: 5000 },
+    ).catch(() => {});
 
     const btnDisabled = await page.locator('#expertSubmitBtn').isDisabled();
     console.log('Submit disabled:', btnDisabled);
@@ -161,8 +169,11 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     // Submit
     await page.click('#expertSubmitBtn');
 
-    // Check for error toast or success
-    await page.waitForTimeout(3000);
+    // Wait for either thank-you or an error toast to appear
+    await Promise.race([
+      page.locator('#expertContent h2').filter({ hasText: /Thank You|Already Submitted/ }).waitFor({ timeout: 10000 }),
+      page.locator('.toast-error').waitFor({ state: 'visible', timeout: 10000 }),
+    ]).catch(() => {});
     const errorToast = page.locator('.toast-error');
     const toastVisible = await errorToast.isVisible().catch(() => false);
     if (toastVisible) {
@@ -194,7 +205,7 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     // route is the edit form (metrics are surfaced in the portfolio dashboard
     // KPIs and via the projects table Quality Score column / round chip modals).
     await page.evaluate(() => { window.location.hash = '#projects'; });
-    await page.waitForTimeout(2000);
+    await page.waitForSelector('#projectTable tbody tr', { timeout: 8000 });
 
     // Verify QA Test Project appears
     await expect(page.locator('text=QA Test Project').first()).toBeVisible({ timeout: 8000 });
@@ -209,7 +220,7 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
 
     // And the portfolio dashboard KPI tiles should render with real values.
     await page.evaluate(() => { window.location.hash = '#portfolio'; });
-    await page.waitForTimeout(2000);
+    await page.waitForSelector('#mainContent .metric-tile-value', { timeout: 8000 });
     const kpiValues = await page.locator('#mainContent .metric-tile-value').allTextContents();
     const realKpis = kpiValues.filter(v => v.trim() !== '' && v.trim() !== '—');
     expect(realKpis.length).toBeGreaterThanOrEqual(1);
@@ -218,7 +229,6 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
   // ─── TEST 5: Project form cleanup ────────────────────────────────────
   test('Test 5: Project form — correct fields present/absent', async () => {
     await page.evaluate(() => { window.location.hash = '#new'; });
-    await page.waitForTimeout(1500);
     await expect(page.locator('#projectForm')).toBeVisible({ timeout: 8000 });
 
     const formHtml = await page.locator('#projectForm').innerHTML();
@@ -244,7 +254,12 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     const routes = ['#portfolio', '#projects', '#norms', '#settings', '#activity'];
     for (const hash of routes) {
       await page.evaluate((h) => { window.location.hash = h; }, hash);
-      await page.waitForTimeout(1500);
+      // Wait until #mainContent actually has non-trivial content before reading it
+      await page.waitForFunction(
+        () => (document.getElementById('mainContent')?.textContent || '').trim().length > 0,
+        null,
+        { timeout: 8000 },
+      ).catch(() => {});
       const content = await page.locator('#mainContent').textContent();
       expect((content || '').trim().length).toBeGreaterThan(0);
     }

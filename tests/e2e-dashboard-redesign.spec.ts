@@ -61,13 +61,18 @@ test.describe('Dashboard redesign', () => {
 
     // Clear any persisted filter first
     await page.click('.filter-chip[data-filter="clear"]');
-    await page.waitForTimeout(300);
+    // Wait for no "active" filter chips to remain after Clear
+    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
 
     // Open Practice popover and tick the first checkbox
     await page.click('.filter-chip[data-filter="practices"]');
     await page.waitForSelector('.filter-popover');
     await page.locator('.filter-popover input[type="checkbox"]').first().check();
-    await page.waitForTimeout(400);
+    // Wait until the practice chip reflects the new selection (no longer "Practice: All")
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.filter-chip[data-filter="practices"]');
+      return el && !/Practice:\s*All/.test(el.textContent || '');
+    });
 
     const filteredTotal = await page.evaluate(() => applyFilters(_projectsCache).length);
     expect(filteredTotal).toBeLessThan(fullTotal);
@@ -80,12 +85,15 @@ test.describe('Dashboard redesign', () => {
     await page.waitForSelector('.filter-bar', { timeout: 15_000 });
 
     await page.click('.filter-chip[data-filter="clear"]');
-    await page.waitForTimeout(300);
+    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
 
     await page.click('.filter-chip[data-filter="practices"]');
     await page.waitForSelector('.filter-popover');
     await page.locator('.filter-popover input[type="checkbox"]').first().check();
-    await page.waitForTimeout(400);
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.filter-chip[data-filter="practices"]');
+      return el && !/Practice:\s*All/.test(el.textContent || '');
+    });
 
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('.filter-bar', { timeout: 15_000 });
@@ -101,7 +109,7 @@ test.describe('Dashboard redesign', () => {
 
     // Clear filters so aggregates equal the full dataset
     await page.click('.filter-chip[data-filter="clear"]');
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
 
     const parityOk = await page.evaluate(async () => {
       // Token lives in sessionStorage under 'xcsg_token' (see state.token in app.js)
@@ -141,7 +149,7 @@ test.describe('Dashboard redesign', () => {
     await page.waitForSelector('.metric-tile', { timeout: 15_000 });
 
     await page.click('.filter-chip[data-filter="clear"]');
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
 
     const tileCount = await page.locator('.metric-tile').count();
     expect(tileCount).toBe(12);
@@ -151,7 +159,9 @@ test.describe('Dashboard redesign', () => {
 
     for (const id of ['overview', 'trends', 'breakdowns', 'signals']) {
       await page.click(`.tab[data-tab="${id}"]`);
-      await page.waitForTimeout(900);
+      // Wait for the panel to activate and then give ECharts a short beat to settle
+      await page.waitForSelector(`.tab-panel[data-panel="${id}"].active`);
+      await page.waitForTimeout(400);
 
       const bad: string[] = await page.evaluate(() => {
         const cards = Array.from(
