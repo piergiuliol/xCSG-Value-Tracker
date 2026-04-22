@@ -2149,8 +2149,13 @@ tr:hover .norm-save-btn { opacity: 1; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
   box-shadow: var(--shadow);
   margin-top: 20px;
+}
+.accordion-submit-area .time-hint {
+  flex-shrink: 0;
 }
 
 /* Metrics preview on success */
