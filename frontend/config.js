@@ -6,6 +6,11 @@ window.DASHBOARD = {
     indigo: '#4F46E5', blue: '#6EC1E4', navy: '#121F6B', success: '#10b981',
     warning: '#f59e0b', danger: '#ef4444', gray: '#9CA3AF',
     gray200: '#E5E7EB', gray400: '#9CA3AF', gray500: '#6B7280',
+    // Convenience aliases + extras previously living in the C object in app.js.
+    // Keep this list as the single source of truth for chart colours.
+    green: '#10b981', orange: '#f59e0b', red: '#ef4444',
+    teal: '#14B8A6', purple: '#8B5CF6',
+    gray50: '#F9FAFB', gray100: '#F3F4F6',
     series: ['#4F46E5', '#6EC1E4', '#10b981', '#f59e0b', '#ef4444',
              '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4'],
   },
