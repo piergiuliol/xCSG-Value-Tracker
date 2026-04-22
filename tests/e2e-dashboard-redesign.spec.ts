@@ -167,9 +167,15 @@ test.describe('Dashboard redesign', () => {
           .filter(card => {
             const chartId = card.dataset.chartId as string;
             const type = chartDefs.find(c => c.id === chartId)?.type;
-            // HTML-rendered cards (gates track + portfolio table) populate their
-            // own #id host element with raw HTML instead of mounting a canvas.
-            if (type === 'track_scaling_gates' || type === 'table_portfolio') {
+            // HTML-rendered cards (gates track, portfolio table, ranked lists)
+            // populate their own #id host element with raw HTML, not a canvas.
+            const HTML_TYPES = new Set([
+              'track_scaling_gates',
+              'table_portfolio',
+              'ranked_list_top',
+              'ranked_list_bottom',
+            ]);
+            if (type && HTML_TYPES.has(type)) {
               const host = document.getElementById(chartId);
               return !host || (host.innerHTML || '').trim().length < 20;
             }
