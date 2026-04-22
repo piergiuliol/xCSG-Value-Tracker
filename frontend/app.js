@@ -2204,7 +2204,60 @@ registerChart('table_portfolio', (cfg, filtered) => {
 });
 
 // ── TODO stubs (Tasks 16-20) ───────────────────────────────────────────────
-registerChart('timeline_quarterly', (cfg) => { console.log('TODO Task 16:', cfg.id); });
+registerChart('timeline_quarterly', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.metrics && p.date_delivered);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const minQ = schema.dashboard.thresholds.quarterly_bucket_min_quarters;
+  const quarterKey = d => {
+    const dt = new Date(d);
+    return DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+  };
+  const byQuarter = {};
+  for (const p of done) {
+    const k = quarterKey(p.date_delivered);
+    (byQuarter[k] = byQuarter[k] || []).push(p.metrics.productivity_ratio);
+  }
+  let labels = Object.keys(byQuarter).sort();
+  let granularity = 'quarter';
+  let bucket = byQuarter;
+  if (labels.length < minQ) {
+    const byMonth = {};
+    for (const p of done) {
+      const dt = new Date(p.date_delivered);
+      const k = DASHBOARD.bucket.monthLabel(dt.getFullYear(), dt.getMonth() + 1);
+      (byMonth[k] = byMonth[k] || []).push(p.metrics.productivity_ratio);
+    }
+    labels = Object.keys(byMonth).sort();
+    bucket = byMonth;
+    granularity = 'month';
+  }
+  const avgLine  = labels.map(k => round2(bucket[k].reduce((a, b) => a + (b || 0), 0) / bucket[k].length));
+  const countBar = labels.map(k => bucket[k].length);
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    grid: { left: 50, right: 50, top: 30, bottom: 50 },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: pal.gray500 } },
+    yAxis: [
+      { type: 'value', name: 'Avg Value Gain (×)', axisLabel: { color: pal.gray500 } },
+      { type: 'value', name: 'Projects', position: 'right', axisLabel: { color: pal.gray500 } },
+    ],
+    series: [
+      { name: 'Projects',       type: 'bar', yAxisIndex: 1, data: countBar, itemStyle: { color: pal.gray200 } },
+      { name: 'Avg Value Gain', type: 'line', data: avgLine, smooth: true,
+        lineStyle: { color: pal.indigo, width: 3 }, itemStyle: { color: pal.indigo } },
+    ],
+    title: granularity === 'month'
+      ? { text: `Monthly buckets (< ${schema.dashboard.thresholds.quarterly_bucket_min_quarters} quarters in range)`, left: 'right', textStyle: { fontSize: 11, color: pal.gray400 } }
+      : undefined,
+  });
+});
 registerChart('timeline_cumulative', (cfg) => { console.log('TODO Task 17:', cfg.id); });
 registerChart('cohort_learning_curve', (cfg) => { console.log('TODO Task 18:', cfg.id); });
 registerChart('heatmap_practice_quarter', (cfg) => { console.log('TODO Task 19:', cfg.id); });
