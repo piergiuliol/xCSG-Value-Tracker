@@ -37,10 +37,3 @@ docs/
 *.yml
 !docker-compose.yml
 
-# AI assistant configs
-CLAUDE.md
-.github/copilot-instructions.md
-AGENTS.md
-GEMINI.md
-.cursorrules
-.windsurfrules
