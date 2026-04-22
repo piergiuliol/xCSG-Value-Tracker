@@ -2397,7 +2397,55 @@ registerChart('heatmap_practice_quarter', (cfg, filtered) => {
                itemStyle: { borderColor: '#fff', borderWidth: 1 } }],
   });
 });
-registerChart('area_category_mix', (cfg) => { console.log('TODO Task 20:', cfg.id); });
+registerChart('area_category_mix', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.date_delivered && p.category_name);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const catCounts = {};
+  for (const p of done) catCounts[p.category_name] = (catCounts[p.category_name] || 0) + 1;
+  const topCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]).slice(0, topN).map(e => e[0]);
+  const otherLabel = 'Other';
+  const norm = name => topCats.includes(name) ? name : otherLabel;
+
+  const byQuarter = {};
+  for (const p of done) {
+    const dt = new Date(p.date_delivered);
+    const q = DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+    byQuarter[q] = byQuarter[q] || {};
+    const c = norm(p.category_name);
+    byQuarter[q][c] = (byQuarter[q][c] || 0) + 1;
+  }
+  const quarters = Object.keys(byQuarter).sort();
+  const cats = [
+    ...topCats,
+    ...(Object.values(byQuarter).some(q => q[otherLabel]) ? [otherLabel] : []),
+  ];
+  const pal = DASHBOARD.palette;
+  const series = cats.map((c, i) => ({
+    name: c,
+    type: 'line',
+    stack: 'mix',
+    areaStyle: {},
+    data: quarters.map(q => (byQuarter[q] || {})[c] || 0),
+    lineStyle: { width: 0 },
+    itemStyle: { color: pal.series[i % pal.series.length] },
+    emphasis: { focus: 'series' },
+    showSymbol: false,
+  }));
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 0, type: 'scroll' },
+    grid: { left: 50, right: 30, top: 20, bottom: 60 },
+    xAxis: { type: 'category', data: quarters, boundaryGap: false, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: 'Projects', axisLabel: { color: pal.gray500 } },
+    series,
+  });
+});
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
