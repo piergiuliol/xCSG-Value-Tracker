@@ -1121,6 +1121,14 @@ async function renderNewProject(existing) {
             </select>
             <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Let pioneers view their previous responses</span>
           </div>
+          <div class="form-group">
+            <label>Show Other Pioneers' Answers <span class="field-hint" data-hint="When enabled, experts can see submitted answers from other pioneers on this project.">&#9432;</span></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-top:6px">
+              <input type="checkbox" id="fShowOtherPioneers" ${p.show_other_pioneers_answers ? 'checked' : ''}>
+              <span>Enable cross-pioneer visibility</span>
+            </label>
+            <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">When enabled, experts can see submitted answers from other pioneers on this project.</span>
+          </div>
         </div>
       </fieldset>
 
@@ -1331,6 +1339,7 @@ async function renderNewProject(existing) {
       pioneers: pioneers,
       default_rounds: parseInt(document.getElementById('fDefaultRounds').value) || 1,
       show_previous_answers: document.getElementById('fShowPrevious').value === '1',
+      show_other_pioneers_answers: document.getElementById('fShowOtherPioneers').checked,
       client_name: document.getElementById('fClient').value || null,
       client_contact_email: document.getElementById('fClientEmail').value || null,
       engagement_stage: document.getElementById('fStage').value || null,
