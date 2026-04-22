@@ -721,6 +721,11 @@ async def get_expert_context(token: str):
     if show_previous:
         previous_responses = db.get_pioneer_responses(pioneer_id)
 
+    show_other_pioneers = bool(tok.get("show_other_pioneers_answers"))
+    other_pioneers_responses = None
+    if show_other_pioneers:
+        other_pioneers_responses = db.get_other_pioneer_responses(project_id, pioneer_id)
+
     return ExpertContextResponse(
         project_id=project_id,
         project_name=tok["project_name"],
@@ -741,6 +746,8 @@ async def get_expert_context(token: str):
         total_rounds=total_rounds,
         show_previous=show_previous,
         previous_responses=previous_responses,
+        show_other_pioneers=show_other_pioneers,
+        other_pioneers_responses=other_pioneers_responses,
     )
 
 
@@ -811,12 +818,47 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
     project_row = db.get_project(project_id)
     responses = db.get_all_project_responses(project_id)
     metrics = mtx.compute_averaged_project_metrics(dict(project_row), responses)
+
+    # Auto-issue the next round token if the pioneer has more rounds remaining
+    # and the next round doesn't already have a token.
+    next_round_token: Optional[str] = None
+    next_round_number = current_round + 1
+    if next_round_number <= total_rounds:
+        with db._db() as conn:
+            existing = conn.execute(
+                "SELECT token, completed_at FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+                (pioneer_id, next_round_number),
+            ).fetchone()
+        if existing is None:
+            try:
+                issued = db.issue_round_token(pioneer_id, next_round_number, issued_by=None)
+                next_round_token = issued.get("token")
+                db.log_activity(
+                    1,
+                    "round_auto_issued",
+                    project_id=project_id,
+                    details=(
+                        f"Auto-issued round {next_round_number} for pioneer "
+                        f"#{pioneer_id} ({tok['pioneer_name']}) after round "
+                        f"{current_round} submission"
+                    ),
+                )
+            except ValueError:
+                # Defensive: if validation rejects (e.g. race), fall through
+                # with next_round_token = None.
+                next_round_token = None
+        elif existing["completed_at"] is None:
+            # Already issued (e.g. admin pre-issued it) — surface the token
+            # so the UI can pick it up.
+            next_round_token = existing["token"]
+
     return {
         "success": True,
         "message": "Assessment submitted successfully",
         "metrics": metrics,
         "current_round": current_round,
         "total_rounds": total_rounds,
+        "next_round_token": next_round_token,
     }
 
 

@@ -282,6 +282,7 @@ DEFAULT_ROUNDS = 1
 MAX_ROUNDS_PER_PIONEER = 10
 MAX_PIONEERS_PER_PROJECT = 20
 SHOW_PREVIOUS_ANSWERS_DEFAULT = False
+SHOW_OTHER_PIONEERS_DEFAULT = False
 
 # ── Monitoring filters ─────────────────────────────────────────────────────
 MONITORING_STATUS_OPTIONS = ["pending", "partial", "complete"]

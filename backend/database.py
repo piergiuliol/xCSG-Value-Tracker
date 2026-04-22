@@ -87,6 +87,7 @@ def init_db() -> None:
                 engagement_stage TEXT,
                 client_contact_email TEXT,
                 client_pulse TEXT DEFAULT 'Not yet received',
+                show_other_pioneers_answers INTEGER NOT NULL DEFAULT 0,
                 expert_token TEXT UNIQUE NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -202,6 +203,7 @@ def init_db() -> None:
     migrate_v11()
     migrate_round_tokens()
     migrate_v12()
+    migrate_v13()
 
     seed_data()
 
@@ -321,6 +323,23 @@ def migrate_v12() -> None:
                 (cid, pid),
             )
 
+        conn.commit()
+
+
+def migrate_v13() -> None:
+    """v1.3: add cross-pioneer visibility flag to projects.
+
+    Adds ``projects.show_other_pioneers_answers`` (boolean, default 0). When
+    enabled, ``GET /api/expert/{token}`` returns the submitted responses of
+    other pioneers on the same project so the current pioneer can read them
+    before/while filling in their round.
+    """
+    with _db() as conn:
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "show_other_pioneers_answers" not in project_columns:
+            conn.execute(
+                "ALTER TABLE projects ADD COLUMN show_other_pioneers_answers INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
 
 
@@ -993,6 +1012,7 @@ def create_project(data: dict) -> int:
     legacy_overridden = data.get("legacy_overridden", False)
     default_rounds = data.get("default_rounds", 1)
     show_previous_answers = 1 if data.get("show_previous_answers") else 0
+    show_other_pioneers_answers = 1 if data.get("show_other_pioneers_answers") else 0
 
     with _db() as conn:
         cur = conn.execute(
@@ -1003,8 +1023,8 @@ def create_project(data: dict) -> int:
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
-                default_rounds, show_previous_answers, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                default_rounds, show_previous_answers, show_other_pioneers_answers, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -1034,6 +1054,7 @@ def create_project(data: dict) -> int:
                 project_token,
                 default_rounds,
                 show_previous_answers,
+                show_other_pioneers_answers,
                 "pending",
             ),
         )
@@ -1115,6 +1136,10 @@ def update_project(project_id: int, data: dict) -> bool:
         fields = {k: v for k, v in data.items() if v is not None}
         if not fields:
             return False
+        # Coerce booleans to SQLite-friendly ints for known boolean columns.
+        for bool_col in ("show_previous_answers", "show_other_pioneers_answers", "legacy_overridden"):
+            if bool_col in fields and isinstance(fields[bool_col], bool):
+                fields[bool_col] = 1 if fields[bool_col] else 0
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         set_clause += ", updated_at = CURRENT_TIMESTAMP"
         values = list(fields.values()) + [project_id]
@@ -1276,7 +1301,8 @@ def get_round_token(token: str) -> Optional[dict]:
                       p.xcsg_revision_rounds, p.revision_depth, p.xcsg_scope_expansion,
                       p.engagement_revenue, p.legacy_calendar_days, p.legacy_team_size,
                       p.legacy_revision_rounds, p.legacy_overridden, p.engagement_stage,
-                      p.default_rounds, p.show_previous_answers, p.status,
+                      p.default_rounds, p.show_previous_answers,
+                      p.show_other_pioneers_answers, p.status,
                       pc.name AS category_name,
                       pr.code AS practice_code, pr.name AS practice_name
                FROM pioneer_round_tokens prt
@@ -1382,6 +1408,28 @@ def get_pioneer_responses(pioneer_id: int) -> list:
         rows = conn.execute(
             "SELECT * FROM expert_responses WHERE pioneer_id = ? ORDER BY round_number ASC",
             (pioneer_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_other_pioneer_responses(project_id: int, exclude_pioneer_id: int) -> list:
+    """All submitted responses from pioneers OTHER than the given one.
+
+    Returns a list of dicts, each with the full expert_response row plus the
+    pioneer's display name (``pioneer_name``). Only rows that have actually
+    been submitted (``submitted_at IS NOT NULL``) are returned. Ordered by
+    pioneer name, then round number, for stable rendering.
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT er.*, pp.pioneer_name AS pioneer_name
+               FROM expert_responses er
+               JOIN project_pioneers pp ON pp.id = er.pioneer_id
+               WHERE er.project_id = ?
+                 AND er.pioneer_id != ?
+                 AND er.submitted_at IS NOT NULL
+               ORDER BY pp.pioneer_name, er.round_number""",
+            (project_id, exclude_pioneer_id),
         ).fetchall()
         return [dict(r) for r in rows]
 

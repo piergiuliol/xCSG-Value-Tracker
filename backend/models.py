@@ -101,6 +101,7 @@ class ProjectCreate(BaseModel):
     pioneers: List[PioneerCreate] = []
     default_rounds: int = 1
     show_previous_answers: bool = False
+    show_other_pioneers_answers: bool = False
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = "Not yet received"
@@ -134,6 +135,7 @@ class ProjectUpdate(BaseModel):
     pioneer_email: Optional[EmailStr] = None
     default_rounds: Optional[int] = None
     show_previous_answers: Optional[bool] = None
+    show_other_pioneers_answers: Optional[bool] = None
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = None
@@ -228,6 +230,8 @@ class ExpertContextResponse(BaseModel):
     total_rounds: int
     show_previous: bool
     previous_responses: Optional[list] = None
+    show_other_pioneers: bool = False
+    other_pioneers_responses: Optional[list] = None
 
 
 # ── Norms ─────────────────────────────────────────────────────────────────────

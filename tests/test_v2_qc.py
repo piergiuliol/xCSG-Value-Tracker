@@ -777,6 +777,205 @@ def test_seed_field_coverage():
 # Aggregate parity (no-filter client aggregates == /api/dashboard/metrics) is
 # enforced by tests/e2e-dashboard-redesign.spec.ts > "no-filter parity".
 
+# ── P. Survey flow: cross-pioneer visibility + auto-issue next round ─────────
+
+_VALID_EXPERT_PAYLOAD = {
+    "b1_starting_point": "From AI draft",
+    "b2_research_sources": "8-12",
+    "b3_assembly_ratio": ">75% AI",
+    "b4_hypothesis_first": "Hypothesis-first",
+    "b5_ai_survival": ">75%",
+    "b6_data_analysis_split": "25-50%",
+    "c1_specialization": "Deep specialist",
+    "c2_directness": "Expert authored",
+    "c3_judgment_pct": ">75% judgment",
+    "c6_self_assessment": "Significantly better",
+    "c7_analytical_depth": "Exceptional",
+    "c8_decision_readiness": "Yes without caveats",
+    "d1_proprietary_data": "Yes",
+    "d2_knowledge_reuse": "Yes directly reused and extended",
+    "d3_moat_test": "No — proprietary inputs decisive",
+    "e1_client_decision": "Yes — informed a specific decision",
+    "f1_feasibility": "Not feasible",
+    "f2_productization": "Yes largely as-is",
+    "g1_reuse_intent": "Yes without hesitation",
+    "l1_legacy_working_days": 15,
+    "l2_legacy_team_size": "3",
+    "l3_legacy_revision_depth": "Moderate rework",
+    "l4_legacy_scope_expansion": "No",
+    "l5_legacy_client_reaction": "Met expectations",
+    "l6_legacy_b2_sources": "4-7",
+    "l7_legacy_c1_specialization": "Generalist",
+    "l8_legacy_c2_directness": "Expert reviewed only",
+    "l9_legacy_c3_judgment": "25-50%",
+    "l10_legacy_d1_proprietary": "No",
+    "l11_legacy_d2_reuse": "No built from scratch",
+    "l12_legacy_d3_moat": "Yes — all inputs publicly available",
+    "l13_legacy_c7_depth": "Adequate",
+    "l14_legacy_c8_decision": "Needs significant additional work",
+    "l15_legacy_e1_decision": "Yes — referenced in internal discussions",
+    "l16_legacy_b6_data": ">75% on data",
+}
+
+
+def _pioneer_round1_token(project: dict, pioneer_name: str) -> str:
+    for p in project.get("pioneers", []):
+        name = p.get("pioneer_name") or p.get("name")
+        if name == pioneer_name:
+            for rnd in p.get("rounds", []):
+                if rnd.get("round_number") == 1:
+                    return rnd["token"]
+            # Fallback to legacy pioneer-level token (it doubles as round 1).
+            return p.get("expert_token")
+    raise AssertionError(f"Pioneer '{pioneer_name}' not found on project")
+
+
+def test_show_other_pioneers_flag():
+    print("\n── P1. show_other_pioneers_answers flag ──")
+    tk = admin_token()
+    cats = requests.get(f"{BASE}/api/categories", headers=auth_h(tk)).json()
+    cat_id = cats[0]["id"] if cats else 1
+
+    def _create(flag: bool, name: str):
+        r = requests.post(
+            f"{BASE}/api/projects",
+            headers={**auth_h(tk), "Content-Type": "application/json"},
+            json={
+                "project_name": name,
+                "category_id": cat_id,
+                "pioneers": [
+                    {"name": "Pioneer One"},
+                    {"name": "Pioneer Two"},
+                ],
+                "default_rounds": 1,
+                "show_other_pioneers_answers": flag,
+                "date_started": "2026-03-01",
+                "date_delivered": "2026-03-10",
+                "working_days": 5,
+                "xcsg_team_size": "2",
+                "xcsg_revision_rounds": "1",
+            },
+        )
+        assert r.status_code in (200, 201), r.text
+        return r.json()
+
+    # Case 1: flag enabled
+    proj_on = _create(True, "QA Cross-Pioneer ON")
+    test(
+        "Project persists show_other_pioneers_answers=True",
+        bool(proj_on.get("show_other_pioneers_answers")),
+        f"got {proj_on.get('show_other_pioneers_answers')}",
+    )
+    p1_tok = _pioneer_round1_token(proj_on, "Pioneer One")
+    p2_tok = _pioneer_round1_token(proj_on, "Pioneer Two")
+    r = requests.post(f"{BASE}/api/expert/{p1_tok}", json=_VALID_EXPERT_PAYLOAD)
+    test("P1 submits round 1 (flag on)", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
+    ctx = requests.get(f"{BASE}/api/expert/{p2_tok}").json()
+    test(
+        "P2 expert-view exposes show_other_pioneers=True",
+        ctx.get("show_other_pioneers") is True,
+        f"got {ctx.get('show_other_pioneers')}",
+    )
+    others = ctx.get("other_pioneers_responses")
+    test(
+        "P2 sees exactly one other-pioneer response (flag on)",
+        isinstance(others, list) and len(others) == 1,
+        f"got {others if isinstance(others, list) else type(others).__name__}",
+    )
+    if isinstance(others, list) and others:
+        test(
+            "Other-pioneer entry has pioneer_name=Pioneer One",
+            others[0].get("pioneer_name") == "Pioneer One",
+            f"got {others[0].get('pioneer_name')}",
+        )
+        test(
+            "Other-pioneer entry contains answer field (b1_starting_point)",
+            others[0].get("b1_starting_point") == "From AI draft",
+            f"got {others[0].get('b1_starting_point')}",
+        )
+    requests.delete(f"{BASE}/api/projects/{proj_on['id']}", headers=auth_h(tk))
+
+    # Case 2: flag disabled
+    proj_off = _create(False, "QA Cross-Pioneer OFF")
+    test(
+        "Project persists show_other_pioneers_answers=False",
+        not bool(proj_off.get("show_other_pioneers_answers")),
+        f"got {proj_off.get('show_other_pioneers_answers')}",
+    )
+    p1_tok = _pioneer_round1_token(proj_off, "Pioneer One")
+    p2_tok = _pioneer_round1_token(proj_off, "Pioneer Two")
+    r = requests.post(f"{BASE}/api/expert/{p1_tok}", json=_VALID_EXPERT_PAYLOAD)
+    test("P1 submits round 1 (flag off)", r.status_code in (200, 201), f"got {r.status_code}")
+    ctx = requests.get(f"{BASE}/api/expert/{p2_tok}").json()
+    test(
+        "P2 expert-view exposes show_other_pioneers=False (flag off)",
+        ctx.get("show_other_pioneers") is False,
+        f"got {ctx.get('show_other_pioneers')}",
+    )
+    test(
+        "P2 other_pioneers_responses is None (flag off)",
+        ctx.get("other_pioneers_responses") is None,
+        f"got {ctx.get('other_pioneers_responses')}",
+    )
+    requests.delete(f"{BASE}/api/projects/{proj_off['id']}", headers=auth_h(tk))
+
+
+def test_auto_issue_next_round():
+    print("\n── P2. Auto-issue next round on submit ──")
+    tk = admin_token()
+    cats = requests.get(f"{BASE}/api/categories", headers=auth_h(tk)).json()
+    cat_id = cats[0]["id"] if cats else 1
+
+    r = requests.post(
+        f"{BASE}/api/projects",
+        headers={**auth_h(tk), "Content-Type": "application/json"},
+        json={
+            "project_name": "QA Auto-Issue Round",
+            "category_id": cat_id,
+            "pioneers": [{"name": "Solo Pioneer", "total_rounds": 2}],
+            "default_rounds": 2,
+            "date_started": "2026-03-01",
+            "date_delivered": "2026-03-10",
+            "working_days": 5,
+            "xcsg_team_size": "2",
+            "xcsg_revision_rounds": "1",
+        },
+    )
+    test("Create 2-round project returns 201", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
+    if r.status_code not in (200, 201):
+        return
+    proj = r.json()
+    r1_tok = _pioneer_round1_token(proj, "Solo Pioneer")
+
+    submit = requests.post(f"{BASE}/api/expert/{r1_tok}", json=_VALID_EXPERT_PAYLOAD)
+    test("Round 1 submit returns 201", submit.status_code in (200, 201), f"got {submit.status_code}: {submit.text[:120]}")
+    body = submit.json() if submit.status_code in (200, 201) else {}
+    test("Submit response includes next_round_token (not None)", bool(body.get("next_round_token")), f"got {body.get('next_round_token')}")
+    test("Submit response reports current_round=1", body.get("current_round") == 1, f"got {body.get('current_round')}")
+    test("Submit response reports total_rounds=2", body.get("total_rounds") == 2, f"got {body.get('total_rounds')}")
+
+    # Verify GET /api/projects/{id} shows the new round 2 token as issued.
+    proj_after = requests.get(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk)).json()
+    pioneers = proj_after.get("pioneers", [])
+    solo = next((p for p in pioneers if (p.get("pioneer_name") or p.get("name")) == "Solo Pioneer"), None)
+    test("Pioneer is present in project after submit", solo is not None)
+    if solo is not None:
+        rounds = solo.get("rounds", [])
+        r2_row = next((rnd for rnd in rounds if rnd.get("round_number") == 2), None)
+        test("Round 2 row exists after auto-issue", r2_row is not None, f"rounds={[r.get('round_number') for r in rounds]}")
+        if r2_row is not None:
+            test("Round 2 token matches submit response", r2_row.get("token") == body.get("next_round_token"), f"db={r2_row.get('token')} resp={body.get('next_round_token')}")
+            test("Round 2 token is not yet completed", r2_row.get("completed_at") in (None, ""), f"got {r2_row.get('completed_at')}")
+
+    # Also verify the new token actually works as an expert-view token.
+    if body.get("next_round_token"):
+        ctx = requests.get(f"{BASE}/api/expert/{body['next_round_token']}").json()
+        test("next_round_token opens expert view at round 2", ctx.get("current_round") == 2, f"got {ctx.get('current_round')}")
+        test("next_round_token already_completed=False", ctx.get("already_completed") is False, f"got {ctx.get('already_completed')}")
+
+    requests.delete(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk))
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -813,6 +1012,8 @@ def main():
     test_schema()
     test_dashboard_config()
     test_seed_field_coverage()
+    test_show_other_pioneers_flag()
+    test_auto_issue_next_round()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
