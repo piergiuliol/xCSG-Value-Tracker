@@ -878,6 +878,19 @@ async def dashboard_metrics(current_user: dict = Depends(auth.get_current_user))
     return mtx.compute_dashboard_metrics(complete, all_projects)
 
 
+@app.get("/api/dashboard/takeaways")
+async def dashboard_takeaways(current_user: dict = Depends(auth.get_current_user)):
+    """Return {chart_id: takeaway_string} for each dashboard chart."""
+    from backend.takeaways import compute_takeaways
+    from backend.schema import DASHBOARD_CONFIG
+
+    complete = _build_averaged_complete_projects()
+    all_p = db.list_projects()
+    aggregates = mtx.compute_summary(complete, all_p)
+    scaling_gates = mtx.compute_scaling_gates(complete)
+    return compute_takeaways(complete, aggregates, scaling_gates, DASHBOARD_CONFIG["charts"])
+
+
 @app.get("/api/projects/{project_id}/metrics")
 async def project_metrics(
     project_id: int,

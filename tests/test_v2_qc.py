@@ -978,6 +978,27 @@ def test_auto_issue_next_round():
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def test_dashboard_takeaways():
+    print("\n── T. Dashboard takeaways endpoint ──")
+    tok = admin_token()
+    r = requests.get(f"{BASE}/api/dashboard/takeaways", headers=auth_h(tok))
+    test("GET /api/dashboard/takeaways 200", r.status_code == 200)
+    if r.status_code != 200:
+        return
+    body = r.json()
+    test("takeaways has chartDisprove", isinstance(body.get("chartDisprove"), str))
+    test("takeaways has chartQuarterly", isinstance(body.get("chartQuarterly"), str))
+    test("takeaways has chartPulse", isinstance(body.get("chartPulse"), str))
+    test("takeaways has trackGates", isinstance(body.get("trackGates"), str))
+    # Every chart in DASHBOARD_CONFIG must have a key in the response
+    from backend.schema import DASHBOARD_CONFIG
+    missing = [c["id"] for c in DASHBOARD_CONFIG["charts"] if c["id"] not in body]
+    test("every chart has a takeaway key", not missing, detail=f"missing={missing}")
+    # Takeaways ≤ 80 chars (≤ 60 is the target, allow slack)
+    too_long = {cid: v for cid, v in body.items() if len(v) > 80}
+    test("takeaways are concise", not too_long, detail=f"too_long={too_long}")
+
+
 def main():
     global passed, failed, failures
     
@@ -1014,6 +1035,7 @@ def main():
     test_seed_field_coverage()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
+    test_dashboard_takeaways()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
