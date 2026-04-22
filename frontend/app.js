@@ -510,6 +510,17 @@ function renderFilterBar(allProjects) {
   const categories = uniq(allProjects.map(p => p.category_name || '—')).sort();
   const pioneers   = uniq(allProjects.flatMap(p => (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || ''))).filter(Boolean).sort();
 
+  // Prune any persisted filter values that reference taxonomy/projects which no
+  // longer exist. Without this, a deleted category/practice silently filters
+  // out all projects and the user sees a blank dashboard.
+  let pruned = false;
+  for (const v of [...filterState.practices])  if (!practices.includes(v))   { filterState.practices.delete(v);  pruned = true; }
+  for (const v of [...filterState.categories]) if (!categories.includes(v))  { filterState.categories.delete(v); pruned = true; }
+  for (const v of [...filterState.pioneers])   if (!pioneers.includes(v))    { filterState.pioneers.delete(v);   pruned = true; }
+  const validIds = new Set(allProjects.map(p => p.id));
+  for (const id of [...filterState.projects])  if (!validIds.has(id))        { filterState.projects.delete(id);  pruned = true; }
+  if (pruned) _saveFilters();
+
   const summary = (setRef, total) =>
     !setRef.size ? 'All' : setRef.size === 1 ? [...setRef][0] : `${setRef.size} of ${total}`;
 
