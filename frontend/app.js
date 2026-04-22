@@ -333,6 +333,26 @@ const METRIC_DETAILS = {
     },
     howToRead: '80% means clients are generally very satisfied. Target: consistent "exceeded" or "met" ratings.'
   },
+  on_time_delivery_pct: {
+    label: 'On-Time Delivery', icon: '⏱', format: 'pct', section: 'signal',
+    what: 'Proportion of projects delivered on or before their expected date. Tracks schedule discipline across the portfolio.',
+    formula: 'Projects delivered on/before expected ÷ Projects with both dates',
+    formulaDetail: 'Only counts projects that have BOTH a date_expected_delivered and a date_delivered. A project is on time when actual ≤ expected (same day or earlier).',
+    sources: {
+      xcsg: 'date_expected_delivered and date_delivered fields on each project',
+      legacy: 'N/A (this is an operational signal on xCSG delivery only)',
+      note: 'Tile sub-label shows the average schedule delta across tracked projects (e.g. "avg 0.3d early").'
+    },
+    example: {
+      rows: [
+        ['Project Alpha', 'Expected 2026-04-10, delivered 2026-04-08', 'On time'],
+        ['Project Beta', 'Expected 2026-04-15, delivered 2026-04-18', 'Late'],
+      ],
+      result: '50%',
+      resultLabel: 'On-Time Delivery (2 tracked)'
+    },
+    howToRead: '90% means 9 of 10 tracked projects landed on or before their expected date. Target: ≥80%. Projects without an expected date are excluded from the denominator.'
+  },
 };
 
 const SCALING_GATE_DETAILS = [
