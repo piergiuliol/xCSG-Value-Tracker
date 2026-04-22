@@ -1552,14 +1552,22 @@ async function doDelete(id) {
 
 const chartInstances = {};
 function ecInit(id) {
-  if (chartInstances[id]) chartInstances[id].dispose();
   const dom = document.getElementById(id);
   if (!dom) return null;
-  const c = echarts.init(dom, null, { renderer: 'canvas' });
-  chartInstances[id] = c;
-  const ro = new ResizeObserver(() => c.resize());
+  // Dispose previous instance and tear down its ResizeObserver so we don't
+  // accumulate observers across tab switches.
+  if (chartInstances[id]) {
+    try { chartInstances[id].dispose(); } catch (_) {}
+    if (chartInstances[id].__resizeObserver) {
+      try { chartInstances[id].__resizeObserver.disconnect(); } catch (_) {}
+    }
+  }
+  const inst = echarts.init(dom, null, { renderer: 'canvas' });
+  const ro = new ResizeObserver(() => inst.resize());
   ro.observe(dom);
-  return c;
+  inst.__resizeObserver = ro;
+  chartInstances[id] = inst;
+  return inst;
 }
 function tone(v) { return v == null ? DASHBOARD.palette.gray : v > 1.5 ? DASHBOARD.palette.green : v >= 1 ? DASHBOARD.palette.blue : v >= 0.8 ? DASHBOARD.palette.orange : DASHBOARD.palette.red; }
 function barColor(v) { return tone(v); }
@@ -1587,8 +1595,15 @@ function registerChart(type, fn) { CHART_RENDERERS[type] = fn; }
 
 function renderDashboardCharts(dashboard, filtered) {
   if (typeof echarts === 'undefined') return;
-  // Dispose all existing ECharts instances
-  Object.keys(chartInstances).forEach(k => { try { chartInstances[k].dispose(); } catch (_) {} delete chartInstances[k]; });
+  // Dispose all existing ECharts instances and their ResizeObservers so
+  // charts from the previous tab don't linger in memory.
+  Object.keys(chartInstances).forEach(k => {
+    try { chartInstances[k].dispose(); } catch (_) {}
+    if (chartInstances[k] && chartInstances[k].__resizeObserver) {
+      try { chartInstances[k].__resizeObserver.disconnect(); } catch (_) {}
+    }
+    delete chartInstances[k];
+  });
 
   const localMetrics = (filtered && _projectsCache && filtered.length === _projectsCache.length) ? dashboard : _computeLocalMetrics(filtered || []);
   const activeCharts = schema.dashboard.charts.filter(c => c.tab === _activeTab);
