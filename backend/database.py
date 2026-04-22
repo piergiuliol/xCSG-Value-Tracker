@@ -1589,6 +1589,57 @@ def get_expert_response(project_id: int) -> Optional[sqlite3.Row]:
         ).fetchone()
 
 
+def list_all_notes(
+    practice_code: Optional[str] = None,
+    category_id: Optional[int] = None,
+    pioneer_name: Optional[str] = None,
+    delivered_from: Optional[str] = None,
+    delivered_to: Optional[str] = None,
+    search: Optional[str] = None,
+) -> list:
+    """Return every submitted expert_response with a non-empty notes field.
+
+    Joins project, category, practice, and pioneer context for display. All
+    filters are optional and parametrised (safe against injection). ``search``
+    does a case-insensitive substring match on the notes text.
+    """
+    search_like = f"%{search}%" if search else None
+    query = """
+        SELECT
+          er.id, er.project_id, p.project_name,
+          p.category_id, c.name AS category_name,
+          pr.code AS practice_code, pr.name AS practice_name,
+          pp.id AS pioneer_id, pp.pioneer_name AS pioneer_name,
+          er.round_number, er.submitted_at, er.notes,
+          p.date_delivered
+        FROM expert_responses er
+        JOIN projects p ON p.id = er.project_id
+        LEFT JOIN project_categories c ON c.id = p.category_id
+        LEFT JOIN practices pr ON pr.id = p.practice_id
+        LEFT JOIN project_pioneers pp ON pp.id = er.pioneer_id
+        WHERE er.submitted_at IS NOT NULL
+          AND er.notes IS NOT NULL AND TRIM(er.notes) != ''
+          AND (? IS NULL OR pr.code = ?)
+          AND (? IS NULL OR p.category_id = ?)
+          AND (? IS NULL OR pp.pioneer_name = ?)
+          AND (? IS NULL OR p.date_delivered >= ?)
+          AND (? IS NULL OR p.date_delivered <= ?)
+          AND (? IS NULL OR LOWER(er.notes) LIKE LOWER(?))
+        ORDER BY er.submitted_at DESC
+    """
+    params = (
+        practice_code, practice_code,
+        category_id, category_id,
+        pioneer_name, pioneer_name,
+        delivered_from, delivered_from,
+        delivered_to, delivered_to,
+        search_like, search_like,
+    )
+    with _db() as conn:
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
 
 # ── Legacy Norms ──────────────────────────────────────────────────────────────
 

@@ -1154,6 +1154,33 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
     return wb
 
 
+# ── Notes feed ────────────────────────────────────────────────────────────────
+
+@app.get("/api/notes")
+async def list_notes(
+    practice_code: Optional[str] = None,
+    category_id: Optional[int] = None,
+    pioneer_name: Optional[str] = None,
+    delivered_from: Optional[str] = None,
+    delivered_to: Optional[str] = None,
+    search: Optional[str] = None,
+    current_user: dict = Depends(auth.get_current_user),
+):
+    """Filterable, searchable feed of every expert-submitted note.
+
+    All filters are optional. ``search`` does a case-insensitive substring
+    match on the notes text. Returns rows ordered by submitted_at DESC.
+    """
+    return db.list_all_notes(
+        practice_code=practice_code,
+        category_id=category_id,
+        pioneer_name=pioneer_name,
+        delivered_from=delivered_from,
+        delivered_to=delivered_to,
+        search=search,
+    )
+
+
 @app.get("/api/export/excel")
 async def export_excel(current_user: dict = Depends(auth.get_current_user)):
     try:

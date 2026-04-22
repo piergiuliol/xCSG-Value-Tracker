@@ -1031,6 +1031,88 @@ def test_expert_notes():
     test("notes persisted in expert_responses", bool(row and row[0] and "pivoted" in row[0]), detail=f"row={row}")
 
 
+def test_notes_feed_endpoint():
+    print("\n── Y. GET /api/notes feed + filters ──")
+    tok = admin_token()
+    h = auth_h(tok)
+
+    # Unauthenticated call should be rejected (401 or 403).
+    r_noauth = requests.get(f"{BASE}/api/notes")
+    test("GET /api/notes unauthenticated -> 401/403", r_noauth.status_code in (401, 403), f"got {r_noauth.status_code}")
+
+    # Seed 2 notes on different projects/practices so we can exercise filters.
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("sd", pathlib.Path("tests/seed_20_projects.py"))
+    sd = importlib.util.module_from_spec(spec); spec.loader.exec_module(sd)
+    base_payload = dict(getattr(sd, "STRONG"))
+
+    db_conn = sqlite3.connect(DB_PATH)
+    # Open rounds with practice code joined in.
+    open_rounds = db_conn.execute(
+        """SELECT prt.token, pr.code AS practice_code, p.id AS project_id
+           FROM pioneer_round_tokens prt
+           JOIN project_pioneers pp ON pp.id = prt.pioneer_id
+           JOIN projects p ON p.id = pp.project_id
+           LEFT JOIN practices pr ON pr.id = p.practice_id
+           WHERE prt.completed_at IS NULL
+           ORDER BY p.id ASC LIMIT 10"""
+    ).fetchall()
+    db_conn.close()
+
+    # Pick one MAP and one non-MAP token if possible.
+    map_tok = next((r for r in open_rounds if r[1] == "MAP"), None)
+    other_tok = next((r for r in open_rounds if r[1] and r[1] != "MAP"), None)
+    if not map_tok or not other_tok:
+        test("skipped — need one MAP and one non-MAP open round", False, detail=f"open={[r[1] for r in open_rounds]}")
+        return
+
+    p_map = dict(base_payload); p_map["notes"] = "Pivotal MAP insight: payer evidence bar rose."
+    p_oth = dict(base_payload); p_oth["notes"] = "Generic note from another practice."
+
+    r1 = requests.post(f"{BASE}/api/expert/{map_tok[0]}", json=p_map)
+    r2 = requests.post(f"{BASE}/api/expert/{other_tok[0]}", json=p_oth)
+    test("seed MAP note submit 200/201", r1.status_code in (200, 201), f"got {r1.status_code}")
+    test("seed non-MAP note submit 200/201", r2.status_code in (200, 201), f"got {r2.status_code}")
+
+    # 1. Unfiltered feed returns both seeded notes.
+    feed = requests.get(f"{BASE}/api/notes", headers=h)
+    test("GET /api/notes 200", feed.status_code == 200, f"got {feed.status_code}: {feed.text[:120]}")
+    items = feed.json() if feed.status_code == 200 else []
+    test("/api/notes returns a list", isinstance(items, list), detail=f"type={type(items).__name__}")
+    notes_texts = [i.get("notes", "") for i in items] if isinstance(items, list) else []
+    test("feed contains MAP seeded note", any("Pivotal MAP insight" in n for n in notes_texts))
+    test("feed contains non-MAP seeded note", any("Generic note from another practice" in n for n in notes_texts))
+
+    # Every returned row must have the standard shape.
+    if items:
+        sample = items[0]
+        for key in ("id", "project_id", "project_name", "pioneer_name", "round_number", "submitted_at", "notes"):
+            test(f"feed row has '{key}'", key in sample, detail=f"sample keys={list(sample.keys())}")
+
+    # 2. Filter by practice_code=MAP.
+    feed_map = requests.get(f"{BASE}/api/notes", headers=h, params={"practice_code": "MAP"})
+    test("GET /api/notes?practice_code=MAP 200", feed_map.status_code == 200, f"got {feed_map.status_code}")
+    map_items = feed_map.json() if feed_map.status_code == 200 else []
+    test("MAP filter returns >=1 row", isinstance(map_items, list) and len(map_items) >= 1, detail=f"len={len(map_items) if isinstance(map_items, list) else 'n/a'}")
+    non_map = [i for i in map_items if (i.get("practice_code") or "") != "MAP"]
+    test("MAP filter excludes non-MAP rows", not non_map, detail=f"leaked={[i.get('practice_code') for i in non_map]}")
+
+    # 3. Search param (case-insensitive substring).
+    feed_search = requests.get(f"{BASE}/api/notes", headers=h, params={"search": "pivot"})
+    test("GET /api/notes?search=pivot 200", feed_search.status_code == 200, f"got {feed_search.status_code}")
+    search_items = feed_search.json() if feed_search.status_code == 200 else []
+    test(
+        "search=pivot matches MAP note (case-insensitive)",
+        any("Pivotal MAP insight" in i.get("notes", "") for i in search_items),
+        detail=f"len={len(search_items) if isinstance(search_items, list) else 'n/a'}",
+    )
+    # Generic note has no "pivot" — must be excluded.
+    test(
+        "search=pivot excludes unrelated notes",
+        not any("Generic note from another practice" in i.get("notes", "") for i in search_items),
+    )
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def test_dashboard_takeaways():
@@ -1097,6 +1179,7 @@ def main():
     test_auto_issue_next_round()
     test_dashboard_takeaways()
     test_expert_notes()
+    test_notes_feed_endpoint()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
