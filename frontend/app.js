@@ -1953,9 +1953,9 @@ registerChart('timeline_per_project', (cfg, filtered) => {
   s.setOption({
     tooltip: { ...tip(), trigger: 'axis' },
     legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 18, itemHeight: 3, itemGap: 24 },
-    grid: { left: 55, right: 20, top: 15, bottom: 40 },
+    grid: { left: 55, right: 20, top: 36, bottom: 40 },
     xAxis: { type: 'category', data: lbl, axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
-    yAxis: { type: 'value', name: 'Ratio', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
+    yAxis: { type: 'value', name: 'Ratio', nameGap: 14, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
       axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
     series: [
       { type: 'line', name: 'Speed', data: sorted.map(p => p.metrics.delivery_speed), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
@@ -2301,11 +2301,11 @@ registerChart('timeline_quarterly', (cfg, filtered) => {
   s.setOption({
     tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
     legend: { ...DASHBOARD.legend, bottom: 5 },
-    grid: { left: 50, right: 50, top: 30, bottom: 50 },
+    grid: { left: 50, right: 50, top: 42, bottom: 50 },
     xAxis: { type: 'category', data: labels, axisLabel: { color: pal.gray500 } },
     yAxis: [
-      { type: 'value', name: 'Avg Value Gain (×)', axisLabel: { color: pal.gray500 } },
-      { type: 'value', name: 'Projects', position: 'right', axisLabel: { color: pal.gray500 } },
+      { type: 'value', name: 'Avg Value Gain (×)', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+      { type: 'value', name: 'Projects', position: 'right', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
     ],
     series: [
       { name: 'Projects',       type: 'bar', yAxisIndex: 1, data: countBar, itemStyle: { color: pal.gray200 } },
@@ -2341,9 +2341,9 @@ registerChart('timeline_cumulative', (cfg, filtered) => {
   s.setOption({
     tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
     legend: { ...DASHBOARD.legend, bottom: 5 },
-    grid: { left: 50, right: 40, top: 30, bottom: 50 },
+    grid: { left: 50, right: 40, top: 42, bottom: 50 },
     xAxis: { type: 'category', data: xs, name: 'nth project', nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
-    yAxis: { type: 'value', name: '× vs legacy', axisLine: { lineStyle: { color: pal.gray200 } }, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: '× vs legacy', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLine: { lineStyle: { color: pal.gray200 } }, axisLabel: { color: pal.gray500 } },
     series: [
       { name: 'Speed',      type: 'line', data: running.speed,   smooth: true,
         lineStyle: { color: pal.blue,    width: 2.5 }, itemStyle: { color: pal.blue } },
@@ -2499,9 +2499,9 @@ registerChart('area_category_mix', (cfg, filtered) => {
   s.setOption({
     tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
     legend: { ...DASHBOARD.legend, bottom: 0, type: 'scroll' },
-    grid: { left: 50, right: 30, top: 20, bottom: 60 },
+    grid: { left: 50, right: 30, top: 42, bottom: 60 },
     xAxis: { type: 'category', data: quarters, boundaryGap: false, axisLabel: { color: pal.gray500 } },
-    yAxis: { type: 'value', name: 'Projects', axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: 'Projects', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
     series,
   });
 });
