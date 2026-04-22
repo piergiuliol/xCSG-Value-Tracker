@@ -61,8 +61,13 @@ test.describe('Dashboard redesign', () => {
 
     // Clear any persisted filter first
     await page.click('.filter-chip[data-filter="clear"]');
-    // Wait for no "active" filter chips to remain after Clear
-    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
+    // After Clear the taxonomy chips should read "All"
+    await page.waitForFunction(() =>
+      ['practices', 'categories', 'pioneers', 'projects'].every(k => {
+        const el = document.querySelector(`.filter-chip[data-filter="${k}"]`);
+        return el && /:\s*All\s*/.test(el.textContent || '');
+      }),
+    );
 
     // Open Practice popover and tick the first checkbox
     await page.click('.filter-chip[data-filter="practices"]');
@@ -85,7 +90,15 @@ test.describe('Dashboard redesign', () => {
     await page.waitForSelector('.filter-bar', { timeout: 15_000 });
 
     await page.click('.filter-chip[data-filter="clear"]');
-    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
+    // After Clear the taxonomy chips should read "All" (the delivered chip reads
+    // "all time" and is rendered with the "active" class for styling reasons —
+    // only check the chips Clear actually resets).
+    await page.waitForFunction(() =>
+      ['practices', 'categories', 'pioneers', 'projects'].every(k => {
+        const el = document.querySelector(`.filter-chip[data-filter="${k}"]`);
+        return el && /:\s*All\s*/.test(el.textContent || '');
+      }),
+    );
 
     await page.click('.filter-chip[data-filter="practices"]');
     await page.waitForSelector('.filter-popover');
@@ -109,7 +122,15 @@ test.describe('Dashboard redesign', () => {
 
     // Clear filters so aggregates equal the full dataset
     await page.click('.filter-chip[data-filter="clear"]');
-    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
+    // After Clear the taxonomy chips should read "All" (the delivered chip reads
+    // "all time" and is rendered with the "active" class for styling reasons —
+    // only check the chips Clear actually resets).
+    await page.waitForFunction(() =>
+      ['practices', 'categories', 'pioneers', 'projects'].every(k => {
+        const el = document.querySelector(`.filter-chip[data-filter="${k}"]`);
+        return el && /:\s*All\s*/.test(el.textContent || '');
+      }),
+    );
 
     const parityOk = await page.evaluate(async () => {
       // Token lives in sessionStorage under 'xcsg_token' (see state.token in app.js)
@@ -149,7 +170,15 @@ test.describe('Dashboard redesign', () => {
     await page.waitForSelector('.metric-tile', { timeout: 15_000 });
 
     await page.click('.filter-chip[data-filter="clear"]');
-    await page.waitForFunction(() => document.querySelectorAll('.filter-chip.active').length === 0);
+    // After Clear the taxonomy chips should read "All" (the delivered chip reads
+    // "all time" and is rendered with the "active" class for styling reasons —
+    // only check the chips Clear actually resets).
+    await page.waitForFunction(() =>
+      ['practices', 'categories', 'pioneers', 'projects'].every(k => {
+        const el = document.querySelector(`.filter-chip[data-filter="${k}"]`);
+        return el && /:\s*All\s*/.test(el.textContent || '');
+      }),
+    );
 
     const tileCount = await page.locator('.metric-tile').count();
     expect(tileCount).toBe(12);
