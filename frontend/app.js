@@ -862,15 +862,6 @@ function _renderDashboardView(allProjects, dashboard) {
 
   const fmtRatio = value => value == null ? '\u2014' : `${round2(value)}\xd7`;
   const fmtPct = value => value == null ? '\u2014' : `${Math.round(value * 100)}%`;
-  const metricTone = (value, toneKey = 'metric_tone') => {
-    if (value == null) return 'var(--gray-400)';
-    const t = schema.dashboard.thresholds[toneKey] || schema.dashboard.thresholds.metric_tone;
-    if (value > t.success_above) return 'var(--success)';
-    if (value >= t.blue_above) return 'var(--blue)';
-    if (value >= t.warning_above) return 'var(--warning)';
-    return 'var(--danger)';
-  };
-
   let html = '';
 
   // ── HERO SECTION ──
@@ -1790,6 +1781,16 @@ function ecInit(id) {
 }
 function tone(v) { return v == null ? C.gray : v > 1.5 ? C.green : v >= 1 ? C.blue : v >= 0.8 ? C.orange : C.red; }
 function barColor(v) { return tone(v); }
+// Module-level: used by _renderDashboardView and chart renderers (e.g. table_portfolio).
+// Reads schema.dashboard.thresholds so it's self-contained once schema is loaded.
+function metricTone(value, toneKey = 'metric_tone') {
+  if (value == null) return 'var(--gray-400)';
+  const t = schema.dashboard.thresholds[toneKey] || schema.dashboard.thresholds.metric_tone;
+  if (value > t.success_above) return 'var(--success)';
+  if (value >= t.blue_above) return 'var(--blue)';
+  if (value >= t.warning_above) return 'var(--warning)';
+  return 'var(--danger)';
+}
 function tip() {
   return { backgroundColor: 'rgba(18,31,107,0.94)', borderColor: 'none', borderRadius: 10, padding: [12, 16],
     textStyle: { color: '#fff', fontSize: 13, fontFamily: 'Inter, system-ui' },
@@ -2190,9 +2191,9 @@ registerChart('table_portfolio', (cfg, filtered) => {
               <td>${esc(row.practice_code || '—')}</td>
               <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
               <td>${schedCell}</td>
-              <td class="r" style="font-weight:700">${ratioFmt(m.delivery_speed)}</td>
-              <td class="r" style="font-weight:700">${ratioFmt(m.output_quality)}</td>
-              <td class="r" style="font-weight:800">${ratioFmt(m.productivity_ratio)}</td>
+              <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${ratioFmt(m.delivery_speed)}</td>
+              <td class="r" style="color:${metricTone(m.output_quality)};font-weight:700">${ratioFmt(m.output_quality)}</td>
+              <td class="r" style="color:${metricTone(m.productivity_ratio)};font-weight:800">${ratioFmt(m.productivity_ratio)}</td>
               <td class="r"><a href="#edit/${row.id}" class="table-link">Open</a></td>
             </tr>`;
           }).join('')}
