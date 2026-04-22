@@ -44,8 +44,13 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     // Fill project info
     await page.fill('#fName', 'QA Test Project');
     await page.selectOption('#fCategory', { index: 1 });
-    await page.fill('#fPioneer', 'Dr. QA');
-    await page.fill('#fEmail', 'qa@test.com');
+    // Category change auto-populates #fPractice (each seeded category has one practice).
+
+    // Pioneer assignment is now a separate sub-form: fill the first pioneer row
+    // that renderNewProject() pre-creates. There is no inline #fPioneer / #fEmail.
+    const firstPioneerRow = page.locator('#pioneersContainer .pioneer-row').first();
+    await firstPioneerRow.locator('.pioneer-name').fill('Dr. QA');
+    await firstPioneerRow.locator('.pioneer-email').fill('qa@test.com');
 
     // xCSG Performance
     await page.fill('#fXDays', '5');
@@ -184,20 +189,30 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
       await page.waitForLoadState('networkidle');
     }
 
-    // Go to projects
+    // Verify the projects list shows real metrics. The old UI had a per-project
+    // detail panel with an "xCSG Score" banner; in the current UI the detail
+    // route is the edit form (metrics are surfaced in the portfolio dashboard
+    // KPIs and via the projects table Quality Score column / round chip modals).
     await page.evaluate(() => { window.location.hash = '#projects'; });
     await page.waitForTimeout(2000);
 
     // Verify QA Test Project appears
     await expect(page.locator('text=QA Test Project').first()).toBeVisible({ timeout: 8000 });
 
-    // Click on the project to see details
-    await page.locator('text=QA Test Project').first().click();
-    await page.waitForTimeout(2000);
+    // The project row should show a numeric Quality Score (7th column) — not a dash.
+    const projectRow = page.locator('#projectTable tbody tr', { hasText: 'QA Test Project' }).first();
+    const qualityCell = projectRow.locator('td').nth(6);
+    const qualityText = (await qualityCell.textContent() || '').trim();
+    expect(qualityText).not.toBe('');
+    expect(qualityText).not.toBe('—');
+    expect(qualityText).toMatch(/^\d/); // starts with a digit
 
-    // Verify xCSG Score is displayed
-    const bodyText = await page.locator('#mainContent').textContent();
-    expect(bodyText).toContain('xCSG Score');
+    // And the portfolio dashboard KPI tiles should render with real values.
+    await page.evaluate(() => { window.location.hash = '#portfolio'; });
+    await page.waitForTimeout(2000);
+    const kpiValues = await page.locator('#mainContent .metric-tile-value').allTextContents();
+    const realKpis = kpiValues.filter(v => v.trim() !== '' && v.trim() !== '—');
+    expect(realKpis.length).toBeGreaterThanOrEqual(1);
   });
 
   // ─── TEST 5: Project form cleanup ────────────────────────────────────
