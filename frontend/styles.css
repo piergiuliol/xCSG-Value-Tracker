@@ -487,12 +487,15 @@ body {
 }
 
 fieldset {
-  border: none;
-  padding: 24px 32px;
-  border-bottom: 1px solid var(--gray-200);
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  padding: 40px 32px 28px;
+  margin: 16px 0;
+  background: #fff;
+  position: relative;
 }
 
-fieldset:last-of-type { border-bottom: none; }
+fieldset:last-of-type { margin-bottom: 24px; }
 fieldset:nth-of-type(even) { background: var(--gray-50); }
 
 legend {
@@ -500,12 +503,16 @@ legend {
   font-weight: 700;
   letter-spacing: 0.3px;
   color: var(--navy);
-  padding-bottom: 8px;
-  border-bottom: 2px solid var(--navy);
-  margin-bottom: 20px;
-  width: 100%;
-  display: block;
+  padding: 4px 12px;
+  margin: 0 0 0 8px;
+  background: inherit;
+  width: auto;
+  display: inline-block;
+  border-bottom: none;
 }
+
+fieldset:nth-of-type(even) legend { background: var(--gray-50); }
+fieldset:nth-of-type(odd) legend  { background: #fff; }
 
 .form-row {
   display: grid;
