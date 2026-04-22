@@ -1013,9 +1013,9 @@ async def get_monitoring(
 # ── Export ────────────────────────────────────────────────────────────────────
 
 def _build_export_workbook(all_projects: list, complete_projects: list):
-    """Build the Excel export workbook with Raw Data and Computed Metrics sheets."""
+    """Build the Excel export workbook with Raw Data, Computed Metrics, and Notes sheets."""
     import openpyxl
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Alignment, Font, PatternFill
 
     wb = openpyxl.Workbook()
 
@@ -1150,6 +1150,36 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
         for col in ws.columns:
             max_len = max((len(str(cell.value or "")) for cell in col), default=0)
             ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
+
+    # ── Sheet 3: Notes ──
+    ws3 = wb.create_sheet("Notes")
+    headers3 = ["Project", "Category", "Practice", "Pioneer", "Round", "Submitted", "Notes"]
+    ws3.append(headers3)
+    for cell in ws3[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for note in db.list_all_notes():
+        ws3.append([
+            note.get("project_name", ""),
+            note.get("category_name", "") or "",
+            note.get("practice_code", "") or "",
+            note.get("pioneer_name", "") or "",
+            note.get("round_number", "") or "",
+            note.get("submitted_at", "") or "",
+            note.get("notes", "") or "",
+        ])
+
+    # Column widths for Notes sheet (manual defaults — Notes column wide, rest compact).
+    notes_widths = {"A": 30, "B": 30, "C": 12, "D": 24, "E": 8, "F": 22, "G": 80}
+    for col_letter, width in notes_widths.items():
+        ws3.column_dimensions[col_letter].width = width
+
+    # Wrap text in the Notes column so multi-line notes stay readable.
+    wrap = Alignment(wrapText=True, vertical="top")
+    for row in ws3.iter_rows(min_row=2, min_col=7, max_col=7):
+        for cell in row:
+            cell.alignment = wrap
 
     return wb
 

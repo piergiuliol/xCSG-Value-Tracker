@@ -1113,6 +1113,32 @@ def test_notes_feed_endpoint():
     )
 
 
+def test_notes_excel_sheet():
+    print("\n── Z. Notes sheet in Excel export ──")
+    import io
+    try:
+        import openpyxl  # noqa: F401
+    except ImportError:
+        test("skipped — openpyxl not installed", False)
+        return
+    import openpyxl
+    tok = admin_token()
+    r = requests.get(f"{BASE}/api/export/excel", headers=auth_h(tok))
+    ct = r.headers.get("content-type", "")
+    test("export returns xlsx", r.status_code == 200 and ct.endswith("sheet"), detail=f"{r.status_code} {ct}")
+    if r.status_code != 200:
+        return
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    test("export has Notes sheet", "Notes" in wb.sheetnames, detail=f"sheets={wb.sheetnames}")
+    if "Notes" not in wb.sheetnames:
+        return
+    notes_sheet = wb["Notes"]
+    rows = list(notes_sheet.iter_rows(values_only=True))
+    test("Notes sheet has header row + >=1 data row", len(rows) >= 2, detail=f"rows={len(rows)}")
+    expected_cols = ["Project", "Category", "Practice", "Pioneer", "Round", "Submitted", "Notes"]
+    test("Notes sheet header matches expected columns", list(rows[0]) == expected_cols, detail=f"got {rows[0]}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def test_dashboard_takeaways():
@@ -1180,6 +1206,7 @@ def main():
     test_dashboard_takeaways()
     test_expert_notes()
     test_notes_feed_endpoint()
+    test_notes_excel_sheet()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
