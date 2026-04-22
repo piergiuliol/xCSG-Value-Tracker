@@ -22,5 +22,13 @@ window.DASHBOARD = {
     quarterLabel: (y, q) => `${y}-Q${q}`,
     monthLabel:   (y, m) => `${y}-${String(m).padStart(2, '0')}`,
   },
+  // Horizontal bar charts auto-resize their card height based on item count.
+  // rowHeight = vertical space each bar row consumes; padding = constant top/bottom slack.
+  bar: { rowHeight: 38, padding: 40 },
+  // Mini-chart cells (e.g. cohort learning-curve grid). Tune if cells feel too short/tall.
+  minis: { cellHeight: 180 },
+  // Heatmap visualMap floors: ensure colour scale never collapses on sparse data.
+  // minFloor = minimum lower bound, minMax = minimum upper bound.
+  heatmap: { minFloor: 1, minMax: 2 },
   filterStorageKey: 'xcsg.dashboard.filters.v1',
 };

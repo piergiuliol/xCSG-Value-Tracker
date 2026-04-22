@@ -1993,11 +1993,12 @@ registerChart('bar_by_category', (cfg, filtered) => {
   const byCat = {};
   done.forEach(p => { const c = p.category_name || 'Other'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byCat[c]) byCat[c] = []; byCat[c].push(v); } });
   let catE = Object.entries(byCat).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-  const catMore = catE.length > 8 ? catE.slice(8) : [];
-  catE = catE.slice(0, 8);
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const catMore = catE.length > topN ? catE.slice(topN) : [];
+  catE = catE.slice(0, topN);
   // Auto-resize chart body height based on item count (base from cfg.height)
   const baseH = cfg.height || 260;
-  const catH = Math.max(baseH, catE.length * 38 + 40);
+  const catH = Math.max(baseH, catE.length * DASHBOARD.bar.rowHeight + DASHBOARD.bar.padding);
   document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', catH + 'px');
   if (!catE.length) return;
   s.setOption({
@@ -2021,10 +2022,11 @@ registerChart('bar_by_practice', (cfg, filtered) => {
   const byPr = {};
   done.forEach(p => { const code = p.practice_code || 'Unassigned'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byPr[code]) byPr[code] = []; byPr[code].push(v); } });
   let prE = Object.entries(byPr).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-  const prMore = prE.length > 8 ? prE.slice(8) : [];
-  prE = prE.slice(0, 8);
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const prMore = prE.length > topN ? prE.slice(topN) : [];
+  prE = prE.slice(0, topN);
   const baseH = cfg.height || 260;
-  const prH = Math.max(baseH, prE.length * 38 + 40);
+  const prH = Math.max(baseH, prE.length * DASHBOARD.bar.rowHeight + DASHBOARD.bar.padding);
   document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', prH + 'px');
   if (!prE.length) return;
   s.setOption({
@@ -2048,10 +2050,11 @@ registerChart('bar_by_pioneer', (cfg, filtered) => {
   const byP = {};
   done.forEach(p => { const pn = p.pioneer_name || 'Unknown'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byP[pn]) byP[pn] = []; byP[pn].push(v); } });
   let pE = Object.entries(byP).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-  const pMore = pE.length > 8 ? pE.slice(8) : [];
-  pE = pE.slice(0, 8);
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const pMore = pE.length > topN ? pE.slice(topN) : [];
+  pE = pE.slice(0, topN);
   const baseH = cfg.height || 260;
-  const pH = Math.max(baseH, pE.length * 38 + 40);
+  const pH = Math.max(baseH, pE.length * DASHBOARD.bar.rowHeight + DASHBOARD.bar.padding);
   document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', pH + 'px');
   if (!pE.length) return;
   s.setOption({
@@ -2352,7 +2355,7 @@ registerChart('cohort_learning_curve', (cfg, filtered) => {
   const pal = DASHBOARD.palette;
   for (const [code, arr] of eligible) {
     const cell = document.createElement('div');
-    cell.style.height = '180px';
+    cell.style.height = DASHBOARD.minis.cellHeight + 'px';
     cell.innerHTML = `<div style="font-size:11px;color:${pal.gray500};margin-bottom:2px">${esc(code)} (n=${arr.length})</div>`
                    + `<div class="cohort-mini" style="width:100%;height:calc(100% - 18px)"></div>`;
     host.appendChild(cell);
@@ -2411,7 +2414,7 @@ registerChart('heatmap_practice_quarter', (cfg, filtered) => {
     grid: { left: 80, right: 30, top: 20, bottom: 60 },
     xAxis: { type: 'category', data: quarters, axisLabel: { color: pal.gray500 } },
     yAxis: { type: 'category', data: practices, axisLabel: { color: pal.gray500 } },
-    visualMap: { min: Math.min(...values, 1), max: Math.max(...values, 2),
+    visualMap: { min: Math.min(...values, DASHBOARD.heatmap.minFloor), max: Math.max(...values, DASHBOARD.heatmap.minMax),
                  calculable: false, orient: 'horizontal', bottom: 10, left: 'center',
                  textStyle: { color: pal.gray500, fontSize: 11 },
                  inRange: { color: ['#fee2e2', '#fed7aa', '#fde68a', '#bbf7d0', '#86efac'] } },
