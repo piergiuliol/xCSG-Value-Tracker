@@ -1381,7 +1381,9 @@ async function renderNewProject(existing) {
       if (isEdit) {
         await apiCall('PUT', `/projects/${p.id}`, payload);
         showToast('Project updated');
-        window.location.hash = '#projects';
+        // Stay on the edit page so the user can keep tweaking.
+        // Re-render in place to pick up any server-side recomputation (metrics, auto-filled days).
+        route();
       } else {
         const result = await apiCall('POST', '/projects', payload);
         showExpertLinks(result.pioneers || []);
