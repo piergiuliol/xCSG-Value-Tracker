@@ -552,7 +552,7 @@ th.r {
 fieldset {
   border: 1px solid var(--gray-200);
   border-radius: 12px;
-  padding: 28px 32px;
+  padding: 44px 32px 28px;
   margin: 16px 0;
   background: #fff;
   position: relative;
@@ -566,8 +566,8 @@ legend {
   font-weight: 700;
   letter-spacing: -0.015em;
   color: var(--navy);
-  padding: 0 0 20px 0;
-  margin: 0 0 32px 0;
+  padding: 0;
+  margin: 0 0 28px 0;
   width: 100%;
   display: flex;
   align-items: center;
