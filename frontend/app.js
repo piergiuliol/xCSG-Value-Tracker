@@ -2355,7 +2355,48 @@ registerChart('cohort_learning_curve', (cfg, filtered) => {
     });
   }
 });
-registerChart('heatmap_practice_quarter', (cfg) => { console.log('TODO Task 19:', cfg.id); });
+registerChart('heatmap_practice_quarter', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.metrics && p.date_delivered && p.practice_code);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const quarterOf = d => {
+    const dt = new Date(d);
+    return DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+  };
+  const quarters = [...new Set(done.map(p => quarterOf(p.date_delivered)))].sort();
+  const practices = [...new Set(done.map(p => p.practice_code))].sort();
+  const cell = {};
+  for (const p of done) {
+    const q = quarterOf(p.date_delivered);
+    const key = `${p.practice_code}__${q}`;
+    (cell[key] = cell[key] || []).push(p.metrics.productivity_ratio || 0);
+  }
+  const data = [];
+  practices.forEach((pc, y) => quarters.forEach((q, x) => {
+    const arr = cell[`${pc}__${q}`] || [];
+    if (arr.length) data.push([x, y, round2(arr.reduce((a, b) => a + b, 0) / arr.length), arr.length]);
+  }));
+  const values = data.map(d => d[2]);
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip,
+               formatter: p => `${esc(practices[p.data[1]])} · ${esc(quarters[p.data[0]])}<br>Value Gain: <strong>${p.data[2]}×</strong><br>Projects: ${p.data[3]}` },
+    grid: { left: 80, right: 30, top: 20, bottom: 60 },
+    xAxis: { type: 'category', data: quarters, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'category', data: practices, axisLabel: { color: pal.gray500 } },
+    visualMap: { min: Math.min(...values, 1), max: Math.max(...values, 2),
+                 calculable: false, orient: 'horizontal', bottom: 10, left: 'center',
+                 textStyle: { color: pal.gray500, fontSize: 11 },
+                 inRange: { color: ['#fee2e2', '#fed7aa', '#fde68a', '#bbf7d0', '#86efac'] } },
+    series: [{ type: 'heatmap', data,
+               label: { show: true, formatter: p => p.data[3], fontSize: 11, color: '#111827' },
+               itemStyle: { borderColor: '#fff', borderWidth: 1 } }],
+  });
+});
 registerChart('area_category_mix', (cfg) => { console.log('TODO Task 20:', cfg.id); });
 
 
