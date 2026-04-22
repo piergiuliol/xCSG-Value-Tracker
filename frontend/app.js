@@ -1861,28 +1861,51 @@ registerChart('scatter_disprove', (cfg, filtered) => {
   });
 });
 
-registerChart('radar_gains', (cfg, filtered, localMetrics, dashboard) => {
+registerChart('radar_gains', (cfg, filtered, localMetrics) => {
   const s = ecInit(cfg.id);
   if (!s) return;
+  const cap = schema.dashboard.thresholds.radar_axis_cap;
   const labels = ['Machine-First', 'Senior-Led', 'Knowledge', 'Rework Eff.', 'Client Impact', 'Data Ind.'];
-  const vals = [dashboard.machine_first_avg, dashboard.senior_led_avg, dashboard.proprietary_knowledge_avg,
-    dashboard.rework_efficiency_avg, dashboard.client_impact_avg, dashboard.data_independence_avg];
-  const vp = labels.map((l, i) => ({ l, v: vals[i] })).filter(p => p.v != null);
-  if (!vp.length) return;
-  const maxVal = Math.max(...vp.map(p => p.v), 2) * 1.15;
+  const raw = [
+    localMetrics.machine_first_avg,
+    localMetrics.senior_led_avg,
+    localMetrics.proprietary_knowledge_avg,
+    localMetrics.rework_efficiency_avg,
+    localMetrics.client_impact_avg,
+    localMetrics.data_independence_avg,
+  ];
+  const pairs = labels
+    .map((l, i) => ({ l, raw: raw[i], clipped: raw[i] == null ? null : Math.min(raw[i], cap) }))
+    .filter(p => p.clipped != null);
+  if (!pairs.length) return;
+  const pal = DASHBOARD.palette;
   s.setOption({
-    tooltip: { ...tip(), trigger: 'item' },
-    legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 16, itemHeight: 8, itemGap: 24 },
-    radar: { shape: 'circle', indicator: vp.map(p => ({ name: p.l, max: maxVal })),
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'item',
+               formatter: () => pairs.map(x =>
+                 `${esc(x.l)}: <strong>${round2(x.raw)}×</strong>${x.raw > cap ? ` <em style="color:${pal.gray500}">(clipped at ${cap}×)</em>` : ''}`
+               ).join('<br>') },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    radar: {
+      shape: 'circle',
+      indicator: pairs.map(p => ({ name: `${p.l}${p.raw > cap ? ` ${cap}×+` : ''}`, max: cap })),
       axisName: { color: '#374151', fontSize: 12, fontWeight: 500 },
       splitArea: { areaStyle: { color: ['rgba(243,244,246,0.6)', 'rgba(255,255,255,0.6)'] } },
-      splitLine: { lineStyle: { color: C.gray200 } }, axisLine: { lineStyle: { color: C.gray200 } } },
-    series: [{ type: 'radar', data: [
-      { value: vp.map(p => p.v), name: 'xCSG Average', areaStyle: { color: 'rgba(99,102,241,0.2)' },
-        lineStyle: { color: C.indigo, width: 3 }, itemStyle: { color: C.indigo, borderWidth: 2, borderColor: '#fff' }, symbol: 'circle', symbolSize: 8 },
-      { value: vp.map(() => 1.0), name: 'Baseline', lineStyle: { color: C.gray, type: 'dashed', width: 1.5 },
-        itemStyle: { color: 'transparent' }, areaStyle: { color: 'transparent' }, symbol: 'none' },
-    ] }],
+      splitLine: { lineStyle: { color: pal.gray200 } },
+      axisLine:  { lineStyle: { color: pal.gray200 } },
+    },
+    series: [{
+      type: 'radar',
+      data: [
+        { value: pairs.map(p => p.clipped), name: 'xCSG Average',
+          areaStyle: { color: 'rgba(99,102,241,0.2)' },
+          lineStyle: { color: pal.indigo, width: 3 },
+          itemStyle: { color: pal.indigo, borderWidth: 2, borderColor: '#fff' },
+          symbol: 'circle', symbolSize: 8 },
+        { value: pairs.map(() => 1.0), name: 'Baseline (1×)',
+          lineStyle: { color: pal.gray, type: 'dashed', width: 1.5 },
+          itemStyle: { color: 'transparent' }, areaStyle: { color: 'transparent' }, symbol: 'none' },
+      ],
+    }],
   });
 });
 
