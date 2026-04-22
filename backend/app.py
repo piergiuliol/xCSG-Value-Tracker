@@ -805,12 +805,16 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
     db.complete_round_token(token, response_id)
     db.update_project_status(project_id)
 
-    db.log_activity(
-        1,
-        "expert_submitted",
-        project_id=project_id,
-        details=f"Expert assessment submitted for '{tok['project_name']}' (pioneer: {tok['pioneer_name']}, round {current_round}/{total_rounds})",
-    )
+    try:
+        db.log_activity(
+            1,
+            "expert_submitted",
+            project_id=project_id,
+            details=f"Expert assessment submitted for '{tok['project_name']}' (pioneer: {tok['pioneer_name']}, round {current_round}/{total_rounds})",
+        )
+    except Exception as e:
+        import logging
+        logging.warning(f"log_activity failed (non-fatal): {e}")
 
     project_row = db.get_project(project_id)
     responses = db.get_all_project_responses(project_id)
@@ -830,16 +834,20 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
             try:
                 issued = db.issue_round_token(pioneer_id, next_round_number, issued_by=None)
                 next_round_token = issued.get("token")
-                db.log_activity(
-                    1,
-                    "round_auto_issued",
-                    project_id=project_id,
-                    details=(
-                        f"Auto-issued round {next_round_number} for pioneer "
-                        f"#{pioneer_id} ({tok['pioneer_name']}) after round "
-                        f"{current_round} submission"
-                    ),
-                )
+                try:
+                    db.log_activity(
+                        1,
+                        "round_auto_issued",
+                        project_id=project_id,
+                        details=(
+                            f"Auto-issued round {next_round_number} for pioneer "
+                            f"#{pioneer_id} ({tok['pioneer_name']}) after round "
+                            f"{current_round} submission"
+                        ),
+                    )
+                except Exception as e:
+                    import logging
+                    logging.warning(f"log_activity failed (non-fatal): {e}")
             except ValueError:
                 # Defensive: if validation rejects (e.g. race), fall through
                 # with next_round_token = None.
