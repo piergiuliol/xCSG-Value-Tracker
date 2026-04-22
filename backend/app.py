@@ -110,11 +110,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
+    # init_db() owns all migrations — don't duplicate here.
     db.init_db()
-    db.migrate()
-    db.migrate_v2()
-    db.migrate_v11()
-    db.migrate_round_tokens()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
