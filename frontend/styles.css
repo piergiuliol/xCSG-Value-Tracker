@@ -598,7 +598,7 @@ legend::after {
   content: '';
   flex-grow: 1;
   height: 1px;
-  background: linear-gradient(to right, var(--gray-200) 0%, var(--gray-200) 30%, transparent 100%);
+  background: linear-gradient(to right, var(--blue) 0%, var(--blue-light) 40%, transparent 100%);
   margin-left: 4px;
 }
 
