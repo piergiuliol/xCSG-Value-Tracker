@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, model_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -120,8 +120,19 @@ class ProjectCreate(BaseModel):
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
 
+    @field_validator("pioneers")
+    @classmethod
+    def _must_have_pioneer(cls, v):
+        if not v:
+            raise ValueError("At least one pioneer is required")
+        return v
+
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectCreate":
+        # Also guards against the default empty list case where field_validator
+        # doesn't run (validate_default is off by default in Pydantic v2).
+        if not self.pioneers:
+            raise ValueError("At least one pioneer is required")
         _validate_project_dates(self.date_started, self.date_delivered)
         return self
 
