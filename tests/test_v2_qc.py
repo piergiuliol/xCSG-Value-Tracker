@@ -1139,6 +1139,55 @@ def test_notes_excel_sheet():
     test("Notes sheet header matches expected columns", list(rows[0]) == expected_cols, detail=f"got {rows[0]}")
 
 
+def test_dashboard_export_sheets():
+    print("\n── Y. Dashboard export sheets ──")
+    import io, openpyxl
+    tok = admin_token()
+    r = requests.get(f"{BASE}/api/export/excel", headers=auth_h(tok))
+    test(
+        "export/excel returns xlsx",
+        r.status_code == 200 and r.headers.get("content-type", "").endswith("sheet"),
+    )
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    expected_new = [
+        "Dashboard Aggregates", "By Practice", "By Category", "By Pioneer",
+        "Quarterly Trend", "Cumulative Trend", "Cohort — Practice",
+        "Practice × Quarter", "Category Mix by Quarter",
+        "Disprove Matrix", "Gains Radar",
+        "Client Pulse", "Reuse Intent",
+        "Schedule Variance", "Scaling Gates",
+        "Top Movers", "Bottom Movers", "Takeaways",
+    ]
+    for name in expected_new:
+        test(
+            f"export has '{name}' sheet",
+            name in wb.sheetnames,
+            detail=f"sheetnames={wb.sheetnames}",
+        )
+    # Spot-check a couple of sheets have data rows beyond the header
+    for name in ["By Practice", "Quarterly Trend", "Takeaways", "Top Movers"]:
+        if name in wb.sheetnames:
+            rows = list(wb[name].iter_rows(values_only=True))
+            test(
+                f"'{name}' sheet has header + at least one data row",
+                len(rows) >= 2,
+                detail=f"rows={len(rows)}",
+            )
+    # Spot-check Disprove Matrix quadrant column has valid enum values
+    if "Disprove Matrix" in wb.sheetnames:
+        ws = wb["Disprove Matrix"]
+        header = [c.value for c in ws[1]]
+        qi = header.index("quadrant") if "quadrant" in header else -1
+        if qi >= 0:
+            allowed = {"top-right", "top-left", "bottom-right", "bottom-left", "NA"}
+            values = {ws.cell(row=i, column=qi + 1).value for i in range(2, ws.max_row + 1)}
+            test(
+                "Disprove Matrix quadrants are in allowed enum",
+                values.issubset(allowed),
+                detail=f"seen={values}",
+            )
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def test_dashboard_takeaways():
@@ -1207,6 +1256,7 @@ def main():
     test_expert_notes()
     test_notes_feed_endpoint()
     test_notes_excel_sheet()
+    test_dashboard_export_sheets()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")

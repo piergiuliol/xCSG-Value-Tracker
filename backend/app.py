@@ -1214,13 +1214,34 @@ async def list_notes(
 @app.get("/api/export/excel")
 async def export_excel(current_user: dict = Depends(auth.get_current_user)):
     try:
-        import openpyxl
+        import openpyxl  # noqa: F401 — presence check only
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed")
 
+    from backend.excel_export import build_dashboard_sheets
+    from backend.schema import DASHBOARD_CONFIG, METRICS
+
     all_p = db.list_projects()
-    complete = db.list_complete_projects()
-    wb = _build_export_workbook(all_p, complete)
+    complete_raw = db.list_complete_projects()
+    # Averaged per-project metrics dicts (carry productivity_ratio, delivery_speed,
+    # output_quality, practice_code, category_name, pioneer_name, etc).
+    complete_metrics = _build_averaged_complete_projects()
+    wb = _build_export_workbook(all_p, complete_raw)
+
+    # Append the 18 dashboard-aggregate sheets that let a user rebuild every
+    # chart offline. These operate on the FULL portfolio — dashboard filters
+    # are intentionally ignored.
+    aggregates = mtx.compute_summary(complete_metrics, all_p)
+    scaling_gates = mtx.compute_scaling_gates(complete_metrics)
+    build_dashboard_sheets(
+        wb,
+        complete=complete_metrics,
+        all_projects=all_p,
+        aggregates=aggregates,
+        scaling_gates=scaling_gates,
+        chart_configs=DASHBOARD_CONFIG["charts"],
+        metrics_defs=METRICS,
+    )
 
     tmp = tempfile.NamedTemporaryFile(
         suffix=".xlsx", prefix="xCSG_Export_", delete=False, dir="/tmp"
