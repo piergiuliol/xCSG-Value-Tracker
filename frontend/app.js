@@ -1391,9 +1391,46 @@ async function renderEditProject(id) {
       card.innerHTML = renderExpertAssessment(er, m);
       mc.appendChild(card);
     }
+
+    // Notes-from-experts section (collapsed by default).
+    // The project detail payload doesn't carry per-response notes, so we fetch
+    // /api/notes and filter to this project client-side.
+    try {
+      const allNotes = await apiCall('GET', '/notes');
+      const notes = (allNotes || []).filter(n => n.project_id === p.id);
+      if (notes.length) _renderProjectNotesSection(notes, mc);
+    } catch (_) {
+      // Silent: notes are a nice-to-have here, not critical path.
+    }
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load project: ${esc(err.message)}</div>`;
   }
+}
+
+function _renderProjectNotesSection(notes, mc) {
+  // Sort newest-first (the API already orders by submitted_at DESC, but be safe).
+  notes = notes.slice().sort((a, b) => (b.submitted_at || '').localeCompare(a.submitted_at || ''));
+
+  const details = document.createElement('details');
+  details.className = 'project-notes-section';
+  let html = '<summary>View notes from experts (' + notes.length + ')</summary>';
+  html += '<div class="project-notes-list">';
+  for (const n of notes) {
+    const when = n.submitted_at ? String(n.submitted_at).slice(0, 10) : '—';
+    html += '<div class="project-note-card">'
+      + '<div class="project-note-header">'
+      + '<span class="project-note-pioneer">' + esc(n.pioneer_name || '—') + '</span>'
+      + '<span class="project-note-meta">Round ' + esc(n.round_number) + ' · ' + esc(when) + '</span>'
+      + '</div>'
+      + '<div class="project-note-body">' + esc(n.notes || '').replace(/\n/g, '<br>') + '</div>'
+      + '</div>';
+  }
+  html += '</div>';
+  details.innerHTML = html;
+
+  const form = mc.querySelector('#projectForm');
+  if (form) form.appendChild(details);
+  else mc.appendChild(details);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

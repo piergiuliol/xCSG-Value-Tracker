@@ -4593,3 +4593,61 @@ th .metric-info-btn {
   color: var(--gray-400);
   text-align: right;
 }
+
+/* ── Project edit — "Notes from experts" collapsible ──────────────────────── */
+.project-notes-section {
+  margin: 20px 0;
+  padding: 16px 20px;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+}
+.project-notes-section > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--navy);
+  font-size: 14px;
+  padding: 6px 0;
+  list-style: none;
+}
+.project-notes-section > summary::-webkit-details-marker { display: none; }
+.project-notes-section > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  width: 16px;
+  transition: transform 0.15s;
+}
+.project-notes-section[open] > summary::before { content: "▾ "; }
+
+.project-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.project-note-card {
+  padding: 14px 16px;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+}
+.project-note-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.project-note-pioneer {
+  font-weight: 600;
+  color: var(--navy);
+}
+.project-note-meta {
+  color: var(--gray-500);
+  font-size: 12px;
+}
+.project-note-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--gray-700);
+}
