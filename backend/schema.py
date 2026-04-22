@@ -220,6 +220,10 @@ DASHBOARD_CONFIG = {
          "subtitle": "Each dot is a project. Top-right = faster AND better quality.", "height": 380},
         {"id": "chartRadar",     "tab": "overview", "type": "radar_gains", "title": "Gains Radar",
          "subtitle": "Flywheel dimensions vs baseline (1×). Axes clipped at the configured cap.", "height": 380},
+        {"id": "chartTopMovers",   "tab": "overview", "type": "ranked_list_top",    "title": "Top 5 Value Gain",
+         "subtitle": "Projects driving the most quality per day.", "height": 260},
+        {"id": "chartBottomMovers","tab": "overview", "type": "ranked_list_bottom", "title": "Needs Attention",
+         "subtitle": "Projects with the lowest Value Gain.", "height": 260},
         # Trends
         {"id": "chartTimeline",  "tab": "trends", "type": "timeline_per_project", "title": "Per-project timeline",
          "subtitle": "Speed, Quality, Value Gain per project, ordered by delivery date.", "height": 320},
@@ -229,6 +233,8 @@ DASHBOARD_CONFIG = {
          "subtitle": "Rolling mean of Speed, Quality, Value Gain as the portfolio grows.", "height": 320},
         {"id": "chartCohort",    "tab": "trends", "type": "cohort_learning_curve", "title": "Learning curve per practice",
          "subtitle": "Value Gain on each cohort's Nth project. Cohorts under the threshold are hidden.", "height": 420},
+        {"id": "chartEffortTrend", "tab": "trends", "type": "timeline_effort", "title": "Effort efficiency over time",
+         "subtitle": "Avg person-days per deliverable, per quarter. Lower = leaner.", "height": 320},
         # Breakdowns
         {"id": "chartCategory",  "tab": "breakdowns", "type": "bar_by_category", "title": "By Category",
          "subtitle": "Avg Value Gain by deliverable type.", "height": 260},

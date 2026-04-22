@@ -289,6 +289,48 @@ def takeaway_table_portfolio(projects: list, aggregates: dict, all_projects_coun
     return f"{total} projects, {complete} complete, {partial} partial"
 
 
+def takeaway_ranked_list_top(projects: list) -> str:
+    done = [p for p in projects if p.get("productivity_ratio") is not None]
+    if not done:
+        return "Not enough data yet"
+    leader = max(done, key=lambda p: p.get("productivity_ratio") or 0)
+    name = (leader.get("project_name") or "—")[:30]
+    return f'"{name}" leads at {_fmt_ratio(leader["productivity_ratio"])}×'
+
+
+def takeaway_ranked_list_bottom(projects: list) -> str:
+    done = [p for p in projects if p.get("productivity_ratio") is not None]
+    if not done:
+        return "Not enough data yet"
+    trailing = min(done, key=lambda p: p.get("productivity_ratio") or 0)
+    name = (trailing.get("project_name") or "—")[:30]
+    return f'"{name}" at {_fmt_ratio(trailing["productivity_ratio"])}× — worth review'
+
+
+def takeaway_timeline_effort(projects: list) -> str:
+    """Avg person-days per deliverable, comparing latest quarter to prior."""
+    by_q = {}
+    for p in projects:
+        if not p.get("date_delivered") or not p.get("xcsg_person_days"):
+            continue
+        q = _quarter_of(p["date_delivered"])
+        by_q.setdefault(q, []).append(p["xcsg_person_days"])
+    quarters = sorted(by_q.keys())
+    if len(quarters) < 2:
+        if quarters:
+            avg = _mean(by_q[quarters[0]])
+            return f"Avg {avg:.1f} person-days / deliverable"
+        return "Not enough data yet"
+    latest, prior = quarters[-1], quarters[-2]
+    latest_avg = _mean(by_q[latest])
+    prior_avg = _mean(by_q[prior])
+    if prior_avg <= 0:
+        return f"Avg {latest_avg:.1f} person-days / deliverable"
+    pct = int(round((latest_avg - prior_avg) / prior_avg * 100))
+    arrow = "down" if pct < 0 else "up"
+    return f"Effort {arrow} {abs(pct)}% QoQ to {latest_avg:.1f} PD/deliverable"
+
+
 # ── dispatch ──────────────────────────────────────────────────────────────
 
 def compute_takeaways(
@@ -328,6 +370,9 @@ def compute_takeaways(
         "scatter_schedule":        lambda: takeaway_scatter_schedule(projects, aggregates),
         "track_scaling_gates":     lambda: takeaway_track_scaling_gates(projects, aggregates, scaling_gates),
         "table_portfolio":         lambda: takeaway_table_portfolio(projects, aggregates, total_projects),
+        "ranked_list_top":         lambda: takeaway_ranked_list_top(projects),
+        "ranked_list_bottom":      lambda: takeaway_ranked_list_bottom(projects),
+        "timeline_effort":         lambda: takeaway_timeline_effort(projects),
     }
 
     out: dict = {}

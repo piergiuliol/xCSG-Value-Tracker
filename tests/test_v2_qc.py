@@ -641,7 +641,7 @@ def test_schema_endpoint():
     test("schema response has dashboard key", "dashboard" in body)
     dash = body.get("dashboard") or {}
     test("schema.dashboard has tabs list", isinstance(dash.get("tabs"), list) and len(dash["tabs"]) == 4)
-    test("schema.dashboard has charts list", isinstance(dash.get("charts"), list) and len(dash["charts"]) == 16)
+    test("schema.dashboard has charts list", isinstance(dash.get("charts"), list) and len(dash["charts"]) == 19)
     test("schema.dashboard has kpi_tiles list", isinstance(dash.get("kpi_tiles"), list) and len(dash["kpi_tiles"]) == 12)
     test("schema.dashboard.thresholds.radar_axis_cap present",
          isinstance((dash.get("thresholds") or {}).get("radar_axis_cap"), (int, float)))
@@ -734,6 +734,7 @@ def test_dashboard_config():
         "heatmap_practice_quarter", "area_category_mix",
         "donut_client_pulse", "donut_reuse_intent", "scatter_schedule", "track_scaling_gates",
         "table_portfolio",
+        "ranked_list_top", "ranked_list_bottom", "timeline_effort",
     }
     test("every chart has id/tab/type/title",
          all({"id", "tab", "type", "title"} <= set(c.keys()) for c in dc["charts"]))
@@ -743,14 +744,14 @@ def test_dashboard_config():
          all(c["type"] in CHART_TYPES for c in dc["charts"]))
     test("chart ids are unique",
          len({c["id"] for c in dc["charts"]}) == len(dc["charts"]))
-    test("Trends tab has 4 charts",
-         sum(1 for c in dc["charts"] if c["tab"] == "trends") == 4)
+    test("Trends tab has 5 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "trends") == 5)
     test("Breakdowns has 5 charts (3 bars + heatmap + mix)",
          sum(1 for c in dc["charts"] if c["tab"] == "breakdowns") == 5)
     test("every tab has at least one chart",
          all(any(c["tab"] == t for c in dc["charts"]) for t in tab_ids_set))
-    test("Overview has 2 charts",
-         sum(1 for c in dc["charts"] if c["tab"] == "overview") == 2)
+    test("Overview has 4 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "overview") == 4)
     test("Signals has 5 charts",
          sum(1 for c in dc["charts"] if c["tab"] == "signals") == 5)
 
@@ -990,6 +991,9 @@ def test_dashboard_takeaways():
     test("takeaways has chartQuarterly", isinstance(body.get("chartQuarterly"), str))
     test("takeaways has chartPulse", isinstance(body.get("chartPulse"), str))
     test("takeaways has trackGates", isinstance(body.get("trackGates"), str))
+    test("takeaways has chartTopMovers", isinstance(body.get("chartTopMovers"), str) and body["chartTopMovers"])
+    test("takeaways has chartBottomMovers", isinstance(body.get("chartBottomMovers"), str) and body["chartBottomMovers"])
+    test("takeaways has chartEffortTrend", isinstance(body.get("chartEffortTrend"), str) and body["chartEffortTrend"])
     # Every chart in DASHBOARD_CONFIG must have a key in the response
     from backend.schema import DASHBOARD_CONFIG
     missing = [c["id"] for c in DASHBOARD_CONFIG["charts"] if c["id"] not in body]
