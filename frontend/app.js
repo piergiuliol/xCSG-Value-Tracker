@@ -1399,7 +1399,7 @@ async function renderEditProject(id) {
     try {
       const allNotes = await apiCall('GET', '/notes');
       const notes = (allNotes || []).filter(n => n.project_id === p.id);
-      if (notes.length) _renderProjectNotesSection(notes, mc);
+      _renderProjectNotesSection(notes, mc);
     } catch (_) {
       // Silent: notes are a nice-to-have here, not critical path.
     }
@@ -1414,19 +1414,24 @@ function _renderProjectNotesSection(notes, mc) {
 
   const details = document.createElement('details');
   details.className = 'project-notes-section';
-  let html = '<summary>View notes from experts (' + notes.length + ')</summary>';
-  html += '<div class="project-notes-list">';
-  for (const n of notes) {
-    const when = n.submitted_at ? String(n.submitted_at).slice(0, 10) : '—';
-    html += '<div class="project-note-card">'
-      + '<div class="project-note-header">'
-      + '<span class="project-note-pioneer">' + esc(n.pioneer_name || '—') + '</span>'
-      + '<span class="project-note-meta">Round ' + esc(n.round_number) + ' · ' + esc(when) + '</span>'
-      + '</div>'
-      + '<div class="project-note-body">' + esc(n.notes || '').replace(/\n/g, '<br>') + '</div>'
-      + '</div>';
+  if (notes.length > 0) details.open = true;
+  let html = '<summary>Notes from experts (' + notes.length + ')</summary>';
+  if (!notes.length) {
+    html += '<div class="project-notes-empty">No notes from experts yet. Experts can add an optional note at the end of each survey submission.</div>';
+  } else {
+    html += '<div class="project-notes-list">';
+    for (const n of notes) {
+      const when = n.submitted_at ? String(n.submitted_at).slice(0, 10) : '—';
+      html += '<div class="project-note-card">'
+        + '<div class="project-note-header">'
+        + '<span class="project-note-pioneer">' + esc(n.pioneer_name || '—') + '</span>'
+        + '<span class="project-note-meta">Round ' + esc(n.round_number) + ' · ' + esc(when) + '</span>'
+        + '</div>'
+        + '<div class="project-note-body">' + esc(n.notes || '').replace(/\n/g, '<br>') + '</div>'
+        + '</div>';
+    }
+    html += '</div>';
   }
-  html += '</div>';
   details.innerHTML = html;
 
   const form = mc.querySelector('#projectForm');
@@ -3588,20 +3593,28 @@ function _notesPageHTML(notes, cats, practices) {
     feed += '</div>';
   }
 
+  const anyFilter = !!(s.search || s.practice || s.category || s.pioneer || s.from || s.to);
+  const countLabel = anyFilter ? `${notes.length} matching ${notes.length === 1 ? 'note' : 'notes'}` : `${notes.length} ${notes.length === 1 ? 'note' : 'notes'} total`;
+
   return ''
     + '<div class="notes-header">'
     + '<h1>Notes</h1>'
     + '<p class="notes-header-subtitle">Voice of the expert — qualitative feedback across every project.</p>'
     + '</div>'
     + '<div class="notes-filter-bar">'
-    + '<input type="text" id="notesSearch" placeholder="Search in notes…" value="' + esc(s.search) + '">'
-    + '<select id="notesPractice"><option value="">All practices</option>' + practiceOpts + '</select>'
-    + '<select id="notesCategory"><option value="">All categories</option>' + catOpts + '</select>'
-    + '<select id="notesPioneer"><option value="">All pioneers</option>' + pioneerOpts + '</select>'
-    + '<input type="date" id="notesFrom" value="' + esc(s.from) + '">'
-    + '<input type="date" id="notesTo" value="' + esc(s.to) + '">'
-    + '<button class="btn btn-secondary" type="button" onclick="_clearNotesFilters()">Clear</button>'
-    + '<button class="btn btn-primary" type="button" onclick="_exportNotesExcel()">Export (xlsx)</button>'
+    +   '<div class="notes-filter-row">'
+    +     '<input type="text" id="notesSearch" placeholder="Search in notes…" value="' + esc(s.search) + '">'
+    +     '<select id="notesPractice"><option value="">All practices</option>' + practiceOpts + '</select>'
+    +     '<select id="notesCategory"><option value="">All categories</option>' + catOpts + '</select>'
+    +     '<select id="notesPioneer"><option value="">All pioneers</option>' + pioneerOpts + '</select>'
+    +   '</div>'
+    +   '<div class="notes-filter-row">'
+    +     '<label class="notes-filter-date"><span>Delivered from</span><input type="date" id="notesFrom" value="' + esc(s.from) + '"></label>'
+    +     '<label class="notes-filter-date"><span>to</span><input type="date" id="notesTo" value="' + esc(s.to) + '"></label>'
+    +     '<button class="btn btn-secondary" type="button" onclick="_clearNotesFilters()"' + (anyFilter ? '' : ' disabled') + '>' + (anyFilter ? 'Show all' : 'Show all') + '</button>'
+    +     '<span class="notes-filter-count">' + esc(countLabel) + '</span>'
+    +     '<button class="btn btn-primary" type="button" onclick="_exportNotesExcel()" style="margin-left:auto">Export (xlsx)</button>'
+    +   '</div>'
     + '</div>'
     + feed;
 }
