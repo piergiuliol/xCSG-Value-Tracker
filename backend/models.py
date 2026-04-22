@@ -209,6 +209,7 @@ class ExpertResponseCreate(BaseModel):
     l14_legacy_c8_decision: Optional[str] = None
     l15_legacy_e1_decision: Optional[str] = None
     l16_legacy_b6_data: Optional[str] = None
+    notes: Optional[str] = None
 
 
 class ExpertAssessmentMetrics(BaseModel):

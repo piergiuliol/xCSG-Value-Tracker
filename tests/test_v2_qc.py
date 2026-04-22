@@ -977,6 +977,60 @@ def test_auto_issue_next_round():
     requests.delete(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk))
 
 
+# ── X. Expert notes (per-round optional free-text) ───────────────────────────
+
+def test_expert_notes():
+    print("\n── X. Expert notes (per-round, optional free-text) ──")
+    tok = admin_token()
+    h = auth_h(tok)
+    # Find or create a project with at least one pioneer round issued
+    projects = requests.get(f"{BASE}/api/projects", headers=h).json()
+    if not projects:
+        test("skipped — no projects seeded", False, detail="seed first")
+        return
+    # Pick the first project that still has an open round for a pioneer
+    proj_id = None
+    pioneer = None
+    open_round = None
+    for pr in projects:
+        pid = pr.get("id")
+        if pid is None:
+            continue
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=h).json()
+        for pp in detail.get("pioneers", []):
+            rnds = pp.get("rounds") or []
+            candidate = next((r for r in rnds if r.get("token") and not r.get("completed_at")), None)
+            if candidate:
+                proj_id = pid
+                pioneer = pp
+                open_round = candidate
+                break
+        if open_round:
+            break
+    if not (proj_id and pioneer and open_round):
+        test("skipped — no pioneer with open round", False, detail="all rounds completed")
+        return
+
+    # Load STRONG payload from the seed file
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("sd", pathlib.Path("tests/seed_20_projects.py"))
+    sd = importlib.util.module_from_spec(spec); spec.loader.exec_module(sd)
+    payload = dict(getattr(sd, "STRONG"))
+    payload["notes"] = "Client pivoted mid-engagement from feasibility to gap analysis.\nWorth flagging for similar RAM projects."
+
+    r = requests.post(f"{BASE}/api/expert/{open_round['token']}", json=payload)
+    test("POST /api/expert/{token} with notes returns 200/201", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:200]}")
+
+    # Confirm stored: direct DB read
+    db_conn = sqlite3.connect(DB_PATH)
+    row = db_conn.execute(
+        "SELECT notes FROM expert_responses WHERE project_id = ? AND pioneer_id = ? ORDER BY id DESC LIMIT 1",
+        (proj_id, pioneer["id"]),
+    ).fetchone()
+    db_conn.close()
+    test("notes persisted in expert_responses", bool(row and row[0] and "pivoted" in row[0]), detail=f"row={row}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def test_dashboard_takeaways():
@@ -1042,6 +1096,7 @@ def main():
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
+    test_expert_notes()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")

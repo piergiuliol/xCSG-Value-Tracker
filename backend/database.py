@@ -204,6 +204,7 @@ def init_db() -> None:
     migrate_round_tokens()
     migrate_v12()
     migrate_v13()
+    migrate_v14()
 
     seed_data()
 
@@ -340,6 +341,20 @@ def migrate_v13() -> None:
             conn.execute(
                 "ALTER TABLE projects ADD COLUMN show_other_pioneers_answers INTEGER NOT NULL DEFAULT 0"
             )
+        conn.commit()
+
+
+def migrate_v14() -> None:
+    """v1.4: add expert_responses.notes TEXT column (nullable).
+
+    Experts may attach an optional free-text note to each survey submission.
+    Column is nullable so existing rows and callers that omit the field
+    continue to work unchanged.
+    """
+    with _db() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
+        if "notes" not in cols:
+            conn.execute("ALTER TABLE expert_responses ADD COLUMN notes TEXT")
         conn.commit()
 
 
@@ -1449,8 +1464,9 @@ def create_expert_response(pioneer_id: int, project_id: int, round_number: int, 
                 l1_legacy_working_days, l2_legacy_team_size, l3_legacy_revision_depth, l4_legacy_scope_expansion,
                 l5_legacy_client_reaction, l6_legacy_b2_sources, l7_legacy_c1_specialization, l8_legacy_c2_directness,
                 l9_legacy_c3_judgment, l10_legacy_d1_proprietary, l11_legacy_d2_reuse, l12_legacy_d3_moat,
-                l13_legacy_c7_depth, l14_legacy_c8_decision, l15_legacy_e1_decision, l16_legacy_b6_data)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                l13_legacy_c7_depth, l14_legacy_c8_decision, l15_legacy_e1_decision, l16_legacy_b6_data,
+                notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project_id, pioneer_id, round_number,
                 data.get("b1_starting_point"),
@@ -1488,6 +1504,7 @@ def create_expert_response(pioneer_id: int, project_id: int, round_number: int, 
                 data.get("l14_legacy_c8_decision"),
                 data.get("l15_legacy_e1_decision"),
                 data.get("l16_legacy_b6_data"),
+                data.get("notes"),
             ),
         )
         conn.commit()
