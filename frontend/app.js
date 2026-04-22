@@ -2441,19 +2441,44 @@ registerChart('heatmap_practice_quarter', (cfg, filtered) => {
   }));
   const values = data.map(d => d[2]);
   const pal = DASHBOARD.palette;
+  // Cap the visual scale so one outlier doesn't squash everything to the low colour.
+  // Below baseline (1×) = red, above baseline = green gradient. Clip at radar_axis_cap for readability.
+  const cap = schema.dashboard.thresholds.radar_axis_cap;
+  const vmMin = 0;
+  const vmMax = cap;
   s.setOption({
     tooltip: { ...DASHBOARD.tooltip,
-               formatter: p => `${esc(practices[p.data[1]])} · ${esc(quarters[p.data[0]])}<br>Value Gain: <strong>${p.data[2]}×</strong><br>Projects: ${p.data[3]}` },
-    grid: { left: 80, right: 30, top: 20, bottom: 60 },
-    xAxis: { type: 'category', data: quarters, axisLabel: { color: pal.gray500 } },
-    yAxis: { type: 'category', data: practices, axisLabel: { color: pal.gray500 } },
-    visualMap: { min: Math.min(...values, DASHBOARD.heatmap.minFloor), max: Math.max(...values, DASHBOARD.heatmap.minMax),
-                 calculable: false, orient: 'horizontal', bottom: 10, left: 'center',
-                 textStyle: { color: pal.gray500, fontSize: 11 },
-                 inRange: { color: ['#fee2e2', '#fed7aa', '#fde68a', '#bbf7d0', '#86efac'] } },
-    series: [{ type: 'heatmap', data,
-               label: { show: true, formatter: p => p.data[3], fontSize: 11, color: '#111827' },
-               itemStyle: { borderColor: '#fff', borderWidth: 1 } }],
+               formatter: p => `${esc(practices[p.data[1]])} · ${esc(quarters[p.data[0]])}<br>Value Gain: <strong>${p.data[2]}×</strong>${p.data[2] > cap ? ` <em style="color:${pal.gray500}">(clipped at ${cap}×)</em>` : ''}<br>Projects: ${p.data[3]}` },
+    grid: { left: 80, right: 30, top: 20, bottom: 72 },
+    xAxis: { type: 'category', data: quarters, axisLabel: { color: pal.gray500 }, splitArea: { show: true } },
+    yAxis: { type: 'category', data: practices, axisLabel: { color: pal.gray500 }, splitArea: { show: true } },
+    visualMap: {
+      min: vmMin, max: vmMax,
+      calculable: true, orient: 'horizontal', bottom: 8, left: 'center',
+      itemWidth: 14, itemHeight: 180,
+      text: [`≥ ${vmMax}× (strong)`, `${vmMin}× (weak)`],
+      textStyle: { color: pal.gray500, fontSize: 11 },
+      inRange: { color: ['#fee2e2', '#fed7aa', '#fef3c7', '#d1fae5', '#86efac', '#10b981'] },
+    },
+    series: [{
+      type: 'heatmap', data,
+      // Plot clipped value for colour, real number for label.
+      label: { show: true, formatter: p => p.data[2] + '×', fontSize: 12, fontWeight: 600, color: '#111827' },
+      itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 3 },
+      emphasis: { itemStyle: { borderColor: pal.navy, borderWidth: 2 } },
+    }],
+    // ECharts colours heatmap by data[2] (the raw avg); clip it by feeding the capped value instead.
+    // (Simpler: map the data array to clip — but keeping raw value in tooltip and label requires
+    //  explicit clip via series.data remap below.)
+  });
+  // Feed clipped values for colour mapping while preserving raw values in label/tooltip via itemStyle.color
+  // Simpler approach: overwrite the series data with clipped value stored in [x, y, min(v, cap), count, rawV]
+  const clippedData = data.map(d => [d[0], d[1], Math.min(d[2], cap), d[3], d[2]]);
+  s.setOption({
+    series: [{ data: clippedData,
+               label: { show: true, formatter: p => (p.data[4] ?? p.data[2]) + '×', fontSize: 12, fontWeight: 600, color: '#111827' } }],
+    tooltip: { ...DASHBOARD.tooltip,
+               formatter: p => `${esc(practices[p.data[1]])} · ${esc(quarters[p.data[0]])}<br>Value Gain: <strong>${p.data[4] ?? p.data[2]}×</strong>${(p.data[4] ?? p.data[2]) > cap ? ` <em style="color:${pal.gray500}">(colour clipped at ${cap}×)</em>` : ''}<br>Projects: ${p.data[3]}` },
   });
 });
 registerChart('area_category_mix', (cfg, filtered) => {

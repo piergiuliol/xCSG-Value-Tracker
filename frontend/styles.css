@@ -566,8 +566,8 @@ legend {
   font-weight: 700;
   letter-spacing: -0.015em;
   color: var(--navy);
-  padding: 0;
-  margin: 0 0 22px 0;
+  padding: 0 0 20px 0;
+  margin: 0 0 32px 0;
   width: 100%;
   display: flex;
   align-items: center;
