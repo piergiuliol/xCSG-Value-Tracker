@@ -1808,13 +1808,13 @@ const C = {
   orange: '#F59E0B', red: '#EF4444', gray: '#9CA3AF', gray200: '#E5E7EB',
   gray50: '#F9FAFB', gray100: '#F3F4F6', purple: '#8B5CF6', indigo: '#6366F1',
 };
-const ec = {};
+const chartInstances = {};
 function ecInit(id) {
-  if (ec[id]) ec[id].dispose();
+  if (chartInstances[id]) chartInstances[id].dispose();
   const dom = document.getElementById(id);
   if (!dom) return null;
   const c = echarts.init(dom, null, { renderer: 'canvas' });
-  ec[id] = c;
+  chartInstances[id] = c;
   const ro = new ResizeObserver(() => c.resize());
   ro.observe(dom);
   return c;
@@ -1846,7 +1846,7 @@ function registerChart(type, fn) { CHART_RENDERERS[type] = fn; }
 function renderDashboardCharts(dashboard, filtered) {
   if (typeof echarts === 'undefined') return;
   // Dispose all existing ECharts instances
-  Object.keys(ec).forEach(k => { try { ec[k].dispose(); } catch (_) {} delete ec[k]; });
+  Object.keys(chartInstances).forEach(k => { try { chartInstances[k].dispose(); } catch (_) {} delete chartInstances[k]; });
 
   const localMetrics = (filtered && _projectsCache && filtered.length === _projectsCache.length) ? dashboard : _computeLocalMetrics(filtered || []);
   const activeCharts = schema.dashboard.charts.filter(c => c.tab === _activeTab);
@@ -2405,7 +2405,7 @@ registerChart('cohort_learning_curve', (cfg, filtered) => {
     host.appendChild(cell);
     const miniEl = cell.querySelector('.cohort-mini');
     const mini = echarts.init(miniEl);
-    ec[`${cfg.id}_${code}`] = mini;
+    chartInstances[`${cfg.id}_${code}`] = mini;
     mini.setOption({
       grid: { left: 30, right: 6, top: 6, bottom: 24 },
       tooltip: { ...DASHBOARD.tooltip, trigger: 'axis',
