@@ -4542,3 +4542,54 @@ th .metric-info-btn {
 .tab-bar .tab.active { color: var(--navy); border-bottom-color: var(--blue); font-weight: 600; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
+
+/* ── Expert survey notes ──────────────────────────────────────────────────── */
+.expert-notes-section {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin: 16px 0 24px;
+}
+.expert-notes-label {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--navy);
+  margin-bottom: 4px;
+}
+.expert-notes-optional {
+  font-weight: 400;
+  color: var(--gray-500);
+  font-size: 13px;
+}
+.expert-notes-help {
+  font-size: 13px;
+  color: var(--gray-500);
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+.expert-notes-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px 14px;
+  font-family: var(--font-sans, inherit);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--gray-800);
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  resize: vertical;
+  background: #fff;
+}
+.expert-notes-textarea:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(110, 193, 228, 0.15);
+}
+.expert-notes-counter {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--gray-400);
+  text-align: right;
+}

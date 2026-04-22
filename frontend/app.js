@@ -2619,6 +2619,15 @@ async function renderExpert(token) {
       html += '</div>'; // close accordion-section
     }
 
+    // Optional free-form notes (visible to admins/analysts, included in Excel export)
+    const savedNotes = (saved && saved.__notes) ? saved.__notes : '';
+    html += '<div class="expert-notes-section">'
+      + '<label for="expertNotesField" class="expert-notes-label">Notes <span class="expert-notes-optional">(optional)</span></label>'
+      + '<p class="expert-notes-help">Anything else the team should know about this engagement — client context, what worked, what didn\'t. Notes are visible to admins and analysts and included in exports.</p>'
+      + '<textarea id="expertNotesField" class="expert-notes-textarea" rows="5" placeholder="Share any context, observations, or lessons…">' + esc(savedNotes) + '</textarea>'
+      + '<div class="expert-notes-counter"><span id="expertNotesCount">' + savedNotes.length + '</span> characters</div>'
+      + '</div>';
+
     // Submit area
     html += '<div class="accordion-submit-area">';
     html += '<span class="time-hint">Takes approximately 6\u20137 minutes</span>';
@@ -2649,6 +2658,18 @@ async function renderExpert(token) {
       });
     }
 
+    // Wire notes textarea: char counter + persist across reloads
+    const notesField = document.getElementById('expertNotesField');
+    const notesCount = document.getElementById('expertNotesCount');
+    if (notesField && notesCount) {
+      notesField.addEventListener('input', function() {
+        notesCount.textContent = notesField.value.length;
+        const vals = _expertGetFieldValues();
+        vals.__notes = notesField.value;
+        _expertSaveToStorage(token, currentRound, vals);
+      });
+    }
+
     // Submit
     document.getElementById('expertSubmitBtn').addEventListener('click', async function() {
       const btn = document.getElementById('expertSubmitBtn');
@@ -2669,6 +2690,9 @@ async function renderExpert(token) {
           payload[key] = val;
         }
       }
+      // Optional free-form notes — empty string becomes null to avoid DB noise.
+      const notesEl = document.getElementById('expertNotesField');
+      payload.notes = (notesEl && notesEl.value.trim()) ? notesEl.value.trim() : null;
 
       try {
         const result = await apiCall('POST', '/expert/' + token, payload);
