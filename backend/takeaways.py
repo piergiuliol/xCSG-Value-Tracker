@@ -131,7 +131,10 @@ def takeaway_timeline_quarterly(projects: list, aggregates: dict) -> str:
     pct = round((last - prior) / prior * 100)
     if pct == 0:
         return f"Flat Q-o-Q at {_fmt_ratio(last)}"
-    return f"Value Gain {pct:+d}% QoQ"
+    # Absurd-swing guard: very low prior bases produce meaningless percentages.
+    if abs(pct) > 500:
+        return f"{_fmt_ratio(last)} this quarter vs {_fmt_ratio(prior)} prior"
+    return f"Value Gain {pct:+d}% QoQ to {_fmt_ratio(last)}"
 
 
 def takeaway_timeline_cumulative(projects: list, aggregates: dict) -> str:
@@ -295,7 +298,7 @@ def takeaway_ranked_list_top(projects: list) -> str:
         return "Not enough data yet"
     leader = max(done, key=lambda p: p.get("productivity_ratio") or 0)
     name = (leader.get("project_name") or "—")[:30]
-    return f'"{name}" leads at {_fmt_ratio(leader["productivity_ratio"])}×'
+    return f'"{name}" leads at {_fmt_ratio(leader["productivity_ratio"])}'
 
 
 def takeaway_ranked_list_bottom(projects: list) -> str:
@@ -304,7 +307,7 @@ def takeaway_ranked_list_bottom(projects: list) -> str:
         return "Not enough data yet"
     trailing = min(done, key=lambda p: p.get("productivity_ratio") or 0)
     name = (trailing.get("project_name") or "—")[:30]
-    return f'"{name}" at {_fmt_ratio(trailing["productivity_ratio"])}× — worth review'
+    return f'"{name}" at {_fmt_ratio(trailing["productivity_ratio"])} — worth review'
 
 
 def takeaway_timeline_effort(projects: list) -> str:
