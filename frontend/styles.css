@@ -562,12 +562,14 @@ fieldset:last-of-type { margin-bottom: 24px; }
 fieldset:nth-of-type(even) { background: var(--gray-50); }
 
 legend {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.15;
   color: var(--navy);
-  padding: 4px 12px;
-  margin: 0 0 0 8px;
+  padding: 2px 14px;
+  margin: 0 0 0 4px;
   background: inherit;
   width: auto;
   display: inline-block;
