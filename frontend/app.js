@@ -1852,7 +1852,12 @@ function renderDashboardCharts(dashboard, filtered) {
   const activeCharts = schema.dashboard.charts.filter(c => c.tab === _activeTab);
   for (const cfg of activeCharts) {
     const fn = CHART_RENDERERS[cfg.type];
-    if (!fn) { console.warn('No renderer for chart.type', cfg.type, 'id=', cfg.id); continue; }
+    if (!fn) {
+      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+        console.warn('No renderer for chart.type', cfg.type, 'id=', cfg.id);
+      }
+      continue;
+    }
     try { fn(cfg, filtered || [], localMetrics, dashboard); }
     catch (err) { console.error('Chart render error for', cfg.id, err); }
   }
@@ -2269,7 +2274,6 @@ registerChart('table_portfolio', (cfg, filtered) => {
   `;
 });
 
-// ── TODO stubs (Tasks 16-20) ───────────────────────────────────────────────
 registerChart('timeline_quarterly', (cfg, filtered) => {
   const s = ecInit(cfg.id);
   if (!s) return;
