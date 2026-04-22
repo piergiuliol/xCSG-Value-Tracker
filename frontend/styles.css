@@ -4659,14 +4659,50 @@ th .metric-info-btn {
 
 .notes-filter-bar {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  gap: 0;
   background: #fff;
   padding: 14px 16px;
   border: 1px solid var(--gray-200);
   border-radius: 12px;
   margin-bottom: 18px;
+}
+.notes-filter-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.notes-filter-row + .notes-filter-row { margin-top: 10px; }
+.notes-filter-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--gray-500);
+  font-weight: 500;
+}
+.notes-filter-date span { white-space: nowrap; }
+.notes-filter-date input[type=date] {
+  padding: 8px 12px;
+  border: 1px solid var(--gray-300);
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+}
+.notes-filter-count {
+  font-size: 12px;
+  color: var(--gray-500);
+  font-weight: 500;
+}
+.project-notes-empty {
+  padding: 14px 16px;
+  color: var(--gray-500);
+  font-size: 13px;
+  font-style: italic;
+  background: var(--gray-50);
+  border-radius: 8px;
+  margin-top: 12px;
 }
 .notes-filter-bar input[type=text] {
   flex: 1;
