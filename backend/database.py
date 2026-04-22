@@ -51,11 +51,20 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS practices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_by INTEGER NOT NULL,
                 project_name TEXT NOT NULL,
                 category_id INTEGER NOT NULL,
+                practice_id INTEGER,
                 client_name TEXT,
                 pioneer_name TEXT NOT NULL,
                 pioneer_email TEXT,
@@ -78,11 +87,13 @@ def init_db() -> None:
                 engagement_stage TEXT,
                 client_contact_email TEXT,
                 client_pulse TEXT DEFAULT 'Not yet received',
+                show_other_pioneers_answers INTEGER NOT NULL DEFAULT 0,
                 expert_token TEXT UNIQUE NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (created_by) REFERENCES users(id),
-                FOREIGN KEY (category_id) REFERENCES project_categories(id)
+                FOREIGN KEY (category_id) REFERENCES project_categories(id),
+                FOREIGN KEY (practice_id) REFERENCES practices(id)
             );
 
             CREATE TABLE IF NOT EXISTS expert_responses (
@@ -189,6 +200,10 @@ def init_db() -> None:
     _migrate_expert_responses()
     migrate()
     migrate_v2()
+    migrate_v11()
+    migrate_round_tokens()
+    migrate_v12()
+    migrate_v13()
 
     seed_data()
 
@@ -205,6 +220,126 @@ def migrate() -> None:
             if col not in project_columns:
                 conn.execute(statement)
         conn.execute("UPDATE projects SET client_pulse = 'Not yet received' WHERE client_pulse IS NULL OR TRIM(client_pulse) = ''")
+        conn.commit()
+
+
+def migrate_v12() -> None:
+    """v1.2: add Practice as a peer field to Project Category.
+
+    - Creates `practices` table if missing.
+    - Adds `projects.practice_id` nullable FK column if missing.
+    - On first run (when practices table is newly created), destructively
+      wipes existing projects/responses/pioneers/round_tokens/legacy_norms
+      and the old generic project_categories seed, then reseeds
+      project_categories (79 rows) and practices (11 rows) from
+      backend.taxonomy_seed.
+    - On subsequent runs, only runs INSERT OR IGNORE for the seed, so
+      admin-added categories/practices survive.
+    """
+    from backend.taxonomy_seed import CATEGORIES, CATEGORY_PRACTICE_PAIRS, PRACTICES
+
+    with _db() as conn:
+        existing_tables = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        practices_existed = "practices" in existing_tables
+
+        # 1. Create practices table if missing.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS practices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # 1b. Create category_practices junction table (many-to-many).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS category_practices (
+                category_id INTEGER NOT NULL,
+                practice_id INTEGER NOT NULL,
+                PRIMARY KEY (category_id, practice_id),
+                FOREIGN KEY (category_id) REFERENCES project_categories(id) ON DELETE CASCADE,
+                FOREIGN KEY (practice_id) REFERENCES practices(id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        # 2. Add projects.practice_id column if missing (nullable FK).
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "practice_id" not in project_columns:
+            conn.execute("ALTER TABLE projects ADD COLUMN practice_id INTEGER REFERENCES practices(id)")
+
+        # 3. First-run destructive reseed: only when practices did not pre-exist.
+        #    Wipes legacy data and the old 11 generic categories so the reseed
+        #    replaces them with the 79 CSV-derived categories.
+        if not practices_existed:
+            if "pioneer_round_tokens" in existing_tables:
+                conn.execute("DELETE FROM pioneer_round_tokens")
+            if "expert_responses" in existing_tables:
+                conn.execute("DELETE FROM expert_responses")
+            if "project_pioneers" in existing_tables:
+                conn.execute("DELETE FROM project_pioneers")
+            if "legacy_norms" in existing_tables:
+                conn.execute("DELETE FROM legacy_norms")
+            if "activity_log" in existing_tables:
+                conn.execute("UPDATE activity_log SET project_id = NULL")
+            if "projects" in existing_tables:
+                conn.execute("DELETE FROM projects")
+            if "project_categories" in existing_tables:
+                conn.execute("DELETE FROM project_categories")
+
+        # 4. Seed practices (idempotent — INSERT OR IGNORE on unique `code`).
+        for code, description in PRACTICES:
+            conn.execute(
+                "INSERT OR IGNORE INTO practices (code, name, description) VALUES (?, ?, ?)",
+                (code, code, description or None),
+            )
+
+        # 5. Seed project categories (idempotent — INSERT OR IGNORE on unique `name`).
+        for name in CATEGORIES:
+            conn.execute(
+                "INSERT OR IGNORE INTO project_categories (name, description) VALUES (?, ?)",
+                (name, None),
+            )
+
+        # 6. Seed category↔practice pairings (idempotent — PK is the pair).
+        cat_ids = {row["name"]: row["id"] for row in conn.execute("SELECT id, name FROM project_categories").fetchall()}
+        prac_ids = {row["code"]: row["id"] for row in conn.execute("SELECT id, code FROM practices").fetchall()}
+        for cat_name, prac_code in CATEGORY_PRACTICE_PAIRS:
+            cid = cat_ids.get(cat_name)
+            pid = prac_ids.get(prac_code)
+            if cid is None or pid is None:
+                continue  # defensive; should not happen given seed_taxonomy asserts
+            conn.execute(
+                "INSERT OR IGNORE INTO category_practices (category_id, practice_id) VALUES (?, ?)",
+                (cid, pid),
+            )
+
+        conn.commit()
+
+
+def migrate_v13() -> None:
+    """v1.3: add cross-pioneer visibility flag to projects.
+
+    Adds ``projects.show_other_pioneers_answers`` (boolean, default 0). When
+    enabled, ``GET /api/expert/{token}`` returns the submitted responses of
+    other pioneers on the same project so the current pioneer can read them
+    before/while filling in their round.
+    """
+    with _db() as conn:
+        project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "show_other_pioneers_answers" not in project_columns:
+            conn.execute(
+                "ALTER TABLE projects ADD COLUMN show_other_pioneers_answers INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
 
 
@@ -612,29 +747,11 @@ def seed_data() -> None:
                         (new_hash, row["id"]),
                     )
 
-        # Seed categories (V2 spec — 11 project categories)
-        SEED_CATEGORIES = [
-            ("CDD", "Commercial due diligence"),
-            ("Strategic Planning", "Strategic planning and advisory"),
-            ("Portfolio Management & Opportunity Assessment", "Portfolio strategy and opportunity evaluation"),
-            ("Pricing & Reimbursement", "Pricing strategy and reimbursement planning"),
-            ("Market Access Strategy", "Market access and reimbursement strategy"),
-            ("New Product Strategy", "New product planning and launch strategy"),
-            ("Strategic Surveillance & Competitive Intelligence", "Competitive intelligence and market monitoring"),
-            ("Evidence Generation & HEOR", "Health economics and outcomes research"),
-            ("Transaction Advisory", "M&A due diligence and transaction support"),
-            ("Market Research", "Primary and secondary market research"),
-            ("Regulatory Strategy", "Regulatory affairs and submission strategy"),
-        ]
-        for name, desc in SEED_CATEGORIES:
-            conn.execute(
-                "INSERT OR IGNORE INTO project_categories (name, description) VALUES (?, ?)",
-                (name, desc),
-            )
-
         conn.commit()
 
-        # V2: No seeded legacy norms — norms are computed from expert responses
+        # V1.2: project_categories + practices are seeded by migrate_v12 from
+        # backend/taxonomy_seed.py. No seeded legacy norms — norms are
+        # computed from expert responses.
 
 
 # ── Users ──────────────────────────────────────────────────────────────────────
@@ -691,9 +808,60 @@ def delete_user(user_id: int) -> bool:
 # ── Project Categories ───────────────────────────────────────────────────────
 
 def list_categories() -> list:
+    """Return all categories with their allowed practice ids + codes."""
     with _db() as conn:
         rows = conn.execute("SELECT * FROM project_categories ORDER BY name").fetchall()
+        cats = [dict(r) for r in rows]
+        # Attach allowed practices for each category from the junction table.
+        pairs = conn.execute("""
+            SELECT cp.category_id, p.id AS practice_id, p.code, p.name
+            FROM category_practices cp
+            JOIN practices p ON p.id = cp.practice_id
+            ORDER BY p.code
+        """).fetchall()
+        by_cat: dict = {}
+        for pr in pairs:
+            by_cat.setdefault(pr["category_id"], []).append(
+                {"id": pr["practice_id"], "code": pr["code"], "name": pr["name"]}
+            )
+        for c in cats:
+            c["practices"] = by_cat.get(c["id"], [])
+        return cats
+
+
+def get_practices_for_category(category_id: int) -> list:
+    """Return the practices allowed for a given category (empty list if none)."""
+    with _db() as conn:
+        rows = conn.execute("""
+            SELECT p.id, p.code, p.name
+            FROM practices p
+            JOIN category_practices cp ON cp.practice_id = p.id
+            WHERE cp.category_id = ?
+            ORDER BY p.code
+        """, (category_id,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def is_practice_allowed_for_category(category_id: int, practice_id: int) -> bool:
+    """Return True iff the (category_id, practice_id) pair is in category_practices."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM category_practices WHERE category_id = ? AND practice_id = ?",
+            (category_id, practice_id),
+        ).fetchone()
+        return row is not None
+
+
+def set_practices_for_category(category_id: int, practice_ids: list) -> None:
+    """Replace the practice attributions for a category with the given list."""
+    with _db() as conn:
+        conn.execute("DELETE FROM category_practices WHERE category_id = ?", (category_id,))
+        for pid in practice_ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO category_practices (category_id, practice_id) VALUES (?, ?)",
+                (category_id, int(pid)),
+            )
+        conn.commit()
 
 
 def get_category(category_id: int) -> Optional[sqlite3.Row]:
@@ -744,6 +912,69 @@ def category_has_projects(category_id: int) -> bool:
         return count > 0
 
 
+# ── Practices ────────────────────────────────────────────────────────────────
+
+def list_practices() -> list:
+    """Return all practices ordered by code, with project counts."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT pr.*,
+                      (SELECT COUNT(*) FROM projects p WHERE p.practice_id = pr.id) AS project_count
+               FROM practices pr
+               ORDER BY pr.code"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_practice(practice_id: int) -> Optional[sqlite3.Row]:
+    with _db() as conn:
+        return conn.execute(
+            "SELECT * FROM practices WHERE id = ?", (practice_id,)
+        ).fetchone()
+
+
+def create_practice(code: str, name: str, description: Optional[str] = None) -> int:
+    with _db() as conn:
+        cur = conn.execute(
+            "INSERT INTO practices (code, name, description) VALUES (?, ?, ?)",
+            (code, name, description),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def update_practice(practice_id: int, name: str, description: Optional[str] = None) -> bool:
+    """Update name and description. `code` is immutable once seeded."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE practices SET name = ?, description = ? WHERE id = ?",
+            (name, description, practice_id),
+        )
+        conn.commit()
+        return True
+
+
+def delete_practice(practice_id: int) -> bool:
+    """Delete a practice. Fails if any projects reference it."""
+    with _db() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE practice_id = ?", (practice_id,)
+        ).fetchone()[0]
+        if count > 0:
+            return False
+        conn.execute("DELETE FROM practices WHERE id = ?", (practice_id,))
+        conn.commit()
+        return True
+
+
+def practice_has_projects(practice_id: int) -> bool:
+    with _db() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE practice_id = ?", (practice_id,)
+        ).fetchone()[0]
+        return count > 0
+
+
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 def create_project(data: dict) -> int:
@@ -781,22 +1012,24 @@ def create_project(data: dict) -> int:
     legacy_overridden = data.get("legacy_overridden", False)
     default_rounds = data.get("default_rounds", 1)
     show_previous_answers = 1 if data.get("show_previous_answers") else 0
+    show_other_pioneers_answers = 1 if data.get("show_other_pioneers_answers") else 0
 
     with _db() as conn:
         cur = conn.execute(
             """INSERT INTO projects
-               (created_by, project_name, category_id, client_name,
+               (created_by, project_name, category_id, practice_id, client_name,
                 pioneer_name, pioneer_email, description,
                 date_started, date_expected_delivered, date_delivered,
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
-                default_rounds, show_previous_answers, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                default_rounds, show_previous_answers, show_other_pioneers_answers, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
                 data["category_id"],
+                data.get("practice_id"),
                 data.get("client_name"),
                 pioneer_name_for_project,
                 pioneer_email_for_project,
@@ -821,6 +1054,7 @@ def create_project(data: dict) -> int:
                 project_token,
                 default_rounds,
                 show_previous_answers,
+                show_other_pioneers_answers,
                 "pending",
             ),
         )
@@ -850,9 +1084,11 @@ def create_project(data: dict) -> int:
 def get_project(project_id: int) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
-            """SELECT p.*, pc.name as category_name
+            """SELECT p.*, pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE p.id = ?""",
             (project_id,),
         ).fetchone()
@@ -861,13 +1097,16 @@ def get_project(project_id: int) -> Optional[sqlite3.Row]:
 def list_projects(
     status_filter: Optional[str] = None,
     category_id: Optional[int] = None,
+    practice_id: Optional[int] = None,
     pioneer: Optional[str] = None,
     client: Optional[str] = None,
 ) -> list:
     with _db() as conn:
-        query = """SELECT DISTINCT p.*, pc.name as category_name
+        query = """SELECT DISTINCT p.*, pc.name AS category_name,
+                          pr.code AS practice_code, pr.name AS practice_name
                    FROM projects p
-                   JOIN project_categories pc ON p.category_id = pc.id"""
+                   JOIN project_categories pc ON p.category_id = pc.id
+                   LEFT JOIN practices pr ON p.practice_id = pr.id"""
         params = []
         if pioneer:
             query += " JOIN project_pioneers pp ON pp.project_id = p.id"
@@ -878,6 +1117,9 @@ def list_projects(
         if category_id:
             query += " AND p.category_id = ?"
             params.append(category_id)
+        if practice_id:
+            query += " AND p.practice_id = ?"
+            params.append(practice_id)
         if pioneer:
             query += " AND pp.pioneer_name = ?"
             params.append(pioneer)
@@ -894,6 +1136,10 @@ def update_project(project_id: int, data: dict) -> bool:
         fields = {k: v for k, v in data.items() if v is not None}
         if not fields:
             return False
+        # Coerce booleans to SQLite-friendly ints for known boolean columns.
+        for bool_col in ("show_previous_answers", "show_other_pioneers_answers", "legacy_overridden"):
+            if bool_col in fields and isinstance(fields[bool_col], bool):
+                fields[bool_col] = 1 if fields[bool_col] else 0
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         set_clause += ", updated_at = CURRENT_TIMESTAMP"
         values = list(fields.values()) + [project_id]
@@ -926,9 +1172,11 @@ def delete_project(project_id: int) -> bool:
 def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
-            """SELECT p.*, pc.name as category_name
+            """SELECT p.*, pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE p.expert_token = ?""",
             (token,),
         ).fetchone()
@@ -1047,18 +1295,21 @@ def get_round_token(token: str) -> Optional[dict]:
                       prt.token, prt.issued_at, prt.completed_at, prt.response_id,
                       pp.pioneer_name, pp.pioneer_email, pp.total_rounds, pp.show_previous,
                       pp.project_id,
-                      p.project_name, p.category_id, p.client_name,
+                      p.project_name, p.category_id, p.practice_id, p.client_name,
                       p.description, p.date_started, p.date_delivered,
                       p.xcsg_calendar_days, p.working_days, p.xcsg_team_size,
                       p.xcsg_revision_rounds, p.revision_depth, p.xcsg_scope_expansion,
                       p.engagement_revenue, p.legacy_calendar_days, p.legacy_team_size,
                       p.legacy_revision_rounds, p.legacy_overridden, p.engagement_stage,
-                      p.default_rounds, p.show_previous_answers, p.status,
-                      pc.name AS category_name
+                      p.default_rounds, p.show_previous_answers,
+                      p.show_other_pioneers_answers, p.status,
+                      pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM pioneer_round_tokens prt
                JOIN project_pioneers pp ON prt.pioneer_id = pp.id
                JOIN projects p ON pp.project_id = p.id
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE prt.token = ?""",
             (token,),
         ).fetchone()
@@ -1157,6 +1408,28 @@ def get_pioneer_responses(pioneer_id: int) -> list:
         rows = conn.execute(
             "SELECT * FROM expert_responses WHERE pioneer_id = ? ORDER BY round_number ASC",
             (pioneer_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_other_pioneer_responses(project_id: int, exclude_pioneer_id: int) -> list:
+    """All submitted responses from pioneers OTHER than the given one.
+
+    Returns a list of dicts, each with the full expert_response row plus the
+    pioneer's display name (``pioneer_name``). Only rows that have actually
+    been submitted (``submitted_at IS NOT NULL``) are returned. Ordered by
+    pioneer name, then round number, for stable rendering.
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT er.*, pp.pioneer_name AS pioneer_name
+               FROM expert_responses er
+               JOIN project_pioneers pp ON pp.id = er.pioneer_id
+               WHERE er.project_id = ?
+                 AND er.pioneer_id != ?
+                 AND er.submitted_at IS NOT NULL
+               ORDER BY pp.pioneer_name, er.round_number""",
+            (project_id, exclude_pioneer_id),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1388,9 +1661,11 @@ def list_complete_projects() -> list:
     """Return projects with status 'partial' or 'complete' (have at least some responses)."""
     with _db() as conn:
         rows = conn.execute(
-            """SELECT DISTINCT p.*, pc.name as category_name
+            """SELECT DISTINCT p.*, pc.name AS category_name,
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
+               LEFT JOIN practices pr ON p.practice_id = pr.id
                WHERE p.status IN ('partial', 'complete')
                ORDER BY p.created_at ASC"""
         ).fetchall()

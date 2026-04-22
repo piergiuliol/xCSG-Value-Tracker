@@ -30,6 +30,8 @@ from backend.models import (
     MetricsSummary,
     PioneerCreate,
     PioneerUpdate,
+    PracticeCreate,
+    PracticeUpdate,
     ProjectCreate,
     ProjectUpdate,
     RegisterRequest,
@@ -108,11 +110,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
+    # init_db() owns all migrations — don't duplicate here.
     db.init_db()
-    db.migrate()
-    db.migrate_v2()
-    db.migrate_v11()
-    db.migrate_round_tokens()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -268,6 +267,32 @@ async def update_category(
     return dict(db.get_category(category_id))
 
 
+@app.put("/api/categories/{category_id}/practices")
+async def set_category_practices_endpoint(
+    category_id: int,
+    body: dict,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    """Replace the practice attributions for a category. Body: {"practice_ids": [1, 2, ...]}."""
+    if not db.get_category(category_id):
+        raise HTTPException(status_code=404, detail="Category not found")
+    practice_ids = body.get("practice_ids", [])
+    if not isinstance(practice_ids, list):
+        raise HTTPException(status_code=400, detail="practice_ids must be a list")
+    for pid in practice_ids:
+        if not db.get_practice(int(pid)):
+            raise HTTPException(status_code=400, detail=f"Invalid practice id: {pid}")
+    db.set_practices_for_category(category_id, practice_ids)
+    db.log_activity(
+        current_user["sub"],
+        "category_practices_updated",
+        details=f"Updated practices for category #{category_id}: {practice_ids}",
+    )
+    # Return the fresh category (with practices list).
+    cats = db.list_categories()
+    return next((c for c in cats if c["id"] == category_id), {})
+
+
 @app.delete("/api/categories/{category_id}", status_code=204)
 async def delete_category(
     category_id: int,
@@ -286,12 +311,74 @@ async def delete_category(
     )
 
 
+# ── Practices ────────────────────────────────────────────────────────────────
+
+@app.get("/api/practices")
+async def list_practices_endpoint(current_user: dict = Depends(auth.get_current_user)):
+    return db.list_practices()
+
+
+@app.post("/api/practices", status_code=201)
+async def create_practice_endpoint(
+    body: PracticeCreate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    try:
+        practice_id = db.create_practice(body.code, body.name, body.description)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Practice code already exists")
+    practice = db.get_practice(practice_id)
+    db.log_activity(
+        current_user["sub"],
+        "practice_created",
+        details=f"Created practice '{body.code}'",
+    )
+    return dict(practice)
+
+
+@app.put("/api/practices/{practice_id}")
+async def update_practice_endpoint(
+    practice_id: int,
+    body: PracticeUpdate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    practice = db.get_practice(practice_id)
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
+    db.update_practice(practice_id, body.name, body.description)
+    db.log_activity(
+        current_user["sub"],
+        "practice_updated",
+        details=f"Updated practice '{body.name}'",
+    )
+    return dict(db.get_practice(practice_id))
+
+
+@app.delete("/api/practices/{practice_id}", status_code=204)
+async def delete_practice_endpoint(
+    practice_id: int,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    practice = db.get_practice(practice_id)
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
+    ok = db.delete_practice(practice_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Cannot delete practice with existing projects")
+    db.log_activity(
+        current_user["sub"],
+        "practice_deleted",
+        details=f"Deleted practice '{practice['code']}'",
+    )
+
+
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/projects")
 async def list_projects(
     status_filter: Optional[str] = Query(None, alias="status"),
     category_id: Optional[int] = Query(None),
+    practice_id: Optional[int] = Query(None),
     pioneer: Optional[str] = Query(None),
     client: Optional[str] = Query(None),
     current_user: dict = Depends(auth.get_current_user),
@@ -299,6 +386,7 @@ async def list_projects(
     projects = db.list_projects(
         status_filter=status_filter,
         category_id=category_id,
+        practice_id=practice_id,
         pioneer=pioneer,
         client=client,
     )
@@ -327,6 +415,17 @@ async def create_project(
     cat = db.get_category(body.category_id)
     if not cat:
         raise HTTPException(status_code=400, detail="Invalid category_id")
+
+    if body.practice_id is not None:
+        if not db.get_practice(body.practice_id):
+            raise HTTPException(status_code=400, detail="Invalid practice_id")
+        if not db.is_practice_allowed_for_category(body.category_id, body.practice_id):
+            allowed = db.get_practices_for_category(body.category_id)
+            codes = [a["code"] for a in allowed]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Practice is not allowed for this category. Allowed: {codes}",
+            )
 
     if len(body.pioneers) > MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
@@ -619,10 +718,17 @@ async def get_expert_context(token: str):
     if show_previous:
         previous_responses = db.get_pioneer_responses(pioneer_id)
 
+    show_other_pioneers = bool(tok.get("show_other_pioneers_answers"))
+    other_pioneers_responses = None
+    if show_other_pioneers:
+        other_pioneers_responses = db.get_other_pioneer_responses(project_id, pioneer_id)
+
     return ExpertContextResponse(
         project_id=project_id,
         project_name=tok["project_name"],
         category_name=tok["category_name"],
+        practice_code=tok.get("practice_code"),
+        practice_name=tok.get("practice_name"),
         description=tok.get("description"),
         client_name=tok.get("client_name"),
         pioneer_name=tok["pioneer_name"],
@@ -637,6 +743,8 @@ async def get_expert_context(token: str):
         total_rounds=total_rounds,
         show_previous=show_previous,
         previous_responses=previous_responses,
+        show_other_pioneers=show_other_pioneers,
+        other_pioneers_responses=other_pioneers_responses,
     )
 
 
@@ -697,22 +805,65 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
     db.complete_round_token(token, response_id)
     db.update_project_status(project_id)
 
-    db.log_activity(
-        1,
-        "expert_submitted",
-        project_id=project_id,
-        details=f"Expert assessment submitted for '{tok['project_name']}' (pioneer: {tok['pioneer_name']}, round {current_round}/{total_rounds})",
-    )
+    try:
+        db.log_activity(
+            1,
+            "expert_submitted",
+            project_id=project_id,
+            details=f"Expert assessment submitted for '{tok['project_name']}' (pioneer: {tok['pioneer_name']}, round {current_round}/{total_rounds})",
+        )
+    except Exception as e:
+        import logging
+        logging.warning(f"log_activity failed (non-fatal): {e}")
 
     project_row = db.get_project(project_id)
     responses = db.get_all_project_responses(project_id)
     metrics = mtx.compute_averaged_project_metrics(dict(project_row), responses)
+
+    # Auto-issue the next round token if the pioneer has more rounds remaining
+    # and the next round doesn't already have a token.
+    next_round_token: Optional[str] = None
+    next_round_number = current_round + 1
+    if next_round_number <= total_rounds:
+        with db._db() as conn:
+            existing = conn.execute(
+                "SELECT token, completed_at FROM pioneer_round_tokens WHERE pioneer_id = ? AND round_number = ?",
+                (pioneer_id, next_round_number),
+            ).fetchone()
+        if existing is None:
+            try:
+                issued = db.issue_round_token(pioneer_id, next_round_number, issued_by=None)
+                next_round_token = issued.get("token")
+                try:
+                    db.log_activity(
+                        1,
+                        "round_auto_issued",
+                        project_id=project_id,
+                        details=(
+                            f"Auto-issued round {next_round_number} for pioneer "
+                            f"#{pioneer_id} ({tok['pioneer_name']}) after round "
+                            f"{current_round} submission"
+                        ),
+                    )
+                except Exception as e:
+                    import logging
+                    logging.warning(f"log_activity failed (non-fatal): {e}")
+            except ValueError:
+                # Defensive: if validation rejects (e.g. race), fall through
+                # with next_round_token = None.
+                next_round_token = None
+        elif existing["completed_at"] is None:
+            # Already issued (e.g. admin pre-issued it) — surface the token
+            # so the UI can pick it up.
+            next_round_token = existing["token"]
+
     return {
         "success": True,
         "message": "Assessment submitted successfully",
         "metrics": metrics,
         "current_round": current_round,
         "total_rounds": total_rounds,
+        "next_round_token": next_round_token,
     }
 
 
@@ -730,6 +881,19 @@ async def dashboard_metrics(current_user: dict = Depends(auth.get_current_user))
     complete = _build_averaged_complete_projects()
     all_projects = db.list_projects()
     return mtx.compute_dashboard_metrics(complete, all_projects)
+
+
+@app.get("/api/dashboard/takeaways")
+async def dashboard_takeaways(current_user: dict = Depends(auth.get_current_user)):
+    """Return {chart_id: takeaway_string} for each dashboard chart."""
+    from backend.takeaways import compute_takeaways
+    from backend.schema import DASHBOARD_CONFIG
+
+    complete = _build_averaged_complete_projects()
+    all_p = db.list_projects()
+    aggregates = mtx.compute_summary(complete, all_p)
+    scaling_gates = mtx.compute_scaling_gates(complete)
+    return compute_takeaways(complete, aggregates, scaling_gates, DASHBOARD_CONFIG["charts"])
 
 
 @app.get("/api/projects/{project_id}/metrics")
@@ -756,6 +920,8 @@ def _build_averaged_complete_projects() -> list:
             avg["id"] = p["id"]
             avg["project_name"] = p["project_name"]
             avg["category_name"] = p["category_name"]
+            avg["practice_code"] = p.get("practice_code")
+            avg["practice_name"] = p.get("practice_name")
             avg["pioneer_name"] = p.get("pioneer_name", "")
             avg["date_started"] = p.get("date_started")
             avg["date_delivered"] = p.get("date_delivered")

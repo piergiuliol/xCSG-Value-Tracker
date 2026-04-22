@@ -23,6 +23,7 @@ const state = {
   user: null,
   token: sessionStorage.getItem('xcsg_token') || null,
   categories: [],
+  practices: [],
 };
 
 const charts = {};
@@ -87,252 +88,8 @@ function gaugeHTML(score, size) {
    METRIC_DETAILS — single source of truth for methodology + side panel
    ═══════════════════════════════════════════════════════════════════════ */
 
-const METRIC_DETAILS = {
-  delivery_speed: {
-    label: 'Delivery Speed', icon: '\u26A1', format: 'ratio', section: 'core',
-    what: 'How much faster xCSG delivers compared to legacy methods. Measures total effort in person-days.',
-    formula: 'Legacy person-days \u00F7 xCSG person-days',
-    formulaDetail: 'Person-days = working days \u00D7 team size',
-    sources: {
-      xcsg: 'Working days \u00D7 Team size (project configuration)',
-      legacy: 'L1 (legacy working days) \u00D7 L2 (legacy team size) from expert survey',
-      note: 'Expert survey data takes precedence over project configuration.'
-    },
-    example: {
-      rows: [
-        ['Working days', '5', '15'],
-        ['Team size', '2', '3'],
-        ['Person-days', '10', '45'],
-      ],
-      result: '4.5\u00D7',
-      resultLabel: 'Delivery Speed'
-    },
-    howToRead: '4.5\u00D7 means xCSG delivered in less than a quarter of the effort. Values above 1\u00D7 indicate xCSG advantage.'
-  },
-  output_quality: {
-    label: 'Output Quality', icon: '\u2B50', format: 'ratio', section: 'core',
-    what: 'xCSG output quality relative to legacy, based on expert self-assessment, analytical depth, and decision readiness.',
-    formula: 'xCSG quality score \u00F7 Legacy quality score',
-    formulaDetail: 'Quality = average of scored quality dimensions. Exceptional=1.0, Strong=0.75, Adequate=0.4, Superficial=0.1',
-    sources: {
-      xcsg: 'Average of C6 (self-assessment), C7 (analytical depth), C8 (decision readiness)',
-      legacy: 'Average of L13 (legacy analytical depth), L14 (legacy decision readiness)',
-      note: 'Each option maps to a 0\u20131 score; the ratio compares the two averages.'
-    },
-    example: {
-      rows: [
-        ['Quality components', 'C6=1.0, C7=0.75, C8=1.0', 'L13=0.4, L14=0.2'],
-        ['Average quality', '0.92', '0.30'],
-      ],
-      result: '3.07\u00D7',
-      resultLabel: 'Output Quality'
-    },
-    howToRead: '3.07\u00D7 means xCSG output quality is roughly three times higher. Values above 1\u00D7 indicate better quality.'
-  },
-  productivity_ratio: {
-    label: 'xCSG Value Gain', icon: '\uD83C\uDFAF', format: 'ratio', section: 'core',
-    what: 'The primary metric. Compares quality per unit of effort between xCSG and legacy delivery.',
-    formula: '(xCSG quality \u00F7 xCSG person-days) \u00F7 (Legacy quality \u00F7 Legacy person-days)',
-    formulaDetail: 'Quality per person-day ratio \u2014 how much value is produced per unit of effort.',
-    sources: {
-      xcsg: 'Quality score (avg of C6, C7, C8) \u00F7 person-days (working days \u00D7 team size)',
-      legacy: 'Quality score (avg of L13, L14) \u00F7 person-days (L1 \u00D7 L2)',
-      note: 'This is the ratio of ratios: combines speed and quality into one number.'
-    },
-    example: {
-      rows: [
-        ['Quality score', '0.92', '0.30'],
-        ['Person-days', '10', '45'],
-        ['Quality / person-day', '0.092', '0.0067'],
-      ],
-      result: '13.8\u00D7',
-      resultLabel: 'xCSG Value Gain'
-    },
-    howToRead: '13.8\u00D7 means xCSG produces nearly 14 times more quality per unit of effort. This is the single most important metric.'
-  },
-  rework_efficiency: {
-    label: 'Rework Efficiency', icon: '\uD83D\uDD27', format: 'ratio', section: 'core',
-    what: 'How smoothly xCSG delivers compared to legacy. Combines revision depth, scope expansion, and client reaction.',
-    formula: 'xCSG smoothness \u00F7 Legacy smoothness',
-    formulaDetail: 'Smoothness = average of revision depth score, scope expansion score, and client pulse score.',
-    sources: {
-      xcsg: 'Revision depth, scope expansion, client pulse (project fields)',
-      legacy: 'L3 (legacy revision depth), L4 (legacy scope expansion), L5 (legacy client reaction)',
-      note: 'Higher smoothness scores mean fewer revisions and better client reception.'
-    },
-    example: {
-      rows: [
-        ['Revision depth', '1.0 (none)', '0.55 (moderate)'],
-        ['Scope expansion', '0.0 (no)', '0.0 (no)'],
-        ['Client pulse', '0.6 (met)', '0.6 (met)'],
-        ['Average smoothness', '0.53', '0.38'],
-      ],
-      result: '1.39\u00D7',
-      resultLabel: 'Rework Efficiency'
-    },
-    howToRead: '1.39\u00D7 means xCSG delivery was smoother with less rework. Above 1\u00D7 = xCSG advantage.'
-  },
-  machine_first_score: {
-    label: 'Machine-First Gain', icon: '\uD83E\uDD16', format: 'ratio', section: 'flywheel',
-    what: 'Breadth of knowledge synthesis in xCSG vs legacy. Measures how many sources were synthesized.',
-    formula: 'B2 score \u00F7 L6 score',
-    formulaDetail: 'B2: "How many knowledge sources synthesized?" Scoring: Single source=0.25, Few (2\u20134)=0.5, Multiple (5\u201310)=0.75, Broad (10+)=1.0',
-    sources: {
-      xcsg: 'B2 \u2014 Knowledge sources synthesized (xCSG approach)',
-      legacy: 'L6 \u2014 Same question for legacy approach',
-      note: 'Directly compares the breadth of AI-augmented research vs traditional.'
-    },
-    example: {
-      rows: [
-        ['Sources synthesized', 'Broad (10+) = 1.0', 'Few (2\u20134) = 0.5'],
-      ],
-      result: '2.0\u00D7',
-      resultLabel: 'Machine-First Gain'
-    },
-    howToRead: '2.0\u00D7 means xCSG synthesized twice as many knowledge sources. Higher = more automation leverage.'
-  },
-  senior_led_score: {
-    label: 'Senior-Led Gain', icon: '\uD83D\uDC54', format: 'ratio', section: 'flywheel',
-    what: 'Average of three ratios measuring senior expert involvement depth in xCSG vs legacy.',
-    formula: 'Average of 3 ratios: C1/L7, C2/L8, C3/L9',
-    formulaDetail: 'C1: Specialization (Deep=1.0, Adjacent=0.5, Generalist=0.0). C2: Directness (Authored=1.0, Co-authored=0.5, Reviewed=0.0). C3: Judgment % (>75%=1.0, 50\u201375%=0.75, 25\u201350%=0.5, <25%=0.25). When legacy=0 but xCSG>0, ratio caps at 10\u00D7.',
-    sources: {
-      xcsg: 'C1 (specialization), C2 (directness), C3 (judgment %)',
-      legacy: 'L7 (legacy specialization), L8 (legacy directness), L9 (legacy judgment %)',
-      note: 'Each pair is compared as a ratio, then the three ratios are averaged.'
-    },
-    example: {
-      rows: [
-        ['Specialization (C1/L7)', 'Deep = 1.0', 'Generalist = 0.0 \u2192 10\u00D7 cap'],
-        ['Directness (C2/L8)', 'Authored = 1.0', 'Co-authored = 0.5 \u2192 2\u00D7'],
-        ['Judgment (C3/L9)', '>75% = 1.0', '<25% = 0.25 \u2192 4\u00D7'],
-      ],
-      result: '5.33\u00D7',
-      resultLabel: 'Senior-Led Gain (avg of 10, 2, 4)'
-    },
-    howToRead: '5.33\u00D7 means senior experts were far more deeply involved in xCSG. Higher = more expert-driven work.'
-  },
-  proprietary_knowledge_score: {
-    label: 'Knowledge Gain', icon: '\uD83C\uDFF0', format: 'ratio', section: 'flywheel',
-    what: 'Proprietary knowledge advantage. Averages three ratios: proprietary data use, knowledge reuse, and competitive moat.',
-    formula: 'Average of 3 ratios: D1/L10, D2/L11, D3/L12',
-    formulaDetail: 'D1: Proprietary data (Yes=1.0, No=0.0). D2: Knowledge reuse (Reused & extended=1.0, Useful context=0.5, From scratch=0.0). D3: Moat test (Proprietary decisive=1.0, Partially=0.5, All public=0.0). Same 10\u00D7 cap when legacy=0.',
-    sources: {
-      xcsg: 'D1 (proprietary data), D2 (knowledge reuse), D3 (moat test)',
-      legacy: 'L10 (legacy proprietary data), L11 (legacy reuse), L12 (legacy moat)',
-      note: 'Measures how hard the deliverable would be to replicate without xCSG.'
-    },
-    example: {
-      rows: [
-        ['Proprietary data (D1/L10)', 'Yes = 1.0', 'No = 0.0 \u2192 10\u00D7 cap'],
-        ['Knowledge reuse (D2/L11)', 'Extended = 1.0', 'Scratch = 0.0 \u2192 10\u00D7 cap'],
-        ['Moat test (D3/L12)', 'Decisive = 1.0', 'Public = 0.0 \u2192 10\u00D7 cap'],
-      ],
-      result: '10.0\u00D7',
-      resultLabel: 'Knowledge Gain (avg of 10, 10, 10)'
-    },
-    howToRead: '10.0\u00D7 means xCSG had a massive proprietary knowledge advantage. Higher = harder to replicate.'
-  },
-  client_impact: {
-    label: 'Client Impact', icon: '\uD83D\uDCA5', format: 'ratio', section: 'flywheel',
-    what: 'Did xCSG work drive client decisions more effectively than legacy would have?',
-    formula: 'E1 score \u00F7 L15 score (capped at 10\u00D7)',
-    formulaDetail: 'E1: Informed decision=1.0, Referenced=0.6, Too early=null (excluded), No=0.1.',
-    sources: {
-      xcsg: 'E1 \u2014 Did the deliverable inform a client decision?',
-      legacy: 'L15 \u2014 Would the traditional version have driven the same decision?',
-      note: 'Ratio is capped at 10\u00D7. "Too early to tell" responses are excluded.'
-    },
-    example: {
-      rows: [
-        ['Decision influence', 'Informed decision = 1.0', 'No = 0.1'],
-      ],
-      result: '10.0\u00D7',
-      resultLabel: 'Client Impact (capped)'
-    },
-    howToRead: '10.0\u00D7 (capped) means xCSG drove significantly more client action. Higher = stronger decision influence.'
-  },
-  data_independence: {
-    label: 'Data Independence', icon: '\uD83D\uDCCA', format: 'ratio', section: 'flywheel',
-    what: 'How efficiently xCSG uses data compared to legacy. Less time on sourcing, more on analysis and insight.',
-    formula: 'B6 score \u00F7 L16 score',
-    formulaDetail: 'B6: <25% on data=1.0, 25\u201350%=0.75, 50\u201375%=0.4, >75% on data=0.1.',
-    sources: {
-      xcsg: 'B6 \u2014 What % of effort went to data sourcing vs analysis?',
-      legacy: 'L16 \u2014 What % of time would traditional delivery spend on data sourcing?',
-      note: 'Higher = more time on insight generation rather than data collection.'
-    },
-    example: {
-      rows: [
-        ['Data sourcing effort', '<25% = 1.0', '>75% = 0.1'],
-      ],
-      result: '10.0\u00D7',
-      resultLabel: 'Data Independence'
-    },
-    howToRead: '10.0\u00D7 means xCSG spent far less time on data collection. Higher = more insight per data effort.'
-  },
-  reuse_intent_avg: {
-    label: 'Reuse Intent', icon: '\uD83D\uDD04', format: 'pct', section: 'signal',
-    what: 'Expert loyalty signal. Would they choose the xCSG approach again for this type of deliverable?',
-    formula: 'Average of G1 scores across all experts',
-    formulaDetail: '"Yes without hesitation" = 100%, "Yes with reservations" = 50%, "No" = 0%.',
-    sources: {
-      xcsg: 'G1 \u2014 Would you choose the xCSG approach again?',
-      legacy: 'N/A (this is a forward-looking signal metric)',
-      note: 'Aggregated across all expert responses for the portfolio.'
-    },
-    example: {
-      rows: [
-        ['Expert 1', 'Yes without hesitation', '100%'],
-        ['Expert 2', 'Yes with reservations', '50%'],
-        ['Expert 3', 'Yes without hesitation', '100%'],
-      ],
-      result: '83%',
-      resultLabel: 'Reuse Intent (average)'
-    },
-    howToRead: '83% means most experts would enthusiastically reuse xCSG. Target: 70%+ for the adoption confidence scaling gate.'
-  },
-  ai_survival_avg: {
-    label: 'AI Survival', icon: '\uD83C\uDF0D', format: 'pct', section: 'signal',
-    what: 'How much of the initial AI-generated draft survived into the final deliverable unchanged.',
-    formula: 'Average of B5 scores across all experts',
-    formulaDetail: '">75%" = 100%, "50\u201375%" = 75%, "25\u201350%" = 50%, "<25%" = 25%.',
-    sources: {
-      xcsg: 'B5 \u2014 What % of the AI draft survived into the final deliverable?',
-      legacy: 'N/A (legacy does not use AI drafts)',
-      note: 'Higher = AI produced better starting material that required less rework.'
-    },
-    example: {
-      rows: [
-        ['Expert 1', '>75%', '100%'],
-        ['Expert 2', '50\u201375%', '75%'],
-      ],
-      result: '88%',
-      resultLabel: 'AI Survival (average)'
-    },
-    howToRead: '88% means most AI-generated content survived review. Higher = better AI starting quality.'
-  },
-  client_pulse_avg: {
-    label: 'Client Pulse', icon: '\u2764', format: 'pct', section: 'signal',
-    what: 'How clients rated the deliverable. An aggregate satisfaction signal.',
-    formula: 'Average of client pulse scores across all projects',
-    formulaDetail: '"Exceeded expectations" = 100%, "Met expectations" = 60%, "Below expectations" = 10%.',
-    sources: {
-      xcsg: 'Client Pulse field on each project',
-      legacy: 'N/A (this is the actual client reaction to xCSG delivery)',
-      note: 'Set by the PMO team based on client feedback, not by expert survey.'
-    },
-    example: {
-      rows: [
-        ['Project Alpha', 'Exceeded expectations', '100%'],
-        ['Project Beta', 'Met expectations', '60%'],
-      ],
-      result: '80%',
-      resultLabel: 'Client Pulse (average)'
-    },
-    howToRead: '80% means clients are generally very satisfied. Target: consistent "exceeded" or "met" ratings.'
-  },
-};
+// METRIC_DETAILS moved to frontend/metric-details.js (loaded before this script)
+const METRIC_DETAILS = window.METRIC_DETAILS;
 
 const SCALING_GATE_DETAILS = [
   { name: 'Multi-engagement', threshold: '\u22652 deliverable types completed', description: 'Proves xCSG works across different deliverable types, not just one niche.' },
@@ -466,6 +223,42 @@ async function loadCategories() {
   }
 }
 
+function practiceOptionsHTML(selected, categoryId) {
+  // If a category is provided, restrict the dropdown to that category's allowed practices.
+  // Otherwise (no category yet or category unknown), show an empty placeholder.
+  let allowed = state.practices;
+  if (categoryId != null && categoryId !== '') {
+    const cat = state.categories.find(c => c.id == categoryId);
+    if (cat && Array.isArray(cat.practices)) {
+      const allowedIds = new Set(cat.practices.map(p => p.id));
+      allowed = state.practices.filter(p => allowedIds.has(p.id));
+    } else {
+      allowed = [];
+    }
+  } else {
+    allowed = [];
+  }
+  if (allowed.length === 0) {
+    return '<option value="">— Pick a category first —</option>';
+  }
+  if (allowed.length === 1) {
+    const p = allowed[0];
+    return `<option value="${p.id}" selected>${esc(p.code)}</option>`;
+  }
+  return '<option value="">— Select Practice —</option>' +
+    allowed.map(p => `<option value="${p.id}"${p.id == selected ? ' selected' : ''}>${esc(p.code)}</option>`).join('');
+}
+
+async function loadPractices() {
+  if (state.practices.length === 0 && state.token) {
+    try { state.practices = await apiCall('GET', '/practices'); } catch { /* ignore */ }
+  }
+}
+
+async function loadTaxonomy() {
+  await Promise.all([loadCategories(), loadPractices()]);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    AUTH
    ═══════════════════════════════════════════════════════════════════════ */
@@ -474,6 +267,7 @@ function handleLogout() {
   state.token = null;
   state.user = null;
   state.categories = [];
+  state.practices = [];
   sessionStorage.removeItem('xcsg_token');
   showScreen('login');
 }
@@ -530,7 +324,7 @@ async function route() {
   if (!state.token) { showScreen('login'); return; }
   showScreen('app');
 
-  await Promise.all([loadCategories(), loadSchema()]);
+  await Promise.all([loadTaxonomy(), loadSchema()]);
   if (thisRoute !== _routeCounter) return; // stale route — newer navigation happened
 
   // Hide write-only UI for viewers
@@ -587,6 +381,7 @@ function toggleCheckpointCard(cpId) {
 // Cache dashboard data for filtering
 let _dashboardCache = null;
 let _projectsCache = null;
+let _takeawaysCache = {};
 
 function _avg(arr) {
   const vals = arr.filter(v => v != null);
@@ -594,11 +389,13 @@ function _avg(arr) {
 }
 
 function _computeLocalMetrics(projects) {
-  const completed = projects.filter(p => p.status === 'complete' && p.metrics);
-  const m = completed.map(p => p.metrics);
+  // Match the server's /api/dashboard/metrics behaviour — include both 'complete'
+  // and 'partial' projects (metrics are valid with ≥1 submitted response).
+  const withMetrics = projects.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
+  const m = withMetrics.map(p => p.metrics);
   return {
     total_projects: projects.length,
-    complete_projects: completed.length,
+    complete_projects: withMetrics.length,
     average_effort_ratio: _avg(m.map(x => x.delivery_speed)),
     average_quality_ratio: _avg(m.map(x => x.output_quality)),
     average_advantage: _avg(m.map(x => x.productivity_ratio)),
@@ -621,14 +418,16 @@ async function renderPortfolio() {
   const myRoute = _routeCounter;
 
   try {
-    const [dashboard, allProjects] = await Promise.all([
+    const [dashboard, allProjects, takeaways] = await Promise.all([
       apiCall('GET', '/dashboard/metrics'),
       apiCall('GET', '/projects'),
+      apiCall('GET', '/dashboard/takeaways').catch(() => ({})),
     ]);
     if (myRoute !== _routeCounter) return; // stale — user navigated away
 
     _dashboardCache = dashboard;
     _projectsCache = allProjects;
+    _takeawaysCache = takeaways || {};
 
     if (!allProjects.length) {
       mc.innerHTML = `<div class="empty-state"><h2>Welcome to the xCSG Value Tracker</h2><p>Start by creating your first project to begin measuring xCSG performance.</p>${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a>' : ''}</div>`;
@@ -642,20 +441,203 @@ async function renderPortfolio() {
 }
 
 
-function _renderDashboardView(allProjects, dashboard, filterCategory) {
+// ── Filter engine ───────────────────────────────────────────────────────────
+
+const DEFAULT_FILTERS = () => ({
+  practices: new Set(), categories: new Set(), pioneers: new Set(), projects: new Set(),
+  delivered_from: null, delivered_to: null,
+});
+
+let filterState = _loadFilters();
+
+function _loadFilters() {
+  try {
+    const raw = localStorage.getItem(DASHBOARD.filterStorageKey);
+    if (!raw) return DEFAULT_FILTERS();
+    const j = JSON.parse(raw);
+    return {
+      practices:  new Set(j.practices  || []),
+      categories: new Set(j.categories || []),
+      pioneers:   new Set(j.pioneers   || []),
+      projects:   new Set((j.projects  || []).map(Number)),
+      delivered_from: j.delivered_from || null,
+      delivered_to:   j.delivered_to   || null,
+    };
+  } catch (_) { return DEFAULT_FILTERS(); }
+}
+
+function _saveFilters() {
+  localStorage.setItem(DASHBOARD.filterStorageKey, JSON.stringify({
+    practices:  [...filterState.practices],
+    categories: [...filterState.categories],
+    pioneers:   [...filterState.pioneers],
+    projects:   [...filterState.projects],
+    delivered_from: filterState.delivered_from,
+    delivered_to:   filterState.delivered_to,
+  }));
+}
+
+function clearFilters() {
+  filterState = DEFAULT_FILTERS();
+  _saveFilters();
+}
+
+function applyFilters(allProjects, state) {
+  state = state || filterState;
+  return allProjects.filter(p => {
+    if (state.practices.size   && !state.practices.has(p.practice_code || '—')) return false;
+    if (state.categories.size  && !state.categories.has(p.category_name || '—')) return false;
+    if (state.pioneers.size) {
+      const names = (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || '');
+      const any = names.some(n => state.pioneers.has(n)) || state.pioneers.has(p.pioneer_name);
+      if (!any) return false;
+    }
+    if (state.projects.size    && !state.projects.has(p.id)) return false;
+    const d = p.date_delivered;
+    if (state.delivered_from && (!d || d < state.delivered_from)) return false;
+    if (state.delivered_to   && (!d || d > state.delivered_to))   return false;
+    return true;
+  });
+}
+
+function uniq(xs) { return [...new Set(xs)]; }
+
+function renderFilterBar(allProjects) {
+  const el = document.getElementById('filterBar');
+  if (!el) return;
+
+  const practices  = uniq(allProjects.map(p => p.practice_code || '—')).sort();
+  const categories = uniq(allProjects.map(p => p.category_name || '—')).sort();
+  const pioneers   = uniq(allProjects.flatMap(p => (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || ''))).filter(Boolean).sort();
+
+  // Prune any persisted filter values that reference taxonomy/projects which no
+  // longer exist. Without this, a deleted category/practice silently filters
+  // out all projects and the user sees a blank dashboard.
+  let pruned = false;
+  for (const v of [...filterState.practices])  if (!practices.includes(v))   { filterState.practices.delete(v);  pruned = true; }
+  for (const v of [...filterState.categories]) if (!categories.includes(v))  { filterState.categories.delete(v); pruned = true; }
+  for (const v of [...filterState.pioneers])   if (!pioneers.includes(v))    { filterState.pioneers.delete(v);   pruned = true; }
+  const validIds = new Set(allProjects.map(p => p.id));
+  for (const id of [...filterState.projects])  if (!validIds.has(id))        { filterState.projects.delete(id);  pruned = true; }
+  if (pruned) _saveFilters();
+
+  const summary = (setRef, total) =>
+    !setRef.size ? 'All' : setRef.size === 1 ? [...setRef][0] : `${setRef.size} of ${total}`;
+
+  const btn = (key, label, sum) =>
+    `<button class="filter-chip ${sum === 'All' ? '' : 'active'}" data-filter="${key}">${label}: ${esc(sum)} ▾</button>`;
+
+  el.className = 'filter-bar';
+  el.innerHTML =
+      btn('practices',  'Practice',  summary(filterState.practices,  practices.length))
+    + btn('categories', 'Category',  summary(filterState.categories, categories.length))
+    + btn('pioneers',   'Pioneer',   summary(filterState.pioneers,   pioneers.length))
+    + btn('projects',   'Projects',  filterState.projects.size ? `${filterState.projects.size} of ${allProjects.length}` : 'All')
+    + btn('delivered',  'Delivered', (filterState.delivered_from || filterState.delivered_to) ? `${filterState.delivered_from || '…'} → ${filterState.delivered_to || '…'}` : 'all time')
+    + `<button class="filter-chip" data-filter="clear">Clear</button>`;
+
+  el.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () =>
+    _openFilterPopover(b.dataset.filter, b, { practices, categories, pioneers, allProjects })));
+}
+
+function _openFilterPopover(key, anchor, lists) {
+  document.querySelectorAll('.filter-popover').forEach(p => p.remove());
+  if (key === 'clear') { clearFilters(); _reapplyFilters(); return; }
+
+  const pop = document.createElement('div');
+  pop.className = 'filter-popover';
+  const r = anchor.getBoundingClientRect();
+  pop.style.top  = (window.scrollY + r.bottom + 6) + 'px';
+  pop.style.left = (window.scrollX + r.left)      + 'px';
+
+  const renderMulti = (setRef, options) => options.map(opt =>
+    `<label><input type="checkbox" value="${esc(opt)}" ${setRef.has(opt) ? 'checked' : ''}> ${esc(opt)}</label>`
+  ).join('');
+
+  if (key === 'practices')  pop.innerHTML = renderMulti(filterState.practices,  lists.practices);
+  if (key === 'categories') pop.innerHTML = renderMulti(filterState.categories, lists.categories);
+  if (key === 'pioneers')   pop.innerHTML = renderMulti(filterState.pioneers,   lists.pioneers);
+  if (key === 'projects')   pop.innerHTML = lists.allProjects.map(p =>
+    `<label><input type="checkbox" data-id="${p.id}" ${!filterState.projects.size || filterState.projects.has(p.id) ? 'checked' : ''}> ${esc(p.project_name)}</label>`
+  ).join('');
+  if (key === 'delivered')  pop.innerHTML =
+      `<label>From <input type="date" id="fFrom" value="${filterState.delivered_from || ''}"></label>`
+    + `<label>To <input type="date" id="fTo"   value="${filterState.delivered_to   || ''}"></label>`;
+
+  document.body.appendChild(pop);
+
+  pop.addEventListener('change', e => {
+    if (key === 'practices' || key === 'categories' || key === 'pioneers') {
+      const set = filterState[key];
+      if (e.target.checked) set.add(e.target.value); else set.delete(e.target.value);
+    } else if (key === 'projects') {
+      const id = Number(e.target.dataset.id);
+      if (e.target.checked) filterState.projects.add(id); else filterState.projects.delete(id);
+      // If every project is ticked, collapse to "All" by clearing the set
+      if (filterState.projects.size === lists.allProjects.length) filterState.projects.clear();
+    } else if (key === 'delivered') {
+      filterState.delivered_from = document.getElementById('fFrom').value || null;
+      filterState.delivered_to   = document.getElementById('fTo').value   || null;
+    }
+    _reapplyFilters();
+  });
+
+  setTimeout(() => document.addEventListener('click', function close(e) {
+    if (!pop.contains(e.target) && e.target !== anchor) {
+      pop.remove();
+      document.removeEventListener('click', close);
+    }
+  }), 0);
+}
+
+let _activeTab = 'overview';
+
+function renderTabShell(mountEl) {
+  const tabs = schema.dashboard.tabs;
+  const charts = schema.dashboard.charts;
+  mountEl.insertAdjacentHTML('beforeend',
+    `<div class="tab-bar">${tabs.map(t =>
+      `<div class="tab ${t.id === _activeTab ? 'active' : ''}" data-tab="${t.id}">${t.icon} ${esc(t.label)}</div>`
+    ).join('')}</div>`
+  );
+  for (const t of tabs) {
+    const tabCharts = charts.filter(c => c.tab === t.id);
+    const body = tabCharts.map(c => {
+      const takeaway = _takeawaysCache[c.id];
+      return `
+      <div class="chart-card" data-chart-id="${c.id}">
+        <div class="chart-card-title">${esc(c.title)}</div>
+        ${takeaway ? `<div class="chart-card-takeaway">${esc(takeaway)}</div>` : ''}
+        <div class="chart-card-explain">${esc(c.subtitle || '')}</div>
+        <div class="chart-body" ${c.height ? `style="height:${c.height}px"` : ''}>
+          <div id="${c.id}" style="width:100%;height:100%"></div>
+        </div>
+      </div>`;
+    }).join('');
+    mountEl.insertAdjacentHTML('beforeend',
+      `<div class="tab-panel ${t.id === _activeTab ? 'active' : ''}" data-panel="${t.id}">${body}</div>`);
+  }
+  mountEl.querySelectorAll('.tab-bar .tab').forEach(el =>
+    el.addEventListener('click', () => _selectTab(el.dataset.tab, mountEl))
+  );
+}
+
+function _selectTab(id, mountEl) {
+  _activeTab = id;
+  mountEl.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === id));
+  mountEl.querySelectorAll('.tab-panel').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
+  // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes
+  renderDashboardCharts(_dashboardCache, applyFilters(_projectsCache));
+}
+
+function _renderDashboardView(allProjects, dashboard) {
   const mc = document.getElementById('mainContent');
 
-  const filtered = filterCategory
-    ? allProjects.filter(p => (p.category_name || '') === filterCategory)
-    : allProjects;
-  const localMetrics = filterCategory ? _computeLocalMetrics(filtered) : dashboard;
+  const filtered = applyFilters(allProjects);
+  const localMetrics = filtered.length === allProjects.length ? dashboard : _computeLocalMetrics(filtered);
 
   const fmtRatio = value => value == null ? '\u2014' : `${round2(value)}\xd7`;
   const fmtPct = value => value == null ? '\u2014' : `${Math.round(value * 100)}%`;
-  const metricTone = value => value == null ? 'var(--gray-400)' : value > 1.5 ? 'var(--success)' : value >= 1.0 ? 'var(--blue)' : value >= 0.8 ? 'var(--warning)' : 'var(--danger)';
-
-  const categories = [...new Set(allProjects.map(p => p.category_name).filter(Boolean))].sort();
-
   let html = '';
 
   // ── HERO SECTION ──
@@ -663,7 +645,7 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
   html += `<div class="hero-section">
     <div class="hero-left">
       <div class="hero-label">Portfolio Overview</div>
-      <div class="hero-title">${filterCategory ? esc(filterCategory) : 'All Categories'}</div>
+      <div class="hero-title">All Categories</div>
       <div class="hero-meta">${localMetrics.complete_projects || 0} completed of ${allProjects.length} total</div>
     </div>
     <div class="hero-right">
@@ -673,187 +655,78 @@ function _renderDashboardView(allProjects, dashboard, filterCategory) {
     </div>
   </div>`;
 
-  // ── SLICER BAR ──
-  html += `<div class="slicer-bar">
-    <span class="slicer-label">\u{1F50D} Filter:</span>
-    <button class="filter-chip ${!filterCategory ? 'filter-chip-active' : ''}" onclick="_sliceDashboard(null)">All</button>`;
-  for (const cat of categories) {
-    const count = allProjects.filter(p => p.category_name === cat).length;
-    const short = cat.length > 26 ? cat.slice(0, 23) + '\u2026' : cat;
-    html += `<button class="filter-chip ${filterCategory === cat ? 'filter-chip-active' : ''}" onclick="_sliceDashboard('${esc(cat)}')">${esc(short)} <span class="chip-count">${count}</span></button>`;
-  }
-  html += `</div>`;
+  // ── FILTER BAR (populated by Task 11) ──
+  html += `<div id="filterBar"></div>`;
 
-  // ── KPI GRID ──
-  const kpis = [
-    { label: 'Delivery Speed', key: 'delivery_speed', value: localMetrics.average_effort_ratio, fmt: fmtRatio, icon: '\u26a1', tip: 'How much faster xCSG delivers vs legacy. Calculated as legacy person-days \xf7 xCSG person-days. 2\xd7 = xCSG took half the effort.' },
-    { label: 'Output Quality', key: 'output_quality', value: localMetrics.average_quality_ratio, fmt: fmtRatio, icon: '\u2b50', tip: 'xCSG output quality \xf7 legacy quality. Based on analytical depth, decision readiness, and self-assessment. 1.5\xd7 = 50% better quality.' },
-    { label: 'Rework Efficiency', key: 'rework_efficiency', value: localMetrics.rework_efficiency_avg, fmt: fmtRatio, icon: '\ud83d\udd27', tip: 'xCSG revision/rework burden vs legacy. Combines revision depth, scope changes, and client reaction. Higher = smoother delivery.' },
-    { label: 'Machine-First Gain', key: 'machine_first_score', value: localMetrics.machine_first_avg, fmt: fmtRatio, icon: '\ud83e\udd16', tip: 'xCSG knowledge synthesis breadth vs legacy. From single-source to broad systematic synthesis. Higher = more automation leverage.' },
-    { label: 'Senior-Led Gain', key: 'senior_led_score', value: localMetrics.senior_led_avg, fmt: fmtRatio, icon: '\ud83d\udc54', tip: 'Senior expert involvement in xCSG vs legacy. Averages specialization depth, directness of authorship, and judgment time. Higher = more expert-driven.' },
-    { label: 'Knowledge Gain', key: 'proprietary_knowledge_score', value: localMetrics.proprietary_knowledge_avg, fmt: fmtRatio, icon: '\ud83c\udff0', tip: 'Proprietary knowledge advantage. Averages proprietary data use, knowledge reuse, and competitive moat vs legacy. Higher = harder to replicate.' },
-    { label: 'Client Impact', key: 'client_impact', value: localMetrics.client_impact_avg, fmt: fmtRatio, icon: '\ud83d\udca5', tip: 'Did xCSG work drive client decisions more than legacy would have? Ratio of decision influence scores, capped at 10\xd7.' },
-    { label: 'Data Independence', key: 'data_independence', value: localMetrics.data_independence_avg, fmt: fmtRatio, icon: '\ud83d\udcca', tip: 'How efficiently xCSG uses data vs legacy. Less time on sourcing, more on analysis. Higher = more insight per data effort.' },
-  ];
-  const signals = [
-    { label: 'Reuse Intent', key: 'reuse_intent_avg', value: localMetrics.reuse_intent_avg, fmt: fmtPct, icon: '\ud83d\udd04', tip: 'Expert loyalty signal. Would they choose xCSG again? 100% = all said "yes without hesitation", 50% = mixed, 0% = all said no.' },
-    { label: 'AI Survival', key: 'ai_survival_avg', value: localMetrics.ai_survival_avg, fmt: fmtPct, icon: '\ud83c\udf0d', tip: 'How much of the initial AI-generated draft made it into the final deliverable unchanged. Higher = AI produced better starting material.' },
-    { label: 'Client Pulse', key: 'client_pulse_avg', value: localMetrics.client_pulse_avg, fmt: fmtPct, icon: '\u2764', tip: 'How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below.' },
-  ];
-
-  html += `<div class="metrics-grid">`;
-  for (const k of kpis) {
-    html += `<div class="metric-tile" title="${k.tip}">
-      <div class="metric-tile-icon">${k.icon}</div>
-      <div class="metric-tile-value" style="color:${metricTone(k.value)}">${k.fmt(k.value)}</div>
-      <div class="metric-tile-label">${k.label} ${infoIcon(k.key)}</div>
-    </div>`;
-  }
-  for (const s of signals) {
-    html += `<div class="metric-tile metric-tile-signal" title="${s.tip}">
-      <div class="metric-tile-icon">${s.icon}</div>
-      <div class="metric-tile-value" style="color:${metricTone(s.value)}">${s.fmt(s.value)}</div>
-      <div class="metric-tile-label">${s.label} ${infoIcon(s.key)}</div>
-    </div>`;
-  }
-
-  // On-Time Delivery tile — proportion primary, avg delta secondary.
-  // Computed from the currently filtered project list so it reacts to category slicer.
+  // ── KPI GRID (driven by schema.dashboard.kpi_tiles + schema.metrics) ──
+  // On-Time Delivery is the only synthetic tile — compute value + sub-label from
+  // the currently filtered project list so it reacts to the category slicer.
   const schedTracked = filtered.filter(p => scheduleDelta(p.date_expected_delivered, p.date_delivered) !== null);
   const schedDeltas = schedTracked.map(p => scheduleDelta(p.date_expected_delivered, p.date_delivered));
   const onTimeCount = schedDeltas.filter(d => d <= 0).length;
   const onTimePct = schedTracked.length ? Math.round((onTimeCount / schedTracked.length) * 100) : null;
   const avgDelta = schedTracked.length ? (schedDeltas.reduce((a, b) => a + b, 0) / schedTracked.length) : null;
-  const onTimeColor = onTimePct == null ? 'var(--gray-400)' : onTimePct >= 80 ? 'var(--success)' : onTimePct >= 60 ? 'var(--blue)' : onTimePct >= 40 ? 'var(--warning)' : 'var(--danger)';
   const onTimeTip = schedTracked.length
     ? `${onTimeCount}/${schedTracked.length} delivered on or before expected date`
     : 'No projects with both expected and actual delivery dates yet.';
   const avgDeltaLabel = avgDelta == null ? '' : (avgDelta === 0 ? 'avg on time' : (avgDelta > 0 ? `avg +${round2(avgDelta)}d late` : `avg ${round2(Math.abs(avgDelta))}d early`));
-  html += `<div class="metric-tile metric-tile-schedule" title="${esc(onTimeTip)}">
-    <div class="metric-tile-icon">\u23f1</div>
-    <div class="metric-tile-value" style="color:${onTimeColor}">${onTimePct == null ? '\u2014' : onTimePct + '%'}</div>
-    <div class="metric-tile-label">On-Time Delivery</div>
-    <div class="metric-tile-sub" style="font-size:11px;color:var(--gray-500);margin-top:4px">${esc(avgDeltaLabel)}</div>
-  </div>`;
-  html += `</div>`;
 
-  // ── CHART SECTIONS ──
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83c\udf0d</div>
-      <div><h2 class="section-title">Thesis Validation</h2><p class="section-subtitle">Disprove matrix and multi-dimensional gains</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">Disprove Matrix</div><div class="chart-card-explain">Each dot is a project. Top-right = faster AND better quality. Bottom-left = model failing.</div><div class="chart-body" style="height:380px"><div id="chartDisprove" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">Gains Radar</div><div class="chart-card-explain">Average scores across the six flywheel dimensions. The dashed line is baseline (1\xd7). Larger area = stronger advantage.</div><div class="chart-body" style="height:380px"><div id="chartRadar" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
+  const tileDefs = schema.dashboard.kpi_tiles.map(t => {
+    const meta = t.synthetic ? t : (schema.metrics[t.metric_key] || {});
+    return {
+      label: meta.label || t.metric_key,
+      icon: meta.icon || '',
+      tip: meta.tip || '',
+      format: meta.format || 'ratio',
+      serverKey: t.server_key || t.metric_key,
+      synthetic: !!t.synthetic,
+      metricKey: t.metric_key,
+    };
+  });
 
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83d\udcc8</div>
-      <div><h2 class="section-title">Performance Trends</h2><p class="section-subtitle">How xCSG advantage evolves over time</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">xCSG Value Gain Over Time</div><div class="chart-card-explain">Quality per person-day (xCSG vs legacy) per project, ordered by delivery date. Rising = improving efficiency.</div><div class="chart-body" style="height:320px"><div id="chartAdvantageTrend" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">Speed, Quality &amp; Value Gain</div><div class="chart-card-explain">All three ratios over time. Value Gain (dashed) = quality per person-day vs legacy. All above 1\xd7 = xCSG outperforms.</div><div class="chart-body" style="height:320px"><div id="chartSpeedQuality" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
-
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\u23f1</div>
-      <div><h2 class="section-title">Delivery Discipline</h2><p class="section-subtitle">Schedule variance by project</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">Schedule Variance</div><div class="chart-card-explain">Each dot is a project. Y = days between actual and expected delivery. Below 0 = early, above 0 = late. Only projects with both dates appear.</div><div class="chart-body" style="height:320px"><div id="chartSchedule" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
-
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83d\udcca</div>
-      <div><h2 class="section-title">Breakdowns</h2><p class="section-subtitle">Performance by category, pioneer, and signal</p></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-card"><div class="chart-card-title">By Category</div><div class="chart-card-explain">Average xCSG advantage by deliverable type. Longer bars = stronger performance in that category.</div><div class="chart-body" style="height:260px"><div id="chartCategory" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">By Pioneer</div><div class="chart-card-explain">Average xCSG advantage by pioneer lead. Shows which team members drive the most value.</div><div class="chart-body" style="height:260px"><div id="chartPioneer" style="width:100%;height:100%"></div></div></div>
-    </div>
-    <div class="chart-row" style="margin-top:20px">
-      <div class="chart-card"><div class="chart-card-title">Client Pulse</div><div class="chart-card-explain">How clients rated the deliverable: exceeded, met, or below expectations.</div><div class="chart-body" style="height:320px"><div id="chartPulse" style="width:100%;height:100%"></div></div></div>
-      <div class="chart-card"><div class="chart-card-title">Reuse Intent</div><div class="chart-card-explain">Would experts choose xCSG again? Enthusiastic = yes without hesitation.</div><div class="chart-body" style="height:320px"><div id="chartReuse" style="width:100%;height:100%"></div></div></div>
-    </div>
-  </div>`;
-
-  // ── SCALING GATES ──
-  if (!filterCategory && dashboard.scaling_gates && dashboard.scaling_gates.length) {
-    const passed = dashboard.scaling_gates.filter(g => g.status === 'pass').length;
-    const total = dashboard.scaling_gates.length;
-    html += `<div class="dashboard-section">
-      <div class="section-header">
-        <div class="section-icon">\ud83d\ude80</div>
-        <div><h2 class="section-title">Scaling Gates</h2><p class="section-subtitle">${passed}/${total} passed</p></div>
-        <div class="gates-progress-ring">${passed}/${total}</div>
-      </div>
-      <div class="gates-track">`;
-    for (const g of dashboard.scaling_gates) {
-      const ok = g.status === 'pass';
-      html += `<div class="gate-card ${ok ? 'gate-pass' : 'gate-pending'}">
-        <div class="gate-status">${ok ? '\u2713' : '\u2715'}</div>
-        <div class="gate-info">
-          <div class="gate-name">${esc(g.name)}</div>
-          <div class="gate-threshold">${esc(g.description || '')}</div>
-          <div class="gate-detail">${esc(g.detail)}</div>
-        </div>
-      </div>`;
+  html += `<div class="metrics-grid">`;
+  for (const def of tileDefs) {
+    let value, fmt, tip;
+    if (def.synthetic && def.metricKey === 'on_time_delivery_pct') {
+      // onTimePct is already 0-100; divide by 100 so fmtPct renders it correctly.
+      value = onTimePct == null ? null : onTimePct / 100;
+      fmt = fmtPct;
+      tip = onTimeTip;
+    } else {
+      value = localMetrics[def.serverKey];
+      fmt = def.format === 'pct' ? fmtPct : fmtRatio;
+      tip = def.tip;
     }
-    html += `</div>
-      <div class="gates-legend">
-        <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-pass">\u2713</span> Passed</span>
-        <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-fail">\u2715</span> Not yet met</span>
-      </div>
+    const extraClass = def.synthetic
+      ? ' metric-tile-schedule'
+      : (def.format === 'pct' ? ' metric-tile-signal' : '');
+    const subHtml = (def.synthetic && def.metricKey === 'on_time_delivery_pct' && avgDeltaLabel)
+      ? `<div class="metric-tile-sub" style="font-size:11px;color:var(--gray-500);margin-top:4px">${esc(avgDeltaLabel)}</div>`
+      : '';
+    html += `<div class="metric-tile${extraClass}" title="${esc(tip)}">
+      <div class="metric-tile-icon">${def.icon}</div>
+      <div class="metric-tile-value" style="color:${metricTone(value, def.format === 'pct' ? 'pct_tone' : 'metric_tone')}">${fmt(value)}</div>
+      <div class="metric-tile-label">${esc(def.label)} ${infoIcon(def.metricKey)}</div>
+      ${subHtml}
     </div>`;
   }
+  html += `</div>`;
 
-  // ── PORTFOLIO TABLE ──
-  html += `<div class="dashboard-section">
-    <div class="section-header">
-      <div class="section-icon">\ud83d\udccb</div>
-      <div><h2 class="section-title">Portfolio</h2><p class="section-subtitle">${filtered.length} engagement${filtered.length !== 1 ? 's' : ''}</p></div>
-    </div>
-    <div class="table-wrapper">
-    <table class="data-table portfolio-table">
-      <thead><tr><th>Project</th><th>Category</th><th>Pioneers</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th class="r" title="Legacy person-days \xf7 xCSG person-days. >1\xd7 = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th><th class="r" title="xCSG quality \xf7 legacy quality. >1\xd7 = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th><th class="r" title="Quality per person-day: xCSG vs legacy. Higher = more value per unit of effort.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th><th class="r">Actions</th></tr></thead><tbody>`;
-  for (const row of filtered) {
-    const m = row.metrics || {};
-    const rowPioneers = row.pioneers || [];
-    const rowPioneerNames = rowPioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
-    const pioneerDisplay = rowPioneerNames.length > 0 ? rowPioneerNames.length + ' pioneer' + (rowPioneerNames.length !== 1 ? 's' : '') : esc(row.pioneer_name || '\u2014');
-    const pioneerTooltip = rowPioneerNames.join(', ') || row.pioneer_name || '';
-    const schedDelta = scheduleDelta(row.date_expected_delivered, row.date_delivered);
-    const schedCell = schedDelta == null
-      ? '<span style="color:var(--gray-400)">\u2014</span>'
-      : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(row.date_expected_delivered)} \xb7 Delivered: ${esc(row.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
-    html += `<tr>
-      <td><strong>${esc(row.project_name)}</strong></td>
-      <td>${esc(row.category_name)}</td>
-      <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
-      <td>${schedCell}</td>
-      <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${fmtRatio(m.delivery_speed)}</td>
-      <td class="r" style="color:${metricTone(m.output_quality)};font-weight:700">${fmtRatio(m.output_quality)}</td>
-      <td class="r" style="color:${metricTone(m.productivity_ratio)};font-weight:800">${fmtRatio(m.productivity_ratio)}</td>
-      <td class="r"><a href="#edit/${row.id}" class="table-link">Open</a></td>
-    </tr>`;
-  }
-  html += `</tbody></table></div></div>`;
+  // ── CHART SECTIONS (rendered via tab shell, Task 13) ──
+  // Scaling Gates and Portfolio Table are now rendered as chart types inside
+  // the tab shell (track_scaling_gates + table_portfolio — see registry).
+  html += `<div id="tabContainer"></div>`;
 
   mc.innerHTML = html;
+  renderFilterBar(allProjects);
+  renderTabShell(document.getElementById('tabContainer'));
   requestAnimationFrame(() => renderDashboardCharts(localMetrics, filtered));
 }
 
-function _sliceDashboard(category) {
+function _reapplyFilters() {
   if (!_projectsCache || !_dashboardCache) return;
-  _renderDashboardView(_projectsCache, _dashboardCache, category);
+  _saveFilters();
+  _renderDashboardView(_projectsCache, _dashboardCache);
 }
 
 function barHTML(score, label) {
@@ -977,7 +850,7 @@ function renderExpertAssessment(er, metrics) {
    ═══════════════════════════════════════════════════════════════════════ */
 
 async function renderNewProject(existing) {
-  await loadCategories();
+  await loadTaxonomy();
   const mc = document.getElementById('mainContent');
   const isEdit = !!existing;
   const p = existing || {};
@@ -988,6 +861,10 @@ async function renderNewProject(existing) {
         <div class="form-row">
           <div class="form-group"><label>Project Name *</label><input type="text" id="fName" value="${esc(p.project_name || '')}" required></div>
           <div class="form-group"><label>Category * <span class="field-hint" data-hint="Deliverable type. Used for category norms, benchmarking, and the scaling gate &quot;Multi-engagement&quot; (at least 2 types required).">&#9432;</span></label><select id="fCategory" required>${categoryOptionsHTML(p.category_id)}</select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Practice <span class="field-hint" data-hint="The Alira Health practice leading this project. The list is filtered to the practices allowed for the selected category.">&#9432;</span></label><select id="fPractice">${practiceOptionsHTML(p.practice_id, p.category_id)}</select></div>
+          <div class="form-group"></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Client Name</label><input type="text" id="fClient" value="${esc(p.client_name || '')}"></div>
@@ -1017,6 +894,14 @@ async function renderNewProject(existing) {
               <option value="1" ${p.show_previous_answers ? 'selected' : ''}>Yes</option>
             </select>
             <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Let pioneers view their previous responses</span>
+          </div>
+          <div class="form-group">
+            <label>Show Other Pioneers' Answers <span class="field-hint" data-hint="When enabled, experts can see submitted answers from other pioneers on this project.">&#9432;</span></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-top:6px">
+              <input type="checkbox" id="fShowOtherPioneers" ${p.show_other_pioneers_answers ? 'checked' : ''}>
+              <span>Enable cross-pioneer visibility</span>
+            </label>
+            <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">When enabled, experts can see submitted answers from other pioneers on this project.</span>
           </div>
         </div>
       </fieldset>
@@ -1159,6 +1044,12 @@ async function renderNewProject(existing) {
       }
     }
   }
+  // Category change → rebuild Practice dropdown with allowed-only options.
+  document.getElementById('fCategory').addEventListener('change', function () {
+    const pracSel = document.getElementById('fPractice');
+    if (pracSel) pracSel.innerHTML = practiceOptionsHTML(null, this.value);
+  });
+
   document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);
   document.getElementById('fDateExpected').addEventListener('change', updateCalendarDays);
   document.getElementById('fDateEnd').addEventListener('change', updateCalendarDays);
@@ -1212,14 +1103,17 @@ async function renderNewProject(existing) {
       return;
     }
 
+    const practiceVal = document.getElementById('fPractice').value;
     const payload = {
       project_name: document.getElementById('fName').value,
       category_id: parseInt(document.getElementById('fCategory').value),
+      practice_id: practiceVal ? parseInt(practiceVal) : null,
       pioneer_name: pioneers[0].name,
       pioneer_email: pioneers[0].email,
       pioneers: pioneers,
       default_rounds: parseInt(document.getElementById('fDefaultRounds').value) || 1,
       show_previous_answers: document.getElementById('fShowPrevious').value === '1',
+      show_other_pioneers_answers: document.getElementById('fShowOtherPioneers').checked,
       client_name: document.getElementById('fClient').value || null,
       client_contact_email: document.getElementById('fClientEmail').value || null,
       engagement_stage: document.getElementById('fStage').value || null,
@@ -1241,7 +1135,9 @@ async function renderNewProject(existing) {
       if (isEdit) {
         await apiCall('PUT', `/projects/${p.id}`, payload);
         showToast('Project updated');
-        window.location.hash = '#projects';
+        // Stay on the edit page so the user can keep tweaking.
+        // Re-render in place to pick up any server-side recomputation (metrics, auto-filled days).
+        route();
       } else {
         const result = await apiCall('POST', '/projects', payload);
         showExpertLinks(result.pioneers || []);
@@ -1517,6 +1413,7 @@ async function renderProjects() {
     }
 
     const cats = [...new Set(rows.map(p => p.category_name).filter(Boolean))].sort();
+    const practices = [...new Set(rows.map(p => p.practice_code).filter(Boolean))].sort();
 
     const fmtScore = (v) => v == null ? '\u2014' : round2(v);
 
@@ -1532,10 +1429,14 @@ async function renderProjects() {
           <option value="">All Categories</option>
           ${cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
         </select>
+        <select id="practiceFilter" class="filter-select">
+          <option value="">All Practices</option>
+          ${practices.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+        </select>
         ${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>' : ''}
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
-        <th>Project</th><th>Category</th><th>Pioneers</th><th>Responses</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
+        <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th><th>Responses</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody>`;
 
     for (const p of rows) {
@@ -1576,9 +1477,10 @@ async function renderProjects() {
       const schedCell = schedDelta == null
         ? '<span style="color:var(--gray-400)">\u2014</span>'
         : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(p.date_expected_delivered)} \xb7 Delivered: ${esc(p.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
-      html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" onclick="window.location.hash='#edit/${p.id}'">
+      html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}" onclick="window.location.hash='#edit/${p.id}'">
         <td>${esc(p.project_name)}</td>
         <td>${esc(p.category_name || '\u2014')}</td>
+        <td>${esc(p.practice_code || '\u2014')}</td>
         <td title="${esc(pioneerTooltip)}">${esc(pioneerLabel)}</td>
         <td>${responsesLabel}</td>
         <td>${schedCell}</td>
@@ -1595,15 +1497,18 @@ async function renderProjects() {
     function applyProjectFilters() {
       const sf = document.getElementById('statusFilter')?.value || '';
       const cf = document.getElementById('catFilter')?.value || '';
+      const pf = document.getElementById('practiceFilter')?.value || '';
       document.querySelectorAll('#projectTable tbody tr').forEach(tr => {
         const show =
           (!sf || tr.dataset.status === sf) &&
-          (!cf || tr.dataset.cat === cf);
+          (!cf || tr.dataset.cat === cf) &&
+          (!pf || tr.dataset.practice === pf);
         tr.style.display = show ? '' : 'none';
       });
     }
     document.getElementById('statusFilter')?.addEventListener('change', applyProjectFilters);
     document.getElementById('catFilter')?.addEventListener('change', applyProjectFilters);
+    document.getElementById('practiceFilter')?.addEventListener('change', applyProjectFilters);
 
   } catch (err) {
     mc.innerHTML = `<div class="error-state">Failed to load: ${esc(err.message)}</div>`;
@@ -1645,24 +1550,37 @@ async function doDelete(id) {
 
 
 
-const C = {
-  navy: '#121F6B', blue: '#3B82F6', teal: '#14B8A6', green: '#10B981',
-  orange: '#F59E0B', red: '#EF4444', gray: '#9CA3AF', gray200: '#E5E7EB',
-  gray50: '#F9FAFB', gray100: '#F3F4F6', purple: '#8B5CF6', indigo: '#6366F1',
-};
-const ec = {};
+const chartInstances = {};
 function ecInit(id) {
-  if (ec[id]) ec[id].dispose();
   const dom = document.getElementById(id);
   if (!dom) return null;
-  const c = echarts.init(dom, null, { renderer: 'canvas' });
-  ec[id] = c;
-  const ro = new ResizeObserver(() => c.resize());
+  // Dispose previous instance and tear down its ResizeObserver so we don't
+  // accumulate observers across tab switches.
+  if (chartInstances[id]) {
+    try { chartInstances[id].dispose(); } catch (_) {}
+    if (chartInstances[id].__resizeObserver) {
+      try { chartInstances[id].__resizeObserver.disconnect(); } catch (_) {}
+    }
+  }
+  const inst = echarts.init(dom, null, { renderer: 'canvas' });
+  const ro = new ResizeObserver(() => inst.resize());
   ro.observe(dom);
-  return c;
+  inst.__resizeObserver = ro;
+  chartInstances[id] = inst;
+  return inst;
 }
-function tone(v) { return v == null ? C.gray : v > 1.5 ? C.green : v >= 1 ? C.blue : v >= 0.8 ? C.orange : C.red; }
+function tone(v) { return v == null ? DASHBOARD.palette.gray : v > 1.5 ? DASHBOARD.palette.green : v >= 1 ? DASHBOARD.palette.blue : v >= 0.8 ? DASHBOARD.palette.orange : DASHBOARD.palette.red; }
 function barColor(v) { return tone(v); }
+// Module-level: used by _renderDashboardView and chart renderers (e.g. table_portfolio).
+// Reads schema.dashboard.thresholds so it's self-contained once schema is loaded.
+function metricTone(value, toneKey = 'metric_tone') {
+  if (value == null) return 'var(--gray-400)';
+  const t = schema.dashboard.thresholds[toneKey] || schema.dashboard.thresholds.metric_tone;
+  if (value > t.success_above) return 'var(--success)';
+  if (value >= t.blue_above) return 'var(--blue)';
+  if (value >= t.warning_above) return 'var(--warning)';
+  return 'var(--danger)';
+}
 function tip() {
   return { backgroundColor: 'rgba(18,31,107,0.94)', borderColor: 'none', borderRadius: 10, padding: [12, 16],
     textStyle: { color: '#fff', fontSize: 13, fontFamily: 'Inter, system-ui' },
@@ -1670,296 +1588,796 @@ function tip() {
 }
 function axisLbl() { return { color: '#6B7280', fontSize: 12, fontFamily: 'Inter, system-ui' }; }
 
-function renderDashboardCharts(dashboard, allProjects) {
+// ── Chart renderer registry ────────────────────────────────────────────────
+const CHART_RENDERERS = {};
+
+function registerChart(type, fn) { CHART_RENDERERS[type] = fn; }
+
+function renderDashboardCharts(dashboard, filtered) {
   if (typeof echarts === 'undefined') return;
-  Object.keys(ec).forEach(k => { ec[k].dispose(); delete ec[k]; });
-  echarts.registerTheme;
-  const done = allProjects.filter(p => p.status === 'complete' && p.metrics);
-
-  // 1. SCATTER
-  const s1 = ecInit('chartDisprove');
-  if (s1 && done.length) {
-    const pts = done.map(p => {
-      const m = p.metrics;
-      if (m.delivery_speed == null || m.output_quality == null) return null;
-      const q = (m.delivery_speed >= 1 && m.output_quality >= 1);
-      return { value: [m.delivery_speed, m.output_quality], name: p.project_name, pioneer: p.pioneer_name, client: p.client_name, cat: p.category_name, good: q };
-    }).filter(Boolean);
-    if (pts.length) {
-      const maxX = Math.max(...pts.map(p => p.value[0])) * 1.15;
-      const maxY = Math.max(...pts.map(p => p.value[1])) * 1.15;
-      s1.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${d.name}</b><br><span style="opacity:.6">${d.pioneer} · ${d.client}</span><br><br>Speed: <b>${d.value[0]}×</b> &nbsp; Quality: <b>${d.value[1]}×</b>`; } },
-        grid: { left: 55, right: 30, top: 30, bottom: 45 },
-        xAxis: { type: 'value', max: maxX, name: 'Delivery Speed', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        yAxis: { type: 'value', max: maxY, name: 'Output Quality', nameLocation: 'middle', nameGap: 35, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        series: [{ type: 'scatter', data: pts.map(d => ({
-          value: d.value,
-          symbolSize: 28,
-          itemStyle: { color: d.good ? C.green : C.orange, borderColor: '#fff', borderWidth: 2, shadowBlur: 8, shadowColor: d.good ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)' },
-        })), emphasis: { scale: 1.5, itemStyle: { shadowBlur: 16 } },
-          markLine: { silent: true, symbol: 'none', lineStyle: { color: '#D1D5DB', type: 'dashed', width: 1.5 },
-            data: [{ xAxis: 1 }, { yAxis: 1 }] } }],
-        graphic: [
-          { type: 'text', right: 30, top: 15, style: { text: '\u2713 Thesis Validated', fill: 'rgba(16,185,129,0.5)', fontSize: 13, fontWeight: 600 } },
-          { type: 'text', left: 30, bottom: 55, style: { text: '\u2717 Model Failing', fill: 'rgba(239,68,68,0.4)', fontSize: 13, fontWeight: 600 } },
-        ],
-      });
+  // Dispose all existing ECharts instances and their ResizeObservers so
+  // charts from the previous tab don't linger in memory.
+  Object.keys(chartInstances).forEach(k => {
+    try { chartInstances[k].dispose(); } catch (_) {}
+    if (chartInstances[k] && chartInstances[k].__resizeObserver) {
+      try { chartInstances[k].__resizeObserver.disconnect(); } catch (_) {}
     }
-  }
+    delete chartInstances[k];
+  });
 
-  // 2. RADAR
-  const s2 = ecInit('chartRadar');
-  if (s2) {
-    const labels = ['Machine-First', 'Senior-Led', 'Knowledge', 'Rework Eff.', 'Client Impact', 'Data Ind.'];
-    const vals = [dashboard.machine_first_avg, dashboard.senior_led_avg, dashboard.proprietary_knowledge_avg,
-      dashboard.rework_efficiency_avg, dashboard.client_impact_avg, dashboard.data_independence_avg];
-    const vp = labels.map((l, i) => ({ l, v: vals[i] })).filter(p => p.v != null);
-    if (vp.length) {
-      const maxVal = Math.max(...vp.map(p => p.v), 2) * 1.15;
-      s2.setOption({
-        tooltip: { ...tip(), trigger: 'item' },
-        legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 16, itemHeight: 8, itemGap: 24 },
-        radar: { shape: 'circle', indicator: vp.map(p => ({ name: p.l, max: maxVal })),
-          axisName: { color: '#374151', fontSize: 12, fontWeight: 500 },
-          splitArea: { areaStyle: { color: ['rgba(243,244,246,0.6)', 'rgba(255,255,255,0.6)'] } },
-          splitLine: { lineStyle: { color: C.gray200 } }, axisLine: { lineStyle: { color: C.gray200 } } },
-        series: [{ type: 'radar', data: [
-          { value: vp.map(p => p.v), name: 'xCSG Average', areaStyle: { color: 'rgba(99,102,241,0.2)' },
-            lineStyle: { color: C.indigo, width: 3 }, itemStyle: { color: C.indigo, borderWidth: 2, borderColor: '#fff' }, symbol: 'circle', symbolSize: 8 },
-          { value: vp.map(() => 1.0), name: 'Baseline', lineStyle: { color: C.gray, type: 'dashed', width: 1.5 },
-            itemStyle: { color: 'transparent' }, areaStyle: { color: 'transparent' }, symbol: 'none' },
-        ] }],
-      });
+  const localMetrics = (filtered && _projectsCache && filtered.length === _projectsCache.length) ? dashboard : _computeLocalMetrics(filtered || []);
+  const activeCharts = schema.dashboard.charts.filter(c => c.tab === _activeTab);
+  for (const cfg of activeCharts) {
+    const fn = CHART_RENDERERS[cfg.type];
+    if (!fn) {
+      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+        console.warn('No renderer for chart.type', cfg.type, 'id=', cfg.id);
+      }
+      continue;
     }
-  }
-
-  // 3. ADVANTAGE TREND
-  const s3 = ecInit('chartAdvantageTrend');
-  if (s3 && done.length) {
-    const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
-    const td = sorted.map(p => ({ d: p.date_delivered || p.date_started, v: p.metrics.productivity_ratio, n: p.project_name })).filter(d => d.v != null);
-    if (td.length) {
-      s3.setOption({
-        tooltip: { ...tip(), trigger: 'axis', formatter: ps => { const d = td[ps[0].dataIndex]; return `<b>${d.n}</b><br>xCSG Value Gain: <b>${d.v}\xd7</b>`; } },
-        grid: { left: 55, right: 20, top: 15, bottom: 35 },
-        xAxis: { type: 'category', data: td.map(d => new Date(d.d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
-          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
-        yAxis: { type: 'value', name: 'xCSG Value Gain', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
-          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        series: [{ type: 'line', data: td.map(d => d.v), smooth: 0.4, symbol: 'circle', symbolSize: 10, showSymbol: true,
-          lineStyle: { color: C.navy, width: 3.5 },
-          itemStyle: { color: C.navy, borderWidth: 3, borderColor: '#fff' },
-          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(18,31,107,0.15)' }, { offset: 1, color: 'rgba(18,31,107,0.01)' }] } },
-          emphasis: { itemStyle: { shadowBlur: 12, shadowColor: 'rgba(18,31,107,0.3)' } },
-          markLine: { silent: true, symbol: 'none', data: [{ yAxis: 1 }], lineStyle: { color: '#D1D5DB', type: 'dashed' }, label: { show: false } } }],
-      });
-    }
-  }
-
-  // 4. SPEED vs QUALITY
-  const s4 = ecInit('chartSpeedQuality');
-  if (s4 && done.length) {
-    const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
-    const lbl = sorted.map(p => new Date(p.date_delivered || p.date_started).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-    s4.setOption({
-      tooltip: { ...tip(), trigger: 'axis' },
-      legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 18, itemHeight: 3, itemGap: 24 },
-      grid: { left: 55, right: 20, top: 15, bottom: 40 },
-      xAxis: { type: 'category', data: lbl, axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
-      yAxis: { type: 'value', name: 'Ratio', nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
-        axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-      series: [
-        { type: 'line', name: 'Speed', data: sorted.map(p => p.metrics.delivery_speed), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
-          lineStyle: { color: C.blue, width: 3 }, itemStyle: { color: C.blue, borderWidth: 2, borderColor: '#fff' } },
-        { type: 'line', name: 'Quality', data: sorted.map(p => p.metrics.output_quality), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
-          lineStyle: { color: C.navy, width: 3 }, itemStyle: { color: C.navy, borderWidth: 2, borderColor: '#fff' } },
-        { type: 'line', name: 'Value Gain', data: sorted.map(p => p.metrics.productivity_ratio), smooth: 0.4, symbol: 'diamond', symbolSize: 9, showSymbol: true,
-          lineStyle: { color: C.green, width: 3, type: 'dashed' }, itemStyle: { color: C.green, borderWidth: 2, borderColor: '#fff' } },
-      ],
-    });
-  }
-
-  // 4b. SCHEDULE VARIANCE — one dot per project, Y = actual - expected (days)
-  const sSched = ecInit('chartSchedule');
-  if (sSched) {
-    const pts = allProjects
-      .map(p => {
-        const delta = scheduleDelta(p.date_expected_delivered, p.date_delivered);
-        if (delta == null) return null;
-        return { name: p.project_name, cat: p.category_name, delta, expected: p.date_expected_delivered, actual: p.date_delivered };
-      })
-      .filter(Boolean)
-      .sort((a, b) => new Date(a.actual) - new Date(b.actual));
-    if (pts.length) {
-      const maxAbs = Math.max(...pts.map(p => Math.abs(p.delta)), 1);
-      const ySpan = Math.ceil(maxAbs * 1.2);
-      sSched.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${esc(d.name)}</b><br><span style="opacity:.7">${esc(d.cat || '')}</span><br><br>Expected: <b>${d.expected}</b><br>Delivered: <b>${d.actual}</b><br>Delta: <b>${formatScheduleDelta(d.delta)}</b>`; } },
-        grid: { left: 60, right: 30, top: 30, bottom: 50 },
-        xAxis: { type: 'category', data: pts.map((_, i) => i + 1), name: 'Project (chronological)', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          axisLine: { lineStyle: { color: C.gray200 } }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 10 } },
-        yAxis: { type: 'value', name: 'Days (actual \u2212 expected)', nameLocation: 'middle', nameGap: 45, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
-          min: -ySpan, max: ySpan,
-          axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(),
-          splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        series: [{
-          type: 'scatter',
-          data: pts.map((d, i) => ({
-            value: [i, d.delta],
-            symbolSize: 22,
-            itemStyle: {
-              color: d.delta <= 0 ? C.green : (d.delta <= 3 ? C.orange : '#EF4444'),
-              borderColor: '#fff', borderWidth: 2,
-              shadowBlur: 6, shadowColor: d.delta <= 0 ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.3)',
-            },
-          })),
-          markLine: { silent: true, symbol: 'none', lineStyle: { color: '#9CA3AF', width: 1.5 }, data: [{ yAxis: 0 }], label: { show: false } },
-          emphasis: { scale: 1.4 },
-        }],
-        graphic: [
-          { type: 'text', right: 30, top: 10, style: { text: 'Late \u25b2', fill: 'rgba(239,68,68,0.55)', fontSize: 12, fontWeight: 600 } },
-          { type: 'text', right: 30, bottom: 60, style: { text: 'Early \u25bc', fill: 'rgba(16,185,129,0.55)', fontSize: 12, fontWeight: 600 } },
-        ],
-      });
-    } else {
-      sSched.setOption({
-        graphic: [{ type: 'text', left: 'center', top: 'middle', style: { text: 'No projects with both expected and actual delivery dates yet.', fill: '#9CA3AF', fontSize: 13 } }],
-      });
-    }
-  }
-
-  // 5. CATEGORY BAR (show all with 1+ projects)
-  const s5 = ecInit('chartCategory');
-  if (s5 && done.length) {
-    const byCat = {};
-    done.forEach(p => { const c = p.category_name || 'Other'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byCat[c]) byCat[c] = []; byCat[c].push(v); } });
-    let catE = Object.entries(byCat).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-    const catMore = catE.length > 8 ? catE.slice(8) : [];
-    catE = catE.slice(0, 8);
-    // Auto-resize chart body height based on item count
-    const catH = Math.max(260, catE.length * 38 + 40);
-    document.getElementById('chartCategory')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', catH + 'px');
-    if (catE.length) {
-      s5.setOption({
-        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
-          formatter: ps => { const d = catE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
-        grid: { left: 180, right: 50, top: 5, bottom: catMore.length ? 25 : 10 },
-        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        yAxis: { type: 'category', data: catE.map(e => e.n.length > 30 ? e.n.slice(0, 27) + '\u2026' : e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
-        series: [{ type: 'bar', data: catE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
-          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
-          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
-        graphic: catMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${catMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
-      });
-    }
-  }
-
-  // 6. PIONEER BAR (show all with 1+ projects)
-  const s6 = ecInit('chartPioneer');
-  if (s6 && done.length) {
-    const byP = {};
-    done.forEach(p => { const pn = p.pioneer_name || 'Unknown'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byP[pn]) byP[pn] = []; byP[pn].push(v); } });
-    let pE = Object.entries(byP).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
-    const pMore = pE.length > 8 ? pE.slice(8) : [];
-    pE = pE.slice(0, 8);
-    const pH = Math.max(260, pE.length * 38 + 40);
-    document.getElementById('chartPioneer')?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', pH + 'px');
-    if (pE.length) {
-      s6.setOption({
-        tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
-          formatter: ps => { const d = pE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
-        grid: { left: 140, right: 50, top: 5, bottom: pMore.length ? 25 : 10 },
-        xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: C.gray100, type: 'dashed' } } },
-        yAxis: { type: 'category', data: pE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl() },
-        series: [{ type: 'bar', data: pE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
-          barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
-          emphasis: { itemStyle: { shadowBlur: 8 } } }],
-        graphic: pMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${pMore.length} more`, fontSize: 11, fill: C.gray, fontStyle: 'italic' } }] : [],
-      });
-    }
-  }
-
-  // 7. DOUGHNUT — Client Pulse
-  const s7 = ecInit('chartPulse');
-  if (s7 && done.length) {
-    const pc = { 'Exceeded expectations': 0, 'Met expectations': 0, 'Below expectations': 0, 'Not yet received': 0 };
-    done.forEach(p => { const v = p.client_pulse; if (pc[v] !== undefined) pc[v]++; });
-    const responded = pc['Exceeded expectations'] + pc['Met expectations'] + pc['Below expectations'];
-    const totalPulse = responded + pc['Not yet received'];
-    if (totalPulse > 0) {
-      const data = [
-        { value: pc['Exceeded expectations'], name: 'Exceeded', itemStyle: { color: C.green } },
-        { value: pc['Met expectations'], name: 'Met', itemStyle: { color: C.blue } },
-        { value: pc['Below expectations'], name: 'Below', itemStyle: { color: C.red } },
-      ];
-      if (pc['Not yet received'] > 0) data.push({ value: pc['Not yet received'], name: 'Pending', itemStyle: { color: C.gray200 } });
-      s7.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
-        legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
-        series: [
-          { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
-            itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
-            label: { show: false },
-            emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
-              itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
-            data },
-          { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
-            label: { show: true, position: 'center', formatter: `{big|${responded}/${totalPulse}}\n{sub|responded}`,
-              rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
-                      sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
-            data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
-        ],
-      });
-    }
-  }
-
-  // 8. DOUGHNUT — Reuse Intent (from metrics score: 1.0=enthusiastic, 0.5=reserved, 0.0=no)
-  const s8 = ecInit('chartReuse');
-  if (s8 && done.length) {
-    let enthusiastic = 0, reserved = 0, noReuse = 0, pending = 0;
-    done.forEach(p => {
-      const s = p.metrics && p.metrics.reuse_intent_score;
-      if (s === 1.0) enthusiastic++;
-      else if (s === 0.5) reserved++;
-      else if (s != null && s === 0) noReuse++;
-      else pending++;
-    });
-    const responded = enthusiastic + reserved + noReuse;
-    const totalReuse = responded + pending;
-    if (totalReuse > 0) {
-      const data = [
-        { value: enthusiastic, name: 'Enthusiastic', itemStyle: { color: C.green } },
-        { value: reserved, name: 'Reserved', itemStyle: { color: C.orange } },
-        { value: noReuse, name: 'No', itemStyle: { color: C.red } },
-      ];
-      if (pending > 0) data.push({ value: pending, name: 'Pending', itemStyle: { color: C.gray200 } });
-      s8.setOption({
-        tooltip: { ...tip(), trigger: 'item',
-          formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
-        legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
-        series: [
-          { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
-            itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
-            label: { show: false },
-            emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: C.navy },
-              itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
-            data },
-          { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
-            label: { show: true, position: 'center', formatter: `{big|${responded}/${totalReuse}}\n{sub|responded}`,
-              rich: { big: { fontSize: 26, fontWeight: 800, color: C.navy, fontFamily: 'Inter', lineHeight: 32 },
-                      sub: { fontSize: 11, color: C.gray, fontFamily: 'Inter', lineHeight: 18 } } },
-            data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
-        ],
-      });
-    }
+    try { fn(cfg, filtered || [], localMetrics, dashboard); }
+    catch (err) { console.error('Chart render error for', cfg.id, err); }
   }
 }
+
+// Helper: filter to projects with metrics (used by several renderers)
+function _doneProjects(filtered) {
+  return filtered.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
+}
+
+// ── Registered renderers ───────────────────────────────────────────────────
+
+registerChart('scatter_disprove', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const pts = done.map(p => {
+    const m = p.metrics;
+    if (m.delivery_speed == null || m.output_quality == null) return null;
+    const q = (m.delivery_speed >= 1 && m.output_quality >= 1);
+    return { value: [m.delivery_speed, m.output_quality], name: p.project_name, pioneer: p.pioneer_name, client: p.client_name, cat: p.category_name, good: q };
+  }).filter(Boolean);
+  if (!pts.length) return;
+  const maxX = Math.max(...pts.map(p => p.value[0])) * 1.15;
+  const maxY = Math.max(...pts.map(p => p.value[1])) * 1.15;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'item',
+      formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${d.name}</b><br><span style="opacity:.6">${d.pioneer} · ${d.client}</span><br><br>Speed: <b>${d.value[0]}×</b> &nbsp; Quality: <b>${d.value[1]}×</b>`; } },
+    grid: { left: 55, right: 30, top: 30, bottom: 45 },
+    xAxis: { type: 'value', max: maxX, name: 'Delivery Speed', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+      axisLine: { lineStyle: { color: DASHBOARD.palette.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: DASHBOARD.palette.gray100, type: 'dashed' } } },
+    yAxis: { type: 'value', max: maxY, name: 'Output Quality', nameLocation: 'middle', nameGap: 35, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+      axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: DASHBOARD.palette.gray100, type: 'dashed' } } },
+    series: [{ type: 'scatter', data: pts.map(d => ({
+      value: d.value,
+      symbolSize: 28,
+      itemStyle: { color: d.good ? DASHBOARD.palette.green : DASHBOARD.palette.orange, borderColor: '#fff', borderWidth: 2, shadowBlur: 8, shadowColor: d.good ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)' },
+    })), emphasis: { scale: 1.5, itemStyle: { shadowBlur: 16 } },
+      markLine: { silent: true, symbol: 'none', lineStyle: { color: '#D1D5DB', type: 'dashed', width: 1.5 },
+        data: [{ xAxis: 1 }, { yAxis: 1 }] } }],
+    graphic: [
+      { type: 'text', right: 30, top: 15, style: { text: '✓ Thesis Validated', fill: 'rgba(16,185,129,0.5)', fontSize: 13, fontWeight: 600 } },
+      { type: 'text', left: 30, bottom: 55, style: { text: '✗ Model Failing', fill: 'rgba(239,68,68,0.4)', fontSize: 13, fontWeight: 600 } },
+    ],
+  });
+});
+
+registerChart('radar_gains', (cfg, filtered, localMetrics) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const cap = schema.dashboard.thresholds.radar_axis_cap;
+  const labels = ['Machine-First', 'Senior-Led', 'Knowledge', 'Rework Eff.', 'Client Impact', 'Data Ind.'];
+  const raw = [
+    localMetrics.machine_first_avg,
+    localMetrics.senior_led_avg,
+    localMetrics.proprietary_knowledge_avg,
+    localMetrics.rework_efficiency_avg,
+    localMetrics.client_impact_avg,
+    localMetrics.data_independence_avg,
+  ];
+  const pairs = labels
+    .map((l, i) => ({ l, raw: raw[i], clipped: raw[i] == null ? null : Math.min(raw[i], cap) }))
+    .filter(p => p.clipped != null);
+  if (!pairs.length) return;
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'item',
+               formatter: () => pairs.map(x =>
+                 `${esc(x.l)}: <strong>${round2(x.raw)}×</strong>${x.raw > cap ? ` <em style="color:${pal.gray500}">(clipped at ${cap}×)</em>` : ''}`
+               ).join('<br>') },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    radar: {
+      shape: 'circle',
+      indicator: pairs.map(p => ({ name: `${p.l}${p.raw > cap ? ` ${cap}×+` : ''}`, max: cap })),
+      axisName: { color: '#374151', fontSize: 12, fontWeight: 500 },
+      splitArea: { areaStyle: { color: ['rgba(243,244,246,0.6)', 'rgba(255,255,255,0.6)'] } },
+      splitLine: { lineStyle: { color: pal.gray200 } },
+      axisLine:  { lineStyle: { color: pal.gray200 } },
+    },
+    series: [{
+      type: 'radar',
+      data: [
+        { value: pairs.map(p => p.clipped), name: 'xCSG Average',
+          areaStyle: { color: 'rgba(99,102,241,0.2)' },
+          lineStyle: { color: pal.indigo, width: 3 },
+          itemStyle: { color: pal.indigo, borderWidth: 2, borderColor: '#fff' },
+          symbol: 'circle', symbolSize: 8 },
+        { value: pairs.map(() => 1.0), name: 'Baseline (1×)',
+          lineStyle: { color: pal.gray, type: 'dashed', width: 1.5 },
+          itemStyle: { color: 'transparent' }, areaStyle: { color: 'transparent' }, symbol: 'none' },
+      ],
+    }],
+  });
+});
+
+// Merged advantage-trend + speed-vs-quality into a single 3-line chart.
+registerChart('timeline_per_project', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const sorted = [...done].sort((a, b) => new Date(a.date_delivered || a.date_started || 0) - new Date(b.date_delivered || b.date_started || 0));
+  const lbl = sorted.map(p => new Date(p.date_delivered || p.date_started).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis' },
+    legend: { bottom: 5, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 18, itemHeight: 3, itemGap: 24 },
+    grid: { left: 55, right: 20, top: 36, bottom: 40 },
+    xAxis: { type: 'category', data: lbl, axisLine: { lineStyle: { color: DASHBOARD.palette.gray200 } }, axisTick: { show: false }, axisLabel: axisLbl() },
+    yAxis: { type: 'value', name: 'Ratio', nameGap: 14, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 }, min: 0,
+      axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: DASHBOARD.palette.gray100, type: 'dashed' } } },
+    series: [
+      { type: 'line', name: 'Speed', data: sorted.map(p => p.metrics.delivery_speed), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
+        lineStyle: { color: DASHBOARD.palette.blue, width: 3 }, itemStyle: { color: DASHBOARD.palette.blue, borderWidth: 2, borderColor: '#fff' } },
+      { type: 'line', name: 'Quality', data: sorted.map(p => p.metrics.output_quality), smooth: 0.4, symbol: 'circle', symbolSize: 8, showSymbol: true,
+        lineStyle: { color: DASHBOARD.palette.navy, width: 3 }, itemStyle: { color: DASHBOARD.palette.navy, borderWidth: 2, borderColor: '#fff' } },
+      { type: 'line', name: 'Value Gain', data: sorted.map(p => p.metrics.productivity_ratio), smooth: 0.4, symbol: 'diamond', symbolSize: 9, showSymbol: true,
+        lineStyle: { color: DASHBOARD.palette.green, width: 3, type: 'dashed' }, itemStyle: { color: DASHBOARD.palette.green, borderWidth: 2, borderColor: '#fff' } },
+    ],
+  });
+});
+
+registerChart('scatter_schedule', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const pts = filtered
+    .map(p => {
+      const delta = scheduleDelta(p.date_expected_delivered, p.date_delivered);
+      if (delta == null) return null;
+      return { name: p.project_name, cat: p.category_name, delta, expected: p.date_expected_delivered, actual: p.date_delivered };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.actual) - new Date(b.actual));
+  if (pts.length) {
+    const maxAbs = Math.max(...pts.map(p => Math.abs(p.delta)), 1);
+    const ySpan = Math.ceil(maxAbs * 1.2);
+    s.setOption({
+      tooltip: { ...tip(), trigger: 'item',
+        formatter: p => { const d = pts[p.dataIndex]; return `<b style="font-size:14px">${esc(d.name)}</b><br><span style="opacity:.7">${esc(d.cat || '')}</span><br><br>Expected: <b>${d.expected}</b><br>Delivered: <b>${d.actual}</b><br>Delta: <b>${formatScheduleDelta(d.delta)}</b>`; } },
+      grid: { left: 60, right: 30, top: 30, bottom: 50 },
+      xAxis: { type: 'category', data: pts.map((_, i) => i + 1), name: 'Project (chronological)', nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+        axisLine: { lineStyle: { color: DASHBOARD.palette.gray200 } }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 10 } },
+      yAxis: { type: 'value', name: 'Days (actual − expected)', nameLocation: 'middle', nameGap: 45, nameTextStyle: { color: '#374151', fontWeight: 600, fontSize: 12 },
+        min: -ySpan, max: ySpan,
+        axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(),
+        splitLine: { lineStyle: { color: DASHBOARD.palette.gray100, type: 'dashed' } } },
+      series: [{
+        type: 'scatter',
+        data: pts.map((d, i) => ({
+          value: [i, d.delta],
+          symbolSize: 22,
+          itemStyle: {
+            color: d.delta <= 0 ? DASHBOARD.palette.green : (d.delta <= 3 ? DASHBOARD.palette.orange : '#EF4444'),
+            borderColor: '#fff', borderWidth: 2,
+            shadowBlur: 6, shadowColor: d.delta <= 0 ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.3)',
+          },
+        })),
+        markLine: { silent: true, symbol: 'none', lineStyle: { color: '#9CA3AF', width: 1.5 }, data: [{ yAxis: 0 }], label: { show: false } },
+        emphasis: { scale: 1.4 },
+      }],
+      graphic: [
+        { type: 'text', right: 30, top: 10, style: { text: 'Late ▲', fill: 'rgba(239,68,68,0.55)', fontSize: 12, fontWeight: 600 } },
+        { type: 'text', right: 30, bottom: 60, style: { text: 'Early ▼', fill: 'rgba(16,185,129,0.55)', fontSize: 12, fontWeight: 600 } },
+      ],
+    });
+  } else {
+    s.setOption({
+      graphic: [{ type: 'text', left: 'center', top: 'middle', style: { text: 'No projects with both expected and actual delivery dates yet.', fill: '#9CA3AF', fontSize: 13 } }],
+    });
+  }
+});
+
+registerChart('bar_by_category', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const byCat = {};
+  done.forEach(p => { const c = p.category_name || 'Other'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byCat[c]) byCat[c] = []; byCat[c].push(v); } });
+  let catE = Object.entries(byCat).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const catMore = catE.length > topN ? catE.slice(topN) : [];
+  catE = catE.slice(0, topN);
+  // Auto-resize chart body height based on item count (base from cfg.height)
+  const baseH = cfg.height || 260;
+  const catH = Math.max(baseH, catE.length * DASHBOARD.bar.rowHeight + DASHBOARD.bar.padding);
+  document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', catH + 'px');
+  if (!catE.length) return;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: ps => { const d = catE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+    grid: { left: 180, right: 50, top: 5, bottom: catMore.length ? 25 : 10 },
+    xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: DASHBOARD.palette.gray100, type: 'dashed' } } },
+    yAxis: { type: 'category', data: catE.map(e => e.n.length > 30 ? e.n.slice(0, 27) + '…' : e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
+    series: [{ type: 'bar', data: catE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+      barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
+    graphic: catMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${catMore.length} more`, fontSize: 11, fill: DASHBOARD.palette.gray, fontStyle: 'italic' } }] : [],
+  });
+});
+
+registerChart('bar_by_practice', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const byPr = {};
+  done.forEach(p => { const code = p.practice_code || 'Unassigned'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byPr[code]) byPr[code] = []; byPr[code].push(v); } });
+  let prE = Object.entries(byPr).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const prMore = prE.length > topN ? prE.slice(topN) : [];
+  prE = prE.slice(0, topN);
+  const baseH = cfg.height || 260;
+  const prH = Math.max(baseH, prE.length * DASHBOARD.bar.rowHeight + DASHBOARD.bar.padding);
+  document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', prH + 'px');
+  if (!prE.length) return;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: ps => { const d = prE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+    grid: { left: 140, right: 50, top: 5, bottom: prMore.length ? 25 : 10 },
+    xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: DASHBOARD.palette.gray100, type: 'dashed' } } },
+    yAxis: { type: 'category', data: prE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLbl(), fontSize: 12 } },
+    series: [{ type: 'bar', data: prE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+      barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.1)' } } }],
+    graphic: prMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${prMore.length} more`, fontSize: 11, fill: DASHBOARD.palette.gray, fontStyle: 'italic' } }] : [],
+  });
+});
+
+registerChart('bar_by_pioneer', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const byP = {};
+  done.forEach(p => { const pn = p.pioneer_name || 'Unknown'; const v = p.metrics.productivity_ratio; if (v != null) { if (!byP[pn]) byP[pn] = []; byP[pn].push(v); } });
+  let pE = Object.entries(byP).map(([n, vs]) => ({ n, a: vs.reduce((a, b) => a + b, 0) / vs.length, c: vs.length })).sort((a, b) => b.a - a.a);
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const pMore = pE.length > topN ? pE.slice(topN) : [];
+  pE = pE.slice(0, topN);
+  const baseH = cfg.height || 260;
+  const pH = Math.max(baseH, pE.length * DASHBOARD.bar.rowHeight + DASHBOARD.bar.padding);
+  document.getElementById(cfg.id)?.parentElement?.parentElement?.querySelector('.chart-body')?.style.setProperty('height', pH + 'px');
+  if (!pE.length) return;
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: ps => { const d = pE[ps[0].dataIndex]; return `<b>${d.n}</b><br>Avg: <b>${round2(d.a)}×</b> · ${d.c} project${d.c > 1 ? 's' : ''}`; } },
+    grid: { left: 140, right: 50, top: 5, bottom: pMore.length ? 25 : 10 },
+    xAxis: { type: 'value', min: 0, axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl(), splitLine: { lineStyle: { color: DASHBOARD.palette.gray100, type: 'dashed' } } },
+    yAxis: { type: 'category', data: pE.map(e => e.n), axisLine: { show: false }, axisTick: { show: false }, axisLabel: axisLbl() },
+    series: [{ type: 'bar', data: pE.map(e => ({ value: round2(e.a), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: barColor(e.a) }, { offset: 1, color: barColor(e.a) + 'AA' }]), borderRadius: [0, 5, 5, 0] } })),
+      barWidth: 18, label: { show: true, position: 'right', fontSize: 11, fontWeight: 600, color: '#374151', formatter: '{c}×' },
+      emphasis: { itemStyle: { shadowBlur: 8 } } }],
+    graphic: pMore.length ? [{ type: 'text', right: 10, bottom: 5, style: { text: `+${pMore.length} more`, fontSize: 11, fill: DASHBOARD.palette.gray, fontStyle: 'italic' } }] : [],
+  });
+});
+
+registerChart('donut_client_pulse', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  const pc = { 'Exceeded expectations': 0, 'Met expectations': 0, 'Below expectations': 0, 'Not yet received': 0 };
+  done.forEach(p => { const v = p.client_pulse; if (pc[v] !== undefined) pc[v]++; });
+  const responded = pc['Exceeded expectations'] + pc['Met expectations'] + pc['Below expectations'];
+  const totalPulse = responded + pc['Not yet received'];
+  if (totalPulse <= 0) return;
+  const data = [
+    { value: pc['Exceeded expectations'], name: 'Exceeded', itemStyle: { color: DASHBOARD.palette.green } },
+    { value: pc['Met expectations'], name: 'Met', itemStyle: { color: DASHBOARD.palette.blue } },
+    { value: pc['Below expectations'], name: 'Below', itemStyle: { color: DASHBOARD.palette.red } },
+  ];
+  if (pc['Not yet received'] > 0) data.push({ value: pc['Not yet received'], name: 'Pending', itemStyle: { color: DASHBOARD.palette.gray200 } });
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'item',
+      formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
+    legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
+    series: [
+      { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
+        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+        label: { show: false },
+        emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: DASHBOARD.palette.navy },
+          itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
+        data },
+      { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
+        label: { show: true, position: 'center', formatter: `{big|${responded}/${totalPulse}}\n{sub|responded}`,
+          rich: { big: { fontSize: 26, fontWeight: 800, color: DASHBOARD.palette.navy, fontFamily: 'Inter', lineHeight: 32 },
+                  sub: { fontSize: 11, color: DASHBOARD.palette.gray, fontFamily: 'Inter', lineHeight: 18 } } },
+        data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
+    ],
+  });
+});
+
+registerChart('donut_reuse_intent', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = _doneProjects(filtered);
+  if (!done.length) return;
+  let enthusiastic = 0, reserved = 0, noReuse = 0, pending = 0;
+  done.forEach(p => {
+    const sc = p.metrics && p.metrics.reuse_intent_score;
+    if (sc === 1.0) enthusiastic++;
+    else if (sc === 0.5) reserved++;
+    else if (sc != null && sc === 0) noReuse++;
+    else pending++;
+  });
+  const responded = enthusiastic + reserved + noReuse;
+  const totalReuse = responded + pending;
+  if (totalReuse <= 0) return;
+  const data = [
+    { value: enthusiastic, name: 'Enthusiastic', itemStyle: { color: DASHBOARD.palette.green } },
+    { value: reserved, name: 'Reserved', itemStyle: { color: DASHBOARD.palette.orange } },
+    { value: noReuse, name: 'No', itemStyle: { color: DASHBOARD.palette.red } },
+  ];
+  if (pending > 0) data.push({ value: pending, name: 'Pending', itemStyle: { color: DASHBOARD.palette.gray200 } });
+  s.setOption({
+    tooltip: { ...tip(), trigger: 'item',
+      formatter: p => `<b>${p.name}</b><br>${p.value} project${p.value !== 1 ? "s" : ""} (${Math.round(p.percent)}%)` },
+    legend: { bottom: 10, textStyle: { fontSize: 12, color: '#6B7280' }, itemWidth: 14, itemHeight: 14, itemGap: 20 },
+    series: [
+      { type: 'pie', radius: ['50%', '75%'], center: ['50%', '45%'],
+        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+        label: { show: false },
+        emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold', color: DASHBOARD.palette.navy },
+          itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.15)' } },
+        data },
+      { type: 'pie', radius: [0, 0], center: ['50%', '45%'], silent: true,
+        label: { show: true, position: 'center', formatter: `{big|${responded}/${totalReuse}}\n{sub|responded}`,
+          rich: { big: { fontSize: 26, fontWeight: 800, color: DASHBOARD.palette.navy, fontFamily: 'Inter', lineHeight: 32 },
+                  sub: { fontSize: 11, color: DASHBOARD.palette.gray, fontFamily: 'Inter', lineHeight: 18 } } },
+        data: [{ value: 1, itemStyle: { color: 'transparent' } }] },
+    ],
+  });
+});
+
+registerChart('track_scaling_gates', (cfg, filtered, localMetrics, dashboard) => {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  const gates = dashboard.scaling_gates || [];
+  if (!gates.length || (filtered && _projectsCache && filtered.length !== _projectsCache.length)) {
+    // Gates are defined against the FULL dataset; when filters are active they mean nothing.
+    host.innerHTML = '<div style="color:#9CA3AF;font-size:13px;padding:16px">Clear filters to see scaling-gate progress.</div>';
+    return;
+  }
+  const passed = gates.filter(g => g.status === 'pass').length;
+  const total = gates.length;
+  host.innerHTML = `
+    <div class="gates-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div>${passed}/${total} passed</div>
+      <div class="gates-progress-ring">${passed}/${total}</div>
+    </div>
+    <div class="gates-track">
+      ${gates.map(g => {
+        const ok = g.status === 'pass';
+        return `<div class="gate-card ${ok ? 'gate-pass' : 'gate-pending'}">
+          <div class="gate-status">${ok ? '✓' : '✕'}</div>
+          <div class="gate-info">
+            <div class="gate-name">${esc(g.name)}</div>
+            <div class="gate-threshold">${esc(g.description || '')}</div>
+            <div class="gate-detail">${esc(g.detail)}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="gates-legend">
+      <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-pass">✓</span> Passed</span>
+      <span class="gates-legend-item"><span class="gate-legend-icon gate-legend-fail">✕</span> Not yet met</span>
+    </div>
+  `;
+});
+
+registerChart('table_portfolio', (cfg, filtered) => {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  host.style.height = 'auto';   // Table has no fixed height
+  host.innerHTML = `
+    <div class="table-wrapper">
+      <table class="data-table portfolio-table">
+        <thead><tr>
+          <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th>
+          <th title="Actual delivery vs. expected delivery.">Schedule</th>
+          <th class="r" title="Legacy person-days ÷ xCSG person-days. >1× = xCSG faster.">Speed ${infoIcon('delivery_speed')}</th>
+          <th class="r" title="xCSG quality ÷ legacy quality. >1× = xCSG higher quality.">Quality ${infoIcon('output_quality')}</th>
+          <th class="r" title="Quality per person-day: xCSG vs legacy.">xCSG Value Gain ${infoIcon('productivity_ratio')}</th>
+          <th class="r">Actions</th>
+        </tr></thead>
+        <tbody>
+          ${filtered.map(row => {
+            const m = row.metrics || {};
+            const rowPioneers = row.pioneers || [];
+            const rowPioneerNames = rowPioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
+            const pioneerDisplay = rowPioneerNames.length > 0 ? rowPioneerNames.length + ' pioneer' + (rowPioneerNames.length !== 1 ? 's' : '') : esc(row.pioneer_name || '—');
+            const pioneerTooltip = rowPioneerNames.join(', ') || row.pioneer_name || '';
+            const schedDelta = scheduleDelta(row.date_expected_delivered, row.date_delivered);
+            const schedCell = schedDelta == null
+              ? '<span style="color:var(--gray-400)">—</span>'
+              : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(row.date_expected_delivered || '')} · Delivered: ${esc(row.date_delivered || '')}">${formatScheduleDelta(schedDelta)}</span>`;
+            const ratioFmt = v => v == null ? '—' : `${round2(v)}×`;
+            return `<tr>
+              <td><strong>${esc(row.project_name)}</strong></td>
+              <td>${esc(row.category_name || '—')}</td>
+              <td>${esc(row.practice_code || '—')}</td>
+              <td title="${esc(pioneerTooltip)}">${pioneerDisplay}</td>
+              <td>${schedCell}</td>
+              <td class="r" style="color:${metricTone(m.delivery_speed)};font-weight:700">${ratioFmt(m.delivery_speed)}</td>
+              <td class="r" style="color:${metricTone(m.output_quality)};font-weight:700">${ratioFmt(m.output_quality)}</td>
+              <td class="r" style="color:${metricTone(m.productivity_ratio)};font-weight:800">${ratioFmt(m.productivity_ratio)}</td>
+              <td class="r"><a href="#edit/${row.id}" class="table-link">Open</a></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+});
+
+registerChart('timeline_quarterly', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.metrics && p.date_delivered);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const minQ = schema.dashboard.thresholds.quarterly_bucket_min_quarters;
+  const quarterKey = d => {
+    const dt = new Date(d);
+    return DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+  };
+  const byQuarter = {};
+  for (const p of done) {
+    const k = quarterKey(p.date_delivered);
+    (byQuarter[k] = byQuarter[k] || []).push(p.metrics.productivity_ratio);
+  }
+  let labels = Object.keys(byQuarter).sort();
+  let granularity = 'quarter';
+  let bucket = byQuarter;
+  if (labels.length < minQ) {
+    const byMonth = {};
+    for (const p of done) {
+      const dt = new Date(p.date_delivered);
+      const k = DASHBOARD.bucket.monthLabel(dt.getFullYear(), dt.getMonth() + 1);
+      (byMonth[k] = byMonth[k] || []).push(p.metrics.productivity_ratio);
+    }
+    labels = Object.keys(byMonth).sort();
+    bucket = byMonth;
+    granularity = 'month';
+  }
+  const avgLine  = labels.map(k => round2(bucket[k].reduce((a, b) => a + (b || 0), 0) / bucket[k].length));
+  const countBar = labels.map(k => bucket[k].length);
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    grid: { left: 50, right: 50, top: 42, bottom: 50 },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: pal.gray500 } },
+    yAxis: [
+      { type: 'value', name: 'Avg Value Gain (×)', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+      { type: 'value', name: 'Projects', position: 'right', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+    ],
+    series: [
+      { name: 'Projects',       type: 'bar', yAxisIndex: 1, data: countBar, itemStyle: { color: pal.gray200 } },
+      { name: 'Avg Value Gain', type: 'line', data: avgLine, smooth: true,
+        lineStyle: { color: pal.indigo, width: 3 }, itemStyle: { color: pal.indigo } },
+    ],
+    title: granularity === 'month'
+      ? { text: `Monthly buckets (< ${schema.dashboard.thresholds.quarterly_bucket_min_quarters} quarters in range)`, left: 'right', textStyle: { fontSize: 11, color: pal.gray400 } }
+      : undefined,
+  });
+});
+registerChart('timeline_cumulative', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.metrics && p.date_delivered)
+    .sort((a, b) => new Date(a.date_delivered) - new Date(b.date_delivered));
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const xs = done.map((_, i) => i + 1);
+  const running = { speed: [], quality: [], gain: [] };
+  const sums = { speed: 0, quality: 0, gain: 0 };
+  done.forEach((p, i) => {
+    sums.speed   += (p.metrics.delivery_speed      || 0);
+    sums.quality += (p.metrics.output_quality      || 0);
+    sums.gain    += (p.metrics.productivity_ratio  || 0);
+    running.speed.push(round2(sums.speed   / (i + 1)));
+    running.quality.push(round2(sums.quality / (i + 1)));
+    running.gain.push(round2(sums.gain    / (i + 1)));
+  });
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    grid: { left: 50, right: 40, top: 42, bottom: 50 },
+    xAxis: { type: 'category', data: xs, name: 'nth project', nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: '× vs legacy', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLine: { lineStyle: { color: pal.gray200 } }, axisLabel: { color: pal.gray500 } },
+    series: [
+      { name: 'Speed',      type: 'line', data: running.speed,   smooth: true,
+        lineStyle: { color: pal.blue,    width: 2.5 }, itemStyle: { color: pal.blue } },
+      { name: 'Quality',    type: 'line', data: running.quality, smooth: true,
+        lineStyle: { color: pal.success, width: 2.5 }, itemStyle: { color: pal.success } },
+      { name: 'Value Gain', type: 'line', data: running.gain,    smooth: true,
+        lineStyle: { color: pal.indigo,  width: 3 },   itemStyle: { color: pal.indigo } },
+      { type: 'line', markLine: { symbol: 'none', lineStyle: { color: pal.gray, type: 'dashed' },
+        data: [{ yAxis: 1.0, label: { formatter: 'Baseline 1×', position: 'end', color: pal.gray400, fontSize: 11 } }] } },
+    ],
+  });
+});
+registerChart('cohort_learning_curve', (cfg, filtered) => {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  host.innerHTML = '';  // clear previous render
+
+  const minN = schema.dashboard.thresholds.cohort_min_projects;
+  const byPractice = {};
+  for (const p of filtered.filter(x => x.metrics && x.date_delivered && x.practice_code)) {
+    (byPractice[p.practice_code] = byPractice[p.practice_code] || []).push(p);
+  }
+  const eligible = Object.entries(byPractice)
+    .filter(([, arr]) => arr.length >= minN)
+    .map(([code, arr]) => [code, arr.sort((a, b) => new Date(a.date_delivered) - new Date(b.date_delivered))]);
+
+  if (!eligible.length) {
+    host.style.display = 'flex';
+    host.style.alignItems = 'center';
+    host.style.justifyContent = 'center';
+    host.style.color = DASHBOARD.palette.gray400;
+    host.style.fontSize = '13px';
+    host.textContent = `No practice has ≥ ${minN} projects yet.`;
+    return;
+  }
+
+  host.style.display = 'grid';
+  host.style.gridTemplateColumns = 'repeat(auto-fill, minmax(220px, 1fr))';
+  host.style.gap = '12px';
+  host.style.overflow = 'auto';
+
+  const pal = DASHBOARD.palette;
+  for (const [code, arr] of eligible) {
+    const cell = document.createElement('div');
+    cell.style.height = DASHBOARD.minis.cellHeight + 'px';
+    cell.innerHTML = `<div style="font-size:11px;color:${pal.gray500};margin-bottom:2px">${esc(code)} (n=${arr.length})</div>`
+                   + `<div class="cohort-mini" style="width:100%;height:calc(100% - 18px)"></div>`;
+    host.appendChild(cell);
+    const miniEl = cell.querySelector('.cohort-mini');
+    const mini = echarts.init(miniEl);
+    chartInstances[`${cfg.id}_${code}`] = mini;
+    mini.setOption({
+      grid: { left: 30, right: 6, top: 6, bottom: 24 },
+      tooltip: { ...DASHBOARD.tooltip, trigger: 'axis',
+                 formatter: params => {
+                   const p = params[0];
+                   const project = arr[p.dataIndex];
+                   return `${esc(project.project_name)}<br>Value Gain: <strong>${p.value}×</strong>`;
+                 } },
+      xAxis: { type: 'category', data: arr.map((_, i) => i + 1), axisLabel: { fontSize: 10, color: pal.gray400 } },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10, color: pal.gray400 } },
+      series: [{ type: 'line',
+                 data: arr.map(p => round2(p.metrics.productivity_ratio || 0)),
+                 smooth: true,
+                 lineStyle: { color: pal.indigo, width: 2 },
+                 itemStyle: { color: pal.indigo },
+                 symbolSize: 6 }],
+    });
+  }
+});
+registerChart('heatmap_practice_quarter', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.metrics && p.date_delivered && p.practice_code);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const quarterOf = d => {
+    const dt = new Date(d);
+    return DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+  };
+  const quarters = [...new Set(done.map(p => quarterOf(p.date_delivered)))].sort();
+  const practices = [...new Set(done.map(p => p.practice_code))].sort();
+  const cell = {};
+  for (const p of done) {
+    const q = quarterOf(p.date_delivered);
+    const key = `${p.practice_code}__${q}`;
+    (cell[key] = cell[key] || []).push(p.metrics.productivity_ratio || 0);
+  }
+  const data = [];
+  practices.forEach((pc, y) => quarters.forEach((q, x) => {
+    const arr = cell[`${pc}__${q}`] || [];
+    if (arr.length) data.push([x, y, round2(arr.reduce((a, b) => a + b, 0) / arr.length), arr.length]);
+  }));
+  const values = data.map(d => d[2]);
+  const pal = DASHBOARD.palette;
+  // Cap the visual scale so one outlier doesn't squash everything to the low colour.
+  // Below baseline (1×) = red, above baseline = green gradient. Clip at radar_axis_cap for readability.
+  const cap = schema.dashboard.thresholds.radar_axis_cap;
+  const vmMin = 0;
+  const vmMax = cap;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip,
+               formatter: p => `${esc(practices[p.data[1]])} · ${esc(quarters[p.data[0]])}<br>Value Gain: <strong>${p.data[2]}×</strong>${p.data[2] > cap ? ` <em style="color:${pal.gray500}">(clipped at ${cap}×)</em>` : ''}<br>Projects: ${p.data[3]}` },
+    grid: { left: 80, right: 30, top: 20, bottom: 72 },
+    xAxis: { type: 'category', data: quarters, axisLabel: { color: pal.gray500 }, splitArea: { show: true } },
+    yAxis: { type: 'category', data: practices, axisLabel: { color: pal.gray500 }, splitArea: { show: true } },
+    visualMap: {
+      min: vmMin, max: vmMax,
+      calculable: true, orient: 'horizontal', bottom: 8, left: 'center',
+      itemWidth: 14, itemHeight: 180,
+      text: [`≥ ${vmMax}× (strong)`, `${vmMin}× (weak)`],
+      textStyle: { color: pal.gray500, fontSize: 11 },
+      inRange: { color: ['#fee2e2', '#fed7aa', '#fef3c7', '#d1fae5', '#86efac', '#10b981'] },
+    },
+    series: [{
+      type: 'heatmap', data,
+      // Plot clipped value for colour, real number for label.
+      label: { show: true, formatter: p => p.data[2] + '×', fontSize: 12, fontWeight: 600, color: '#111827' },
+      itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 3 },
+      emphasis: { itemStyle: { borderColor: pal.navy, borderWidth: 2 } },
+    }],
+    // ECharts colours heatmap by data[2] (the raw avg); clip it by feeding the capped value instead.
+    // (Simpler: map the data array to clip — but keeping raw value in tooltip and label requires
+    //  explicit clip via series.data remap below.)
+  });
+  // Feed clipped values for colour mapping while preserving raw values in label/tooltip via itemStyle.color
+  // Simpler approach: overwrite the series data with clipped value stored in [x, y, min(v, cap), count, rawV]
+  const clippedData = data.map(d => [d[0], d[1], Math.min(d[2], cap), d[3], d[2]]);
+  s.setOption({
+    series: [{ data: clippedData,
+               label: { show: true, formatter: p => (p.data[4] ?? p.data[2]) + '×', fontSize: 12, fontWeight: 600, color: '#111827' } }],
+    tooltip: { ...DASHBOARD.tooltip,
+               formatter: p => `${esc(practices[p.data[1]])} · ${esc(quarters[p.data[0]])}<br>Value Gain: <strong>${p.data[4] ?? p.data[2]}×</strong>${(p.data[4] ?? p.data[2]) > cap ? ` <em style="color:${pal.gray500}">(colour clipped at ${cap}×)</em>` : ''}<br>Projects: ${p.data[3]}` },
+  });
+});
+function _renderRankedList(cfg, filtered, ordering) {
+  const host = document.getElementById(cfg.id);
+  if (!host) return;
+  host.innerHTML = '';
+  const done = filtered.filter(p => p.metrics && p.metrics.productivity_ratio != null);
+  if (!done.length) {
+    host.innerHTML = `<div style="display:flex;height:100%;align-items:center;justify-content:center;color:${DASHBOARD.palette.gray400};font-size:13px">Not enough data yet</div>`;
+    return;
+  }
+  const sorted = [...done].sort((a, b) =>
+    ordering === 'desc'
+      ? (b.metrics.productivity_ratio - a.metrics.productivity_ratio)
+      : (a.metrics.productivity_ratio - b.metrics.productivity_ratio)
+  );
+  const top = sorted.slice(0, 5);
+  const pal = DASHBOARD.palette;
+  host.innerHTML = `
+    <ol class="ranked-list">
+      ${top.map((p, i) => {
+        const v = round2(p.metrics.productivity_ratio);
+        const color = v > 1.5 ? pal.success : v >= 1 ? pal.blue : v >= 0.8 ? pal.warning : pal.danger;
+        return `
+          <li class="ranked-list-item">
+            <span class="ranked-list-rank">${i + 1}</span>
+            <a href="#edit/${p.id}" class="ranked-list-name" title="${esc(p.project_name)}">${esc(p.project_name)}</a>
+            <span class="ranked-list-meta">${esc(p.practice_code || '—')}</span>
+            <span class="ranked-list-value" style="color:${color}">${v}×</span>
+          </li>`;
+      }).join('')}
+    </ol>`;
+}
+
+registerChart('ranked_list_top',    (cfg, filtered) => _renderRankedList(cfg, filtered, 'desc'));
+registerChart('ranked_list_bottom', (cfg, filtered) => _renderRankedList(cfg, filtered, 'asc'));
+
+registerChart('timeline_effort', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.date_delivered && p.metrics && p.metrics.xcsg_person_days != null);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const quarterOf = d => {
+    const dt = new Date(d);
+    return DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+  };
+  const byQ = {};
+  for (const p of done) {
+    const k = quarterOf(p.date_delivered);
+    (byQ[k] = byQ[k] || []).push(p.metrics.xcsg_person_days);
+  }
+  const labels = Object.keys(byQ).sort();
+  const xcsgAvg = labels.map(k => round2(byQ[k].reduce((a,b)=>a+b,0) / byQ[k].length));
+  // Also include avg of legacy person-days per project per quarter if available
+  const byQLegacy = {};
+  for (const p of done) {
+    if (p.metrics && p.metrics.legacy_person_days != null) {
+      const k = quarterOf(p.date_delivered);
+      (byQLegacy[k] = byQLegacy[k] || []).push(p.metrics.legacy_person_days);
+    }
+  }
+  const legacyAvg = labels.map(k => (byQLegacy[k] && byQLegacy[k].length) ? round2(byQLegacy[k].reduce((a,b)=>a+b,0) / byQLegacy[k].length) : null);
+
+  const pal = DASHBOARD.palette;
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 5 },
+    grid: { left: 50, right: 30, top: 42, bottom: 50 },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: 'Person-days', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+    series: [
+      { name: 'xCSG',   type: 'line', data: xcsgAvg,   smooth: true,
+        lineStyle: { color: pal.indigo, width: 3 }, itemStyle: { color: pal.indigo } },
+      { name: 'Legacy', type: 'line', data: legacyAvg, smooth: true,
+        lineStyle: { color: pal.gray, width: 2, type: 'dashed' }, itemStyle: { color: pal.gray } },
+    ],
+  });
+});
+
+registerChart('area_category_mix', (cfg, filtered) => {
+  const s = ecInit(cfg.id);
+  if (!s) return;
+  const done = filtered.filter(p => p.date_delivered && p.category_name);
+  if (!done.length) {
+    s.setOption({ title: { text: 'Not enough data', left: 'center', top: 'middle', textStyle: { color: '#9CA3AF' } } });
+    return;
+  }
+  const topN = schema.dashboard.thresholds.bar_top_n;
+  const catCounts = {};
+  for (const p of done) catCounts[p.category_name] = (catCounts[p.category_name] || 0) + 1;
+  const topCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]).slice(0, topN).map(e => e[0]);
+  const otherLabel = 'Other';
+  const norm = name => topCats.includes(name) ? name : otherLabel;
+
+  const byQuarter = {};
+  for (const p of done) {
+    const dt = new Date(p.date_delivered);
+    const q = DASHBOARD.bucket.quarterLabel(dt.getFullYear(), Math.floor(dt.getMonth() / 3) + 1);
+    byQuarter[q] = byQuarter[q] || {};
+    const c = norm(p.category_name);
+    byQuarter[q][c] = (byQuarter[q][c] || 0) + 1;
+  }
+  const quarters = Object.keys(byQuarter).sort();
+  const cats = [
+    ...topCats,
+    ...(Object.values(byQuarter).some(q => q[otherLabel]) ? [otherLabel] : []),
+  ];
+  const pal = DASHBOARD.palette;
+  const series = cats.map((c, i) => ({
+    name: c,
+    type: 'line',
+    stack: 'mix',
+    areaStyle: {},
+    data: quarters.map(q => (byQuarter[q] || {})[c] || 0),
+    lineStyle: { width: 0 },
+    itemStyle: { color: pal.series[i % pal.series.length] },
+    emphasis: { focus: 'series' },
+    showSymbol: false,
+  }));
+  s.setOption({
+    tooltip: { ...DASHBOARD.tooltip, trigger: 'axis' },
+    legend: { ...DASHBOARD.legend, bottom: 0, type: 'scroll' },
+    grid: { left: 50, right: 30, top: 42, bottom: 60 },
+    xAxis: { type: 'category', data: quarters, boundaryGap: false, axisLabel: { color: pal.gray500 } },
+    yAxis: { type: 'value', name: 'Projects', nameGap: 14, nameTextStyle: { color: pal.gray500, fontSize: 11 }, axisLabel: { color: pal.gray500 } },
+    series,
+  });
+});
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1982,6 +2400,78 @@ function _expertClearStorage(token, round) {
 
 // Section metadata for accordion
 // EXPERT_SECTIONS removed — now served from /api/schema via getExpertSections()
+
+// Sections that carry pioneer answers (A is project context, not survey answers).
+const _PREV_SECTIONS_IN_ORDER = ['B', 'C', 'D', 'E', 'F', 'G', 'L'];
+
+function _formatSubmittedDate(iso) {
+  if (!iso) return '';
+  // Accept "2026-04-22T14:08:00Z" or "2026-04-22 14:08:00" — first 10 chars are the date.
+  const s = String(iso);
+  return s.length >= 10 ? s.slice(0, 10) : s;
+}
+
+/**
+ * Render a <details> accordion grouping expert responses by schema section.
+ * `responses` = array of response rows. Each row may contain: round_number,
+ * submitted_at, pioneer_name (optional, cross-pioneer rendering), plus field keys.
+ * Fields are looked up in `schema.fields` and grouped by `schema.fields[key].section`.
+ * Rows without schema.fields entries (id, pioneer_id, project_id, created_at,
+ * submitted_at, round_number, pioneer_name, ...) are skipped automatically.
+ * Empty / null / undefined values are skipped.
+ */
+function renderResponseAccordion(heading, responses) {
+  if (!responses || !responses.length) return '';
+  const fieldDefs = (schema && schema.fields) ? schema.fields : {};
+  const sectionDefs = (schema && schema.sections) ? schema.sections : {};
+
+  let out = '<details class="previous-responses"><summary>' + esc(heading) + '</summary>';
+  out += '<div class="prev-content">';
+
+  for (const r of responses) {
+    const roundNum = r.round_number != null ? r.round_number : '?';
+    const dateStr = _formatSubmittedDate(r.submitted_at);
+    const pioneerPrefix = r.pioneer_name ? esc(r.pioneer_name) + ' · ' : '';
+    const headerBits = [];
+    headerBits.push('Round ' + esc(String(roundNum)));
+    if (dateStr) headerBits.push('submitted ' + esc(dateStr));
+
+    out += '<div class="prev-round">';
+    out += '<div class="prev-round-header">' + pioneerPrefix + headerBits.join(' · ') + '</div>';
+
+    for (const secKey of _PREV_SECTIONS_IN_ORDER) {
+      const secMeta = sectionDefs[secKey];
+      if (!secMeta) continue;
+      // Collect populated fields from r that belong to this section.
+      const keys = Object.keys(r).filter(k => {
+        const fd = fieldDefs[k];
+        if (!fd || fd.section !== secKey) return false;
+        const v = r[k];
+        return v !== null && v !== undefined && v !== '';
+      });
+      if (!keys.length) continue;
+
+      out += '<div class="prev-section">';
+      out += '<div class="prev-section-title">'
+        + (secMeta.icon ? esc(secMeta.icon) + ' ' : '')
+        + esc(secKey) + ' — ' + esc(secMeta.title)
+        + '</div>';
+      out += '<dl class="prev-fields">';
+      for (const k of keys) {
+        const label = fieldDefs[k].label || k;
+        out += '<dt>' + esc(label) + '</dt>';
+        out += '<dd>' + esc(String(r[k])) + '</dd>';
+      }
+      out += '</dl>';
+      out += '</div>';
+    }
+
+    out += '</div>';
+  }
+
+  out += '</div></details>';
+  return out;
+}
 
 async function renderExpert(token) {
   const ec = document.getElementById('expertContent');
@@ -2038,6 +2528,7 @@ async function renderExpert(token) {
     if (ctx.description) html += '<p class="context-description">' + esc(ctx.description) + '</p>';
     html += '<div class="context-grid">';
     html += '<div class="context-item"><span class="label">A1 \u2014 Deliverable Type</span><span class="value">' + esc(ctx.category_name) + '</span></div>';
+    html += '<div class="context-item"><span class="label">Practice</span><span class="value">' + esc(ctx.practice_code || '\u2014') + '</span></div>';
     html += '<div class="context-item"><span class="label">A2 \u2014 Engagement Stage</span><span class="value">' + esc(ctx.engagement_stage || '\u2014') + '</span></div>';
     html += '<div class="context-item"><span class="label">Pioneer</span><span class="value">' + esc(ctx.pioneer_name) + '</span></div>';
     html += '<div class="context-item"><span class="label">Timeline</span><span class="value">' + esc(ctx.date_started || '?') + ' \u2192 ' + esc(ctx.date_delivered || '?') + '</span></div>';
@@ -2054,25 +2545,18 @@ async function renderExpert(token) {
         + '</div>';
     }
 
-    // Previous responses (if enabled and available)
+    // Previous responses (same pioneer, earlier rounds)
     if (ctx.show_previous && ctx.previous_responses && ctx.previous_responses.length) {
-      html += '<details class="previous-responses"><summary>View Your Previous Responses (' + ctx.previous_responses.length + ' round' + (ctx.previous_responses.length > 1 ? 's' : '') + ')</summary>';
-      html += '<div class="prev-content">';
-      for (let ri = 0; ri < ctx.previous_responses.length; ri++) {
-        const prev = ctx.previous_responses[ri];
-        html += '<div style="margin-bottom:16px"><strong style="color:var(--navy)">Round ' + (ri + 1) + '</strong></div>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:12px">';
-        const fieldDefs = schema ? schema.fields : {};
-        for (const [key, val] of Object.entries(prev)) {
-          if (key === 'id' || key === 'pioneer_id' || key === 'project_id' || key === 'round_number' || key === 'created_at' || val == null || val === '') continue;
-          const fd = fieldDefs[key];
-          const label = fd ? fd.label : key;
-          html += '<div><span style="font-size:12px;color:var(--gray-500)">' + esc(label) + '</span><br><span style="font-size:13px">' + esc(String(val)) + '</span></div>';
-        }
-        html += '</div>';
-        if (ri < ctx.previous_responses.length - 1) html += '<hr style="border:none;border-top:1px solid var(--gray-200);margin:8px 0">';
-      }
-      html += '</div></details>';
+      const n = ctx.previous_responses.length;
+      const heading = 'View Your Previous Responses (' + n + ' round' + (n === 1 ? '' : 's') + ')';
+      html += renderResponseAccordion(heading, ctx.previous_responses);
+    }
+
+    // Other pioneers' submitted responses (cross-pioneer visibility)
+    if (ctx.show_other_pioneers && ctx.other_pioneers_responses && ctx.other_pioneers_responses.length) {
+      const n = ctx.other_pioneers_responses.length;
+      const heading = "View Other Pioneers' Responses (" + n + ')';
+      html += renderResponseAccordion(heading, ctx.other_pioneers_responses);
     }
 
     // Sticky progress bar
@@ -2191,23 +2675,25 @@ async function renderExpert(token) {
         _expertClearStorage(token, currentRound);
         if (result.already_completed) {
           ec.innerHTML = '<div class="expert-thankyou"><div class="thankyou-icon">&#10003;</div><h2>Already Submitted</h2><p>This round has already been recorded.</p></div>';
-        } else if (result.current_round && result.total_rounds && result.current_round < result.total_rounds) {
-          // More rounds remain, but the pioneer is done for this session.
-          // A fresh link will be sent by the PMO team when the next round opens.
-          ec.innerHTML = '<div class="expert-thankyou">'
-            + '<div class="thankyou-icon">&#10003;</div>'
-            + '<h2>Round ' + result.current_round + ' of ' + result.total_rounds + ' Complete</h2>'
-            + '<p>Your responses for this round have been recorded. Thank you!</p>'
-            + '<p style="margin-top:12px;color:var(--gray-600)">You will receive a new assessment link when the next round is scheduled by the PMO team.</p>'
-            + '</div>';
         } else {
           const m = result.metrics || {};
           const fmtX = v => v != null ? (Math.round(v * 100) / 100) + '\xd7' : '\u2014';
           const scoreColor = v => v == null ? '#9CA3AF' : v >= 2 ? '#10B981' : v >= 1 ? '#3B82F6' : v >= 0.5 ? '#F59E0B' : '#EF4444';
-          ec.innerHTML = '<div class="expert-thankyou">'
+          const curR = result.current_round;
+          const totR = result.total_rounds;
+          const isMultiRound = curR && totR && totR > 1;
+          const hasMoreRounds = isMultiRound && curR < totR;
+          const heading = hasMoreRounds
+            ? 'Round ' + curR + ' of ' + totR + ' Complete'
+            : 'Thank You!';
+          const intro = hasMoreRounds
+            ? 'Your responses for this round have been recorded. Here is a summary of the three flywheel scores computed from your answers.'
+            : 'Your assessment has been recorded. Here is a summary of the three flywheel scores computed from your responses.';
+
+          let thankYou = '<div class="expert-thankyou">'
             + '<div class="thankyou-icon">&#10003;</div>'
-            + '<h2>Thank You!</h2>'
-            + '<p>Your assessment has been recorded. Here is a summary of the three flywheel scores computed from your responses.</p>'
+            + '<h2>' + esc(heading) + '</h2>'
+            + '<p>' + esc(intro) + '</p>'
             + '<div class="expert-results-section">'
             + '<h3 style="color:#121F6B;margin:24px 0 8px;font-size:16px">How these scores are calculated</h3>'
             + '<p style="color:#6B7280;font-size:13px;margin-bottom:20px">Each score compares your xCSG responses (Sections B\u2013D) against your legacy estimates (Section L). A value of 1\xd7 means parity; above 1\xd7 means xCSG outperformed legacy on that dimension.</p>'
@@ -2232,7 +2718,26 @@ async function renderExpert(token) {
             + '<div class="accordion-metric-explain">Average of three comparisons: proprietary data use (D1 vs L10), knowledge reuse (D2 vs L11), and competitive moat (D3 vs L12).</div>'
             + '</div>'
 
-            + '</div></div>';
+            + '</div>';
+
+          // Auto-advance: if the backend issued a next-round token, show a CTA
+          // that takes the pioneer directly to Round N+1.
+          if (result.next_round_token) {
+            const nextRound = (curR || 1) + 1;
+            const ofTotal = totR ? ' of ' + totR : '';
+            thankYou += '<div class="expert-next-round-cta">'
+              + '<a href="#assess/' + esc(result.next_round_token) + '" class="btn btn-primary expert-next-round-btn">'
+              + 'Start Round ' + nextRound + ofTotal + ' \u2192'
+              + '</a>'
+              + '</div>';
+          } else if (hasMoreRounds) {
+            // Fallback: multi-round project where the next token was NOT auto-issued
+            // (e.g. a defensive backend race). Preserve the original "check later" notice.
+            thankYou += '<p style="margin-top:16px;color:var(--gray-600)">You will receive a new assessment link when the next round is scheduled by the PMO team.</p>';
+          }
+
+          thankYou += '</div>';
+          ec.innerHTML = thankYou;
         }
       } catch (err) {
         if (err.status === 422 && err.detail && Array.isArray(err.detail.missing_fields)) {
@@ -2396,10 +2901,11 @@ async function renderSettings() {
   const mc = document.getElementById('mainContent');
   const tabs = [
     { id: 'tabCategories', label: 'Categories', key: 'categories' },
+    { id: 'tabPractices', label: 'Practices', key: 'practices' },
     { id: 'tabNorms', label: 'Legacy Norms', key: 'norms' },
     { id: 'tabPassword', label: 'Change Password', key: 'password' },
   ];
-  if (isAdmin()) tabs.splice(2, 0, { id: 'tabUsers', label: 'Users', key: 'users' });
+  if (isAdmin()) tabs.splice(3, 0, { id: 'tabUsers', label: 'Users', key: 'users' });
 
   mc.innerHTML = `
     <div class="settings-tabs">
@@ -2411,10 +2917,11 @@ async function renderSettings() {
 
 function switchSettingsTab(tab) {
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  const tabMap = { categories: 'tabCategories', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword' };
+  const tabMap = { categories: 'tabCategories', practices: 'tabPractices', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword' };
   const el = document.getElementById(tabMap[tab]);
   if (el) el.classList.add('active');
   if (tab === 'categories') renderCategoriesTab();
+  else if (tab === 'practices') renderPracticesTab();
   else if (tab === 'users') renderUsersTab();
   else if (tab === 'password') renderPasswordTab();
   else renderNormsTab();
@@ -2424,24 +2931,26 @@ async function renderCategoriesTab() {
   const sc = document.getElementById('settingsContent');
   sc.innerHTML = '<div class="loading">Loading categories\u2026</div>';
   try {
+    await loadPractices();
     const cats = await apiCall('GET', '/categories');
     state.categories = cats;
     const _isAdmin = isAdmin();
 
     let html = '<div class="card">';
     if (_isAdmin) {
-      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;gap:12px;align-items:center">
-        <input type="text" id="newCatName" placeholder="Category name" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
-        <input type="text" id="newCatDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
-        <button class="btn btn-primary btn-sm" onclick="addCategory()">Add</button>
+      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:13px;color:var(--gray-500)">Categories drive project classification. Each category is attributed one or more practices; projects inherit practice choice from the category.</div>
+        <button class="btn btn-primary btn-sm" onclick="openAddCategoryModal()">+ Add Category</button>
       </div>`;
     }
-    html += `<table class="data-table"><thead><tr><th>Name</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
+    html += `<table class="data-table"><thead><tr><th>Name</th><th>Practices</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
     for (const c of cats) {
       const count = c.project_count || 0;
       const deleteDisabled = count > 0;
+      const pracBadges = (c.practices || []).map(p => `<span class="practice-badge">${esc(p.code)}</span>`).join(' ');
       html += `<tr>
         <td><strong>${esc(c.name)}</strong></td>
+        <td>${pracBadges || '<span style="color:var(--gray-400)">\u2014</span>'}</td>
         <td>${esc(c.description || '\u2014')}</td>
         <td>${count}</td>
         ${_isAdmin ? `<td class="actions-cell">
@@ -2457,12 +2966,38 @@ async function renderCategoriesTab() {
   }
 }
 
+function openAddCategoryModal() {
+  const practiceCheckboxes = state.practices.map(p => `
+    <label style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;padding:4px 10px;border:1px solid var(--gray-300);border-radius:16px;cursor:pointer;user-select:none">
+      <input type="checkbox" class="new-cat-prac-cb" data-id="${p.id}"> <strong>${esc(p.code)}</strong>
+    </label>`).join('');
+  showModal(`
+    <h3>New Category</h3>
+    <div class="form-group" style="margin-bottom:16px"><label>Name *</label><input type="text" id="newCatName" placeholder="e.g. 510(k)" autofocus></div>
+    <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="newCatDesc" placeholder="Optional"></div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Allowed Practices <span class="field-hint" data-hint="Tick every practice that is allowed to use this category. At project creation time the Practice dropdown is filtered to this list.">&#9432;</span></label>
+      <div style="margin-top:6px">${practiceCheckboxes}</div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="addCategory()">Create</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
 async function addCategory() {
   const name = document.getElementById('newCatName')?.value.trim();
   const desc = document.getElementById('newCatDesc')?.value.trim() || null;
   if (!name) { showToast('Category name is required', 'error'); return; }
+  const practiceIds = Array.from(document.querySelectorAll('.new-cat-prac-cb:checked')).map(cb => parseInt(cb.dataset.id));
+  if (practiceIds.length === 0) { showToast('Pick at least one practice', 'error'); return; }
   try {
-    await apiCall('POST', '/categories', { name, description: desc });
+    const cat = await apiCall('POST', '/categories', { name, description: desc });
+    if (cat && cat.id) {
+      await apiCall('PUT', `/categories/${cat.id}/practices`, { practice_ids: practiceIds });
+    }
+    hideModal();
     showToast('Category created');
     state.categories = [];
     renderCategoriesTab();
@@ -2470,10 +3005,20 @@ async function addCategory() {
 }
 
 function editCategory(id, name, desc) {
+  const cat = state.categories.find(c => c.id == id);
+  const currentIds = new Set((cat?.practices || []).map(p => p.id));
+  const practiceCheckboxes = state.practices.map(p => `
+    <label style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;padding:4px 10px;border:1px solid var(--gray-300);border-radius:16px;cursor:pointer;user-select:none${currentIds.has(p.id) ? ';background:var(--brand-blue-50,#dbeafe);border-color:var(--brand-blue,#6EC1E4)' : ''}">
+      <input type="checkbox" class="cat-practice-cb" data-id="${p.id}" ${currentIds.has(p.id) ? 'checked' : ''}> <strong>${esc(p.code)}</strong>
+    </label>`).join('');
   showModal(`
     <h3>Edit Category</h3>
     <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editCatName" value="${esc(name)}"></div>
     <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editCatDesc" value="${esc(desc)}"></div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Allowed Practices <span class="field-hint" data-hint="When creating a project with this category, the Practice dropdown is limited to the codes checked here. Pick at least one.">&#9432;</span></label>
+      <div style="margin-top:6px">${practiceCheckboxes}</div>
+    </div>
     <div class="form-actions">
       <button class="btn btn-primary" onclick="saveCategory(${id})">Save</button>
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -2485,8 +3030,10 @@ async function saveCategory(id) {
   const name = document.getElementById('editCatName')?.value.trim();
   const desc = document.getElementById('editCatDesc')?.value.trim() || null;
   if (!name) { showToast('Name is required', 'error'); return; }
+  const practiceIds = Array.from(document.querySelectorAll('.cat-practice-cb:checked')).map(cb => parseInt(cb.dataset.id));
   try {
     await apiCall('PUT', `/categories/${id}`, { name, description: desc });
+    await apiCall('PUT', `/categories/${id}/practices`, { practice_ids: practiceIds });
     hideModal();
     showToast('Category updated');
     state.categories = [];
@@ -2512,6 +3059,108 @@ async function doDeleteCategory(id) {
     showToast('Category deleted');
     state.categories = [];
     renderCategoriesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PRACTICES SETTINGS TAB  (mirror of Categories)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function renderPracticesTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = '<div class="loading">Loading practices…</div>';
+  try {
+    const practices = await apiCall('GET', '/practices');
+    state.practices = practices;
+    const _isAdmin = isAdmin();
+
+    let html = '<div class="card">';
+    if (_isAdmin) {
+      html += `<div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;gap:12px;align-items:center">
+        <input type="text" id="newPrCode" placeholder="Code (e.g. FOO)" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <input type="text" id="newPrName" placeholder="Name (defaults to code)" style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <input type="text" id="newPrDesc" placeholder="Description (optional)" style="flex:2;padding:8px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif">
+        <button class="btn btn-primary btn-sm" onclick="addPractice()">Add</button>
+      </div>`;
+    }
+    html += `<table class="data-table"><thead><tr><th>Code</th><th>Name</th><th>Description</th><th>Projects</th>${_isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>`;
+    for (const p of practices) {
+      const count = p.project_count || 0;
+      const deleteDisabled = count > 0;
+      html += `<tr>
+        <td><strong>${esc(p.code)}</strong></td>
+        <td>${esc(p.name)}</td>
+        <td>${esc(p.description || '—')}</td>
+        <td>${count}</td>
+        ${_isAdmin ? `<td class="actions-cell">
+          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deletePractice(" + p.id + ",'" + esc(p.code) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+        </td>` : ''}
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+    sc.innerHTML = html;
+  } catch (err) {
+    sc.innerHTML = `<div class="error-state">Failed to load practices: ${esc(err.message)}</div>`;
+  }
+}
+
+async function addPractice() {
+  const code = document.getElementById('newPrCode')?.value.trim();
+  const name = document.getElementById('newPrName')?.value.trim() || code;
+  const desc = document.getElementById('newPrDesc')?.value.trim() || null;
+  if (!code) { showToast('Practice code is required', 'error'); return; }
+  try {
+    await apiCall('POST', '/practices', { code, name, description: desc });
+    showToast('Practice created');
+    state.practices = [];
+    renderPracticesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+function editPractice(id, name, desc) {
+  showModal(`
+    <h3>Edit Practice</h3>
+    <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editPrName" value="${esc(name)}"></div>
+    <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editPrDesc" value="${esc(desc)}"></div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="savePractice(${id})">Save</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function savePractice(id) {
+  const name = document.getElementById('editPrName')?.value.trim();
+  const desc = document.getElementById('editPrDesc')?.value.trim() || null;
+  if (!name) { showToast('Name is required', 'error'); return; }
+  try {
+    await apiCall('PUT', `/practices/${id}`, { name, description: desc });
+    hideModal();
+    showToast('Practice updated');
+    state.practices = [];
+    renderPracticesTab();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deletePractice(id, code) {
+  showModal(`
+    <h3>Delete Practice</h3>
+    <p>Are you sure you want to delete <strong>${esc(code)}</strong>? This will fail if projects exist for this practice.</p>
+    <div class="form-actions">
+      <button class="btn btn-danger" onclick="doDeletePractice(${id})">Delete</button>
+      <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function doDeletePractice(id) {
+  hideModal();
+  try {
+    await apiCall('DELETE', `/practices/${id}`);
+    showToast('Practice deleted');
+    state.practices = [];
+    renderPracticesTab();
   } catch (err) { showToast(err.message, 'error'); }
 }
 

@@ -152,7 +152,14 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
 
       await page.fill('#fName', p.name);
       await page.selectOption('#fCategory', String(p.cat));
-      await page.fill('#fPioneer', p.pioneer);
+      // Category change auto-populates #fPractice (each seeded category has one
+      // allowed practice; the form auto-selects it when only one is valid).
+
+      // Pioneer assignment is a separate sub-form now — fill the first
+      // pioneer row that renderNewProject() pre-creates.
+      const firstPioneerRow = page.locator('#pioneersContainer .pioneer-row').first();
+      await firstPioneerRow.locator('.pioneer-name').fill(p.pioneer);
+
       await page.fill('#fClient', p.client);
       await page.selectOption('#fStage', p.stage);
       await page.selectOption('#fPulse', p.pulse);
@@ -177,7 +184,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
       tokens.push(match![1]);
 
       await page.click('.modal-card .btn-secondary');
-      await page.waitForTimeout(300);
+      await page.waitForSelector('.modal-card', { state: 'detached' }).catch(() => {});
     }
 
     expect(tokens.length).toBe(20);
@@ -266,7 +273,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
     }
 
     await page.goto(BASE + '/#portfolio');
-    await page.waitForTimeout(2000);
+    await page.waitForSelector('#mainContent .metric-tile', { timeout: 8000 }).catch(() => {});
 
     const mc = page.locator('#mainContent');
 
@@ -281,17 +288,28 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
     expect(realValues.length).toBeGreaterThanOrEqual(6);
     console.log('  KPI values:', kpiValues.join(', '));
 
-    // Charts are rendered (ECharts creates canvas elements inside divs)
-    await page.waitForTimeout(2000); // allow charts to render
+    // Charts are rendered (ECharts creates canvas elements inside divs).
+    // The dashboard is now organized into tabs (overview / trends / breakdowns /
+    // signals) — only the active tab's charts are mounted as canvases. The
+    // default Overview tab currently has 2 charts; across all tabs the schema
+    // defines ~16 chart cards. Assert there are at least a couple rendered and
+    // that explainer cards exist across tabs.
+    // Wait until at least one chart canvas is present instead of a blanket pause
+    await page.waitForFunction(() => document.querySelectorAll('.chart-body canvas').length > 0, null, { timeout: 8000 }).catch(() => {});
     const chartCanvases = await page.locator('.chart-body canvas').count();
     console.log(`  Chart canvases rendered: ${chartCanvases}`);
-    expect(chartCanvases).toBeGreaterThanOrEqual(4);
+    expect(chartCanvases).toBeGreaterThanOrEqual(2);
 
-    // Explainer text exists under charts
+    // Explainer text exists under charts (across all tabs)
     const explainers = await mc.locator('.chart-card-explain').count();
     expect(explainers).toBeGreaterThanOrEqual(4);
 
-    // Portfolio table has 20 rows
+    // Portfolio table + scaling gates live on the "Signals & Gates" tab in the
+    // redesigned dashboard — click through to assert those still render.
+    await page.locator('.tab-bar .tab', { hasText: /Signals/ }).click();
+    await page.waitForSelector('.tab-panel[data-panel="signals"].active').catch(() => {});
+    await page.waitForTimeout(400);
+
     const tableRows = await mc.locator('.portfolio-table tbody tr').count();
     expect(tableRows).toBe(20);
 
@@ -404,7 +422,7 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
   // ─── QA: NORMS TAB ─────────────────────────────────────────────────────
   test('QA: Norms tab renders with computed metrics', { timeout: 15_000 }, async () => {
     await page.goto(BASE + '/#norms');
-    await page.waitForTimeout(2000);
+    await page.waitForFunction(() => (document.getElementById('mainContent')?.textContent || '').trim().length > 0, null, { timeout: 8000 }).catch(() => {});
 
     const mc = page.locator('#mainContent');
     await expect(mc.locator('table')).toBeVisible({ timeout: 8000 });
@@ -441,32 +459,43 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
   test('QA: Project detail shows expert assessment', { timeout: 30_000 }, async () => {
     // Navigate directly to first project edit view
     await page.goto(BASE + '/#edit/1');
-    await page.waitForTimeout(3000);
+    await page.waitForSelector('#mainContent form, #mainContent .edit-project', { timeout: 8000 }).catch(() => {});
 
     const mc = page.locator('#mainContent');
 
-    // Should show the edit form
+    // Should show the edit form with the pioneer rounds table
     await expect(mc.locator('#projectForm')).toBeVisible();
+    await expect(mc.locator('.pioneer-rounds-table')).toBeVisible();
 
-    // Should show expert assessment card below
-    await expect(mc.locator('.assessment-overall-banner')).toBeVisible({ timeout: 5000 });
+    // The expert assessment banner is no longer inlined on the edit view; it
+    // opens in a modal when the completed-round chip (R1 ✓) is clicked.
+    const doneChip = mc.locator('.round-chip-clickable').first();
+    await expect(doneChip).toBeVisible({ timeout: 5000 });
+    await doneChip.click();
 
-    // xCSG Score should be present
-    const assessmentText = await mc.textContent();
+    const modal = page.locator('.modal-overlay.active');
+    await expect(modal).toBeVisible({ timeout: 5000 });
+    await expect(modal.locator('.assessment-overall-banner')).toBeVisible({ timeout: 5000 });
+
+    const assessmentText = (await modal.textContent()) || '';
     expect(assessmentText).toContain('xCSG Score');
     expect(assessmentText).toContain('Effort Ratio');
     expect(assessmentText).toContain('Quality Score');
 
-    // Section cards should be present
-    const sectionCards = await mc.locator('.assessment-section-card').count();
+    // Section cards should be present in the modal
+    const sectionCards = await modal.locator('.assessment-section-card').count();
     expect(sectionCards).toBeGreaterThanOrEqual(3); // B, C, D at minimum
     console.log(`  Assessment section cards: ${sectionCards}`);
+
+    // Close the modal so it doesn't interfere with subsequent tests
+    const closeBtn = modal.locator('button', { hasText: 'Close' }).first();
+    if (await closeBtn.isVisible()) await closeBtn.click();
   });
 
   // ─── QA: FILTER / SLICER WORKS ─────────────────────────────────────────
   test('QA: Dashboard category filter works', { timeout: 15_000 }, async () => {
     await page.goto(BASE + '/#portfolio');
-    await page.waitForTimeout(2000);
+    await page.waitForSelector('#mainContent .filter-chip', { timeout: 8000 }).catch(() => {});
 
     // Click a category chip (CDD should have 5 projects)
     const cddChip = page.locator('.filter-chip', { hasText: 'CDD' });
@@ -493,7 +522,11 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
     const routes = ['#portfolio', '#projects', '#norms', '#settings', '#activity'];
     for (const hash of routes) {
       await page.evaluate((h) => { window.location.hash = h; }, hash);
-      await page.waitForTimeout(1500);
+      await page.waitForFunction(
+        () => (document.getElementById('mainContent')?.textContent || '').trim().length > 0,
+        null,
+        { timeout: 8000 },
+      ).catch(() => {});
       const content = await page.locator('#mainContent').textContent();
       expect((content || '').trim().length).toBeGreaterThan(0);
       console.log(`  ✓ ${hash} rendered (${content!.length} chars)`);

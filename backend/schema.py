@@ -186,6 +186,88 @@ METRICS = {
     "client_pulse_avg":            {"label": "Client Pulse", "format": "pct", "icon": "\u2764", "tip": "How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below."},
 }
 
+# ── Dashboard configuration (single source of truth for the frontend) ───────
+
+DASHBOARD_CONFIG = {
+    "tabs": [
+        {"id": "overview",    "label": "Overview",    "icon": "\U0001F30D"},
+        {"id": "trends",      "label": "Trends",      "icon": "\U0001F4C8"},
+        {"id": "breakdowns",  "label": "Breakdowns",  "icon": "\U0001F4CA"},
+        {"id": "signals",     "label": "Signals & Gates", "icon": "\U0001F680"},
+    ],
+    "kpi_tiles": [
+        # (Each tile draws its label/icon/tooltip/format from METRICS[metric_key])
+        # `server_key` is the key in the /api/dashboard/metrics response dict.
+        {"tab": "overview", "metric_key": "delivery_speed",              "server_key": "average_effort_ratio"},
+        {"tab": "overview", "metric_key": "output_quality",              "server_key": "average_quality_ratio"},
+        {"tab": "overview", "metric_key": "rework_efficiency",           "server_key": "rework_efficiency_avg"},
+        {"tab": "overview", "metric_key": "machine_first_score",         "server_key": "machine_first_avg"},
+        {"tab": "overview", "metric_key": "senior_led_score",            "server_key": "senior_led_avg"},
+        {"tab": "overview", "metric_key": "proprietary_knowledge_score", "server_key": "proprietary_knowledge_avg"},
+        {"tab": "overview", "metric_key": "client_impact",               "server_key": "client_impact_avg"},
+        {"tab": "overview", "metric_key": "data_independence",           "server_key": "data_independence_avg"},
+        {"tab": "overview", "metric_key": "reuse_intent_avg",            "server_key": "reuse_intent_avg"},
+        {"tab": "overview", "metric_key": "ai_survival_avg",             "server_key": "ai_survival_avg"},
+        {"tab": "overview", "metric_key": "client_pulse_avg",            "server_key": "client_pulse_avg"},
+        # Synthetic: On-Time Delivery is computed client-side from schedule deltas
+        {"tab": "overview", "metric_key": "on_time_delivery_pct", "synthetic": True,
+         "label": "On-Time Delivery", "format": "pct", "icon": "\u23F1",
+         "tip": "Proportion of projects delivered on or before their expected date."},
+    ],
+    "charts": [
+        # Overview
+        {"id": "chartDisprove",  "tab": "overview", "type": "scatter_disprove", "title": "Disprove Matrix",
+         "subtitle": "Each dot is a project. Top-right = faster AND better quality.", "height": 380},
+        {"id": "chartRadar",     "tab": "overview", "type": "radar_gains", "title": "Gains Radar",
+         "subtitle": "Flywheel dimensions vs baseline (1×). Axes clipped at the configured cap.", "height": 380},
+        {"id": "chartTopMovers",   "tab": "overview", "type": "ranked_list_top",    "title": "Top 5 Value Gain",
+         "subtitle": "Projects driving the most quality per day.", "height": 260},
+        {"id": "chartBottomMovers","tab": "overview", "type": "ranked_list_bottom", "title": "Needs Attention",
+         "subtitle": "Projects with the lowest Value Gain.", "height": 260},
+        # Trends
+        {"id": "chartTimeline",  "tab": "trends", "type": "timeline_per_project", "title": "Per-project timeline",
+         "subtitle": "Speed, Quality, Value Gain per project, ordered by delivery date.", "height": 320},
+        {"id": "chartQuarterly", "tab": "trends", "type": "timeline_quarterly", "title": "Quarterly trend",
+         "subtitle": "Avg Value Gain (line) and project count (bar) per quarter.", "height": 320},
+        {"id": "chartCumulative","tab": "trends", "type": "timeline_cumulative", "title": "Cumulative running average",
+         "subtitle": "Rolling mean of Speed, Quality, Value Gain as the portfolio grows.", "height": 320},
+        {"id": "chartCohort",    "tab": "trends", "type": "cohort_learning_curve", "title": "Learning curve per practice",
+         "subtitle": "Value Gain on each cohort's Nth project. Cohorts under the threshold are hidden.", "height": 420},
+        {"id": "chartEffortTrend", "tab": "trends", "type": "timeline_effort", "title": "Effort efficiency over time",
+         "subtitle": "Avg person-days per deliverable, per quarter. Lower = leaner.", "height": 320},
+        # Breakdowns
+        {"id": "chartCategory",  "tab": "breakdowns", "type": "bar_by_category", "title": "By Category",
+         "subtitle": "Avg Value Gain by deliverable type.", "height": 260},
+        {"id": "chartPractice",  "tab": "breakdowns", "type": "bar_by_practice", "title": "By Practice",
+         "subtitle": "Avg Value Gain by practice.", "height": 260},
+        {"id": "chartPioneer",   "tab": "breakdowns", "type": "bar_by_pioneer",  "title": "By Pioneer",
+         "subtitle": "Avg Value Gain by pioneer lead.", "height": 260},
+        {"id": "chartHeatmap",   "tab": "breakdowns", "type": "heatmap_practice_quarter", "title": "Practice × Quarter",
+         "subtitle": "Colour = avg Value Gain. Cell label = project count.", "height": 360},
+        {"id": "chartMix",       "tab": "breakdowns", "type": "area_category_mix", "title": "Category mix over time",
+         "subtitle": "Share of portfolio by category, per quarter.", "height": 320},
+        # Signals & Gates
+        {"id": "chartPulse",     "tab": "signals", "type": "donut_client_pulse", "title": "Client Pulse",
+         "subtitle": "How clients rated the deliverable.", "height": 320},
+        {"id": "chartReuse",     "tab": "signals", "type": "donut_reuse_intent", "title": "Reuse Intent",
+         "subtitle": "Would experts choose xCSG again?", "height": 320},
+        {"id": "chartSchedule",  "tab": "signals", "type": "scatter_schedule", "title": "Schedule Variance",
+         "subtitle": "Days between actual and expected delivery per project.", "height": 320},
+        {"id": "trackGates",     "tab": "signals", "type": "track_scaling_gates", "title": "Scaling Gates",
+         "subtitle": "7-gate scaling thesis tracker.", "height": None},
+        {"id": "tablePortfolio", "tab": "signals", "type": "table_portfolio", "title": "Portfolio",
+         "subtitle": "All projects in the current filter.", "height": None},
+    ],
+    "thresholds": {
+        "radar_axis_cap": 3.0,
+        "quarterly_bucket_min_quarters": 6,
+        "cohort_min_projects": 1,
+        "bar_top_n": 8,
+        "metric_tone": {"success_above": 1.5, "blue_above": 1.0, "warning_above": 0.8},
+        "pct_tone":    {"success_above": 0.8, "blue_above": 0.6, "warning_above": 0.4},
+    },
+}
+
 # ── Norms column definitions ────────────────────────────────────────────────
 
 NORMS_COLUMNS = [
@@ -206,6 +288,7 @@ DEFAULT_ROUNDS = 1
 MAX_ROUNDS_PER_PIONEER = 10
 MAX_PIONEERS_PER_PROJECT = 20
 SHOW_PREVIOUS_ANSWERS_DEFAULT = False
+SHOW_OTHER_PIONEERS_DEFAULT = False
 
 # ── Monitoring filters ─────────────────────────────────────────────────────
 MONITORING_STATUS_OPTIONS = ["pending", "partial", "complete"]
@@ -228,4 +311,5 @@ def build_schema_response() -> dict:
         "default_rounds": DEFAULT_ROUNDS,
         "max_rounds": MAX_ROUNDS_PER_PIONEER,
         "max_pioneers": MAX_PIONEERS_PER_PROJECT,
+        "dashboard": DASHBOARD_CONFIG,
     }

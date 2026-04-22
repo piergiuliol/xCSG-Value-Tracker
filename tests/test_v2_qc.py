@@ -180,27 +180,39 @@ def test_expert_options():
             test(f"{field_name} contains em dash", "—" in all_text, f"no em dash in: {all_text[:80]}")
 
 def test_categories():
-    print("\n── C. Project Categories ──")
+    print("\n── C. Project Categories (seeded from CSV) ──")
     tk = admin_token()
     r = requests.get(f"{BASE}/api/categories", headers=auth_h(tk))
     test("GET /api/categories returns 200", r.status_code == 200, f"got {r.status_code}")
     if r.status_code != 200:
         return
-    
+
     cats = r.json()
-    test(f"Categories returned (expected 11)", len(cats) == 11, f"got {len(cats)}")
-    
-    # Check expected names
-    expected_names = [
-        "CDD", "Strategic Planning", "Portfolio Management",
-        "Pricing & Reimbursement", "Market Access Strategy", "New Product Strategy",
-        "Strategic Surveillance", "Evidence Generation", "Transaction Advisory",
-        "Market Research", "Regulatory Strategy",
-    ]
-    cat_names = [c["name"] for c in cats]
-    for name in expected_names:
-        found = any(name in cn for cn in cat_names)
-        test(f"Category '{name}' exists", found, f"available: {cat_names}")
+    test(f"Categories returned (expected 79)", len(cats) == 79, f"got {len(cats)}")
+
+    # Spot-check CSV-sourced names
+    cat_names = {c["name"] for c in cats}
+    for name in ["510(k)", "Regulatory Strategy", "Evidence Generation Strategy", "MAA/NDA", "Training", "Other"]:
+        test(f"Category '{name}' exists", name in cat_names, f"missing from {len(cat_names)} categories")
+
+
+def test_practices():
+    print("\n── C2. Practices ──")
+    tk = admin_token()
+    r = requests.get(f"{BASE}/api/practices", headers=auth_h(tk))
+    test("GET /api/practices returns 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+
+    practices = r.json()
+    test(f"Practices returned (expected 11)", len(practices) == 11, f"got {len(practices)}")
+
+    codes = {p["code"] for p in practices}
+    for code in ["RAM", "MAP", "NPS", "MCD", "RWE", "PEN", "RAP", "TAD", "CLI", "Other", "ALL"]:
+        test(f"Practice '{code}' exists", code in codes, f"missing from {sorted(codes)}")
+
+    # Each practice row should carry a project_count field
+    test("Practice rows carry project_count", all("project_count" in p for p in practices))
 
 # ── D. Create Deliverable / Project ───────────────────────────────────────────
 
@@ -208,18 +220,21 @@ def test_create_deliverable():
     print("\n── D. Create Deliverable ──")
     tk = admin_token()
     
-    # First get a valid category
+    # First get a valid category and a practice
     r = requests.get(f"{BASE}/api/categories", headers=auth_h(tk))
     cats = r.json()
     if not cats:
         test("Cannot test create - no categories", False)
         return
     cat_id = cats[0]["id"]
-    
+    prs = requests.get(f"{BASE}/api/practices", headers=auth_h(tk)).json()
+    practice_id = prs[0]["id"] if prs else None
+
     # Create with all V2 fields
     payload = {
         "project_name": "QA Test Deliverable",
         "category_id": cat_id,
+        "practice_id": practice_id,
         "pioneer_name": "Dr. QA",
         "client_name": "QA Client",
         "engagement_stage": "Active engagement",
@@ -239,11 +254,13 @@ def test_create_deliverable():
     if r.status_code in (200, 201):
         proj = r.json()
         test("Returns expert_token", "expert_token" in proj, f"keys: {list(proj.keys())}")
-        
+
         # Check working_days and engagement_revenue stored
         test("working_days stored", proj.get("working_days") == 8, f"got {proj.get('working_days')}")
         test("engagement_revenue stored", proj.get("engagement_revenue") == 100000, f"got {proj.get('engagement_revenue')}")
         test("revision_depth stored", proj.get("revision_depth") == "Cosmetic only", f"got {proj.get('revision_depth')}")
+        test("practice_id stored", proj.get("practice_id") == practice_id, f"got {proj.get('practice_id')}")
+        test("practice_code returned on project row", proj.get("practice_code") is not None, f"got {proj.get('practice_code')}")
         
         # Clean up
         requests.delete(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk))
@@ -611,6 +628,38 @@ def test_norms():
                 test(f"Zero-completion category ({n.get('category_name')}) has null averages",
                      n.get("average_legacy_working_days") is None or n.get("average_legacy_team_size") is None)
 
+# ── L2. /api/schema endpoint ─────────────────────────────────────────────────
+
+def test_schema_endpoint():
+    print("\n── L2. /api/schema endpoint ──")
+    tk = admin_token()
+    r = requests.get(f"{BASE}/api/schema", headers=auth_h(tk))
+    test("GET /api/schema returns 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+    body = r.json()
+    test("schema response has dashboard key", "dashboard" in body)
+    dash = body.get("dashboard") or {}
+    test("schema.dashboard has tabs list", isinstance(dash.get("tabs"), list) and len(dash["tabs"]) == 4)
+    test("schema.dashboard has charts list", isinstance(dash.get("charts"), list) and len(dash["charts"]) == 19)
+    test("schema.dashboard has kpi_tiles list", isinstance(dash.get("kpi_tiles"), list) and len(dash["kpi_tiles"]) == 12)
+    test("schema.dashboard.thresholds.radar_axis_cap present",
+         isinstance((dash.get("thresholds") or {}).get("radar_axis_cap"), (int, float)))
+
+# ── L3. MetricsSummary endpoint fields ───────────────────────────────────────
+
+def test_metrics_summary_fields():
+    """Regression guard: MetricsSummary model must not silently drop these keys."""
+    print("\n── L3. MetricsSummary endpoint fields ──")
+    tk = admin_token()
+    r = requests.get(f"{BASE}/api/metrics/summary", headers=auth_h(tk))
+    test("GET /api/metrics/summary 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+    body = r.json()
+    for key in ("average_quality_ratio", "rework_efficiency_avg", "client_impact_avg", "data_independence_avg"):
+        test(f"summary exposes {key}", key in body, f"missing from response keys")
+
 # ── M. Database Schema Checks ────────────────────────────────────────────────
 
 def test_schema():
@@ -641,10 +690,320 @@ def test_schema():
     legacy_cols = ["l1_legacy_working_days", "l2_legacy_team_size", "l3_legacy_revision_depth", "l13_legacy_c7_depth", "l14_legacy_c8_decision", "l15_legacy_e1_decision", "l16_legacy_b6_data"]
     for col in legacy_cols:
         test(f"expert_responses has {col}", col in exp_cols)
-    
+
     conn.close()
 
+# ── N. DASHBOARD_CONFIG ───────────────────────────────────────────────────────
+
+def test_dashboard_config():
+    print("\n── N. DASHBOARD_CONFIG ──")
+    from backend import schema as _schema
+    dc = getattr(_schema, "DASHBOARD_CONFIG", None)
+    test("DASHBOARD_CONFIG exists", isinstance(dc, dict))
+    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 4)
+    test("DASHBOARD_CONFIG has charts list", isinstance(dc.get("charts"), list))
+    th = dc.get("thresholds", {})
+    test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
+    test("thresholds.quarterly_bucket_min_quarters is int >= 2", isinstance(th.get("quarterly_bucket_min_quarters"), int) and th["quarterly_bucket_min_quarters"] >= 2)
+    test("thresholds.cohort_min_projects is int >= 1", isinstance(th.get("cohort_min_projects"), int) and th["cohort_min_projects"] >= 1)
+    test("thresholds.bar_top_n is int >= 3", isinstance(th.get("bar_top_n"), int) and th["bar_top_n"] >= 3)
+    tone = th.get("metric_tone", {})
+    test("metric_tone.success_above is float", isinstance(tone.get("success_above"), (int, float)))
+    test("metric_tone.blue_above is float", isinstance(tone.get("blue_above"), (int, float)))
+    test("metric_tone.warning_above is float", isinstance(tone.get("warning_above"), (int, float)))
+
+    # (added in Task 2 to harden Task 1 config)
+    test("tab ids are unique", len({t["id"] for t in dc["tabs"]}) == len(dc["tabs"]))
+    test("every tab has id/label/icon", all({"id", "label", "icon"} <= set(t.keys()) for t in dc["tabs"]))
+    test("metric_tone ordering (success > blue > warning)",
+         tone["success_above"] > tone["blue_above"] > tone["warning_above"])
+
+    # kpi_tiles assertions (Task 2)
+    test("kpi_tiles has 12 entries", isinstance(dc["kpi_tiles"], list) and len(dc["kpi_tiles"]) == 12)
+    test("every kpi_tile.metric_key exists in METRICS or is synthetic",
+         all(t["metric_key"] in _schema.METRICS or t.get("synthetic") is True for t in dc["kpi_tiles"]))
+    test("every kpi_tile has tab field", all("tab" in t for t in dc["kpi_tiles"]))
+    tab_ids_set = {x["id"] for x in dc["tabs"]}
+    test("every kpi_tile.tab is a known tab id",
+         all(t["tab"] in tab_ids_set for t in dc["kpi_tiles"]))
+
+    CHART_TYPES = {
+        "scatter_disprove", "radar_gains",
+        "timeline_per_project", "timeline_quarterly", "timeline_cumulative", "cohort_learning_curve",
+        "bar_by_category", "bar_by_practice", "bar_by_pioneer",
+        "heatmap_practice_quarter", "area_category_mix",
+        "donut_client_pulse", "donut_reuse_intent", "scatter_schedule", "track_scaling_gates",
+        "table_portfolio",
+        "ranked_list_top", "ranked_list_bottom", "timeline_effort",
+    }
+    test("every chart has id/tab/type/title",
+         all({"id", "tab", "type", "title"} <= set(c.keys()) for c in dc["charts"]))
+    test("every chart.tab is a known tab id",
+         all(c["tab"] in tab_ids_set for c in dc["charts"]))
+    test("every chart.type is in CHART_TYPES",
+         all(c["type"] in CHART_TYPES for c in dc["charts"]))
+    test("chart ids are unique",
+         len({c["id"] for c in dc["charts"]}) == len(dc["charts"]))
+    test("Trends tab has 5 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "trends") == 5)
+    test("Breakdowns has 5 charts (3 bars + heatmap + mix)",
+         sum(1 for c in dc["charts"] if c["tab"] == "breakdowns") == 5)
+    test("every tab has at least one chart",
+         all(any(c["tab"] == t for c in dc["charts"]) for t in tab_ids_set))
+    test("Overview has 4 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "overview") == 4)
+    test("Signals has 5 charts",
+         sum(1 for c in dc["charts"] if c["tab"] == "signals") == 5)
+
+# ── O. Seed profile EXPERT_FIELDS coverage ───────────────────────────────────
+
+def test_seed_field_coverage():
+    """Every EXPERT_FIELDS key must appear in every seed profile dict."""
+    print("\n── O. Seed profile coverage (every EXPERT_FIELDS key) ──")
+    import importlib.util, pathlib
+    from backend.schema import EXPERT_FIELDS
+    seed_path = pathlib.Path("tests/seed_20_projects.py")
+    spec = importlib.util.spec_from_file_location("seed_module", seed_path)
+    seed_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(seed_mod)
+
+    # Heuristic: profile dicts are module-level, uppercase names, and carry c6_self_assessment
+    profiles = {name: obj for name, obj in vars(seed_mod).items()
+                if name.isupper() and isinstance(obj, dict) and obj.get("c6_self_assessment")}
+    test("seed defines at least 3 profiles", len(profiles) >= 3, detail=f"found {list(profiles.keys())}")
+    for pname, pdict in profiles.items():
+        missing = [k for k in EXPERT_FIELDS if k not in pdict]
+        test(f"seed profile {pname} covers all EXPERT_FIELDS", not missing, detail=f"missing={missing}")
+
+# Aggregate parity (no-filter client aggregates == /api/dashboard/metrics) is
+# enforced by tests/e2e-dashboard-redesign.spec.ts > "no-filter parity".
+
+# ── P. Survey flow: cross-pioneer visibility + auto-issue next round ─────────
+
+_VALID_EXPERT_PAYLOAD = {
+    "b1_starting_point": "From AI draft",
+    "b2_research_sources": "8-12",
+    "b3_assembly_ratio": ">75% AI",
+    "b4_hypothesis_first": "Hypothesis-first",
+    "b5_ai_survival": ">75%",
+    "b6_data_analysis_split": "25-50%",
+    "c1_specialization": "Deep specialist",
+    "c2_directness": "Expert authored",
+    "c3_judgment_pct": ">75% judgment",
+    "c6_self_assessment": "Significantly better",
+    "c7_analytical_depth": "Exceptional",
+    "c8_decision_readiness": "Yes without caveats",
+    "d1_proprietary_data": "Yes",
+    "d2_knowledge_reuse": "Yes directly reused and extended",
+    "d3_moat_test": "No — proprietary inputs decisive",
+    "e1_client_decision": "Yes — informed a specific decision",
+    "f1_feasibility": "Not feasible",
+    "f2_productization": "Yes largely as-is",
+    "g1_reuse_intent": "Yes without hesitation",
+    "l1_legacy_working_days": 15,
+    "l2_legacy_team_size": "3",
+    "l3_legacy_revision_depth": "Moderate rework",
+    "l4_legacy_scope_expansion": "No",
+    "l5_legacy_client_reaction": "Met expectations",
+    "l6_legacy_b2_sources": "4-7",
+    "l7_legacy_c1_specialization": "Generalist",
+    "l8_legacy_c2_directness": "Expert reviewed only",
+    "l9_legacy_c3_judgment": "25-50%",
+    "l10_legacy_d1_proprietary": "No",
+    "l11_legacy_d2_reuse": "No built from scratch",
+    "l12_legacy_d3_moat": "Yes — all inputs publicly available",
+    "l13_legacy_c7_depth": "Adequate",
+    "l14_legacy_c8_decision": "Needs significant additional work",
+    "l15_legacy_e1_decision": "Yes — referenced in internal discussions",
+    "l16_legacy_b6_data": ">75% on data",
+}
+
+
+def _pioneer_round1_token(project: dict, pioneer_name: str) -> str:
+    for p in project.get("pioneers", []):
+        name = p.get("pioneer_name") or p.get("name")
+        if name == pioneer_name:
+            for rnd in p.get("rounds", []):
+                if rnd.get("round_number") == 1:
+                    return rnd["token"]
+            # Fallback to legacy pioneer-level token (it doubles as round 1).
+            return p.get("expert_token")
+    raise AssertionError(f"Pioneer '{pioneer_name}' not found on project")
+
+
+def test_show_other_pioneers_flag():
+    print("\n── P1. show_other_pioneers_answers flag ──")
+    tk = admin_token()
+    cats = requests.get(f"{BASE}/api/categories", headers=auth_h(tk)).json()
+    cat_id = cats[0]["id"] if cats else 1
+
+    def _create(flag: bool, name: str):
+        r = requests.post(
+            f"{BASE}/api/projects",
+            headers={**auth_h(tk), "Content-Type": "application/json"},
+            json={
+                "project_name": name,
+                "category_id": cat_id,
+                "pioneers": [
+                    {"name": "Pioneer One"},
+                    {"name": "Pioneer Two"},
+                ],
+                "default_rounds": 1,
+                "show_other_pioneers_answers": flag,
+                "date_started": "2026-03-01",
+                "date_delivered": "2026-03-10",
+                "working_days": 5,
+                "xcsg_team_size": "2",
+                "xcsg_revision_rounds": "1",
+            },
+        )
+        assert r.status_code in (200, 201), r.text
+        return r.json()
+
+    # Case 1: flag enabled
+    proj_on = _create(True, "QA Cross-Pioneer ON")
+    test(
+        "Project persists show_other_pioneers_answers=True",
+        bool(proj_on.get("show_other_pioneers_answers")),
+        f"got {proj_on.get('show_other_pioneers_answers')}",
+    )
+    p1_tok = _pioneer_round1_token(proj_on, "Pioneer One")
+    p2_tok = _pioneer_round1_token(proj_on, "Pioneer Two")
+    r = requests.post(f"{BASE}/api/expert/{p1_tok}", json=_VALID_EXPERT_PAYLOAD)
+    test("P1 submits round 1 (flag on)", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
+    ctx = requests.get(f"{BASE}/api/expert/{p2_tok}").json()
+    test(
+        "P2 expert-view exposes show_other_pioneers=True",
+        ctx.get("show_other_pioneers") is True,
+        f"got {ctx.get('show_other_pioneers')}",
+    )
+    others = ctx.get("other_pioneers_responses")
+    test(
+        "P2 sees exactly one other-pioneer response (flag on)",
+        isinstance(others, list) and len(others) == 1,
+        f"got {others if isinstance(others, list) else type(others).__name__}",
+    )
+    if isinstance(others, list) and others:
+        test(
+            "Other-pioneer entry has pioneer_name=Pioneer One",
+            others[0].get("pioneer_name") == "Pioneer One",
+            f"got {others[0].get('pioneer_name')}",
+        )
+        test(
+            "Other-pioneer entry contains answer field (b1_starting_point)",
+            others[0].get("b1_starting_point") == "From AI draft",
+            f"got {others[0].get('b1_starting_point')}",
+        )
+    requests.delete(f"{BASE}/api/projects/{proj_on['id']}", headers=auth_h(tk))
+
+    # Case 2: flag disabled
+    proj_off = _create(False, "QA Cross-Pioneer OFF")
+    test(
+        "Project persists show_other_pioneers_answers=False",
+        not bool(proj_off.get("show_other_pioneers_answers")),
+        f"got {proj_off.get('show_other_pioneers_answers')}",
+    )
+    p1_tok = _pioneer_round1_token(proj_off, "Pioneer One")
+    p2_tok = _pioneer_round1_token(proj_off, "Pioneer Two")
+    r = requests.post(f"{BASE}/api/expert/{p1_tok}", json=_VALID_EXPERT_PAYLOAD)
+    test("P1 submits round 1 (flag off)", r.status_code in (200, 201), f"got {r.status_code}")
+    ctx = requests.get(f"{BASE}/api/expert/{p2_tok}").json()
+    test(
+        "P2 expert-view exposes show_other_pioneers=False (flag off)",
+        ctx.get("show_other_pioneers") is False,
+        f"got {ctx.get('show_other_pioneers')}",
+    )
+    test(
+        "P2 other_pioneers_responses is None (flag off)",
+        ctx.get("other_pioneers_responses") is None,
+        f"got {ctx.get('other_pioneers_responses')}",
+    )
+    requests.delete(f"{BASE}/api/projects/{proj_off['id']}", headers=auth_h(tk))
+
+
+def test_auto_issue_next_round():
+    print("\n── P2. Auto-issue next round on submit ──")
+    tk = admin_token()
+    cats = requests.get(f"{BASE}/api/categories", headers=auth_h(tk)).json()
+    cat_id = cats[0]["id"] if cats else 1
+
+    r = requests.post(
+        f"{BASE}/api/projects",
+        headers={**auth_h(tk), "Content-Type": "application/json"},
+        json={
+            "project_name": "QA Auto-Issue Round",
+            "category_id": cat_id,
+            "pioneers": [{"name": "Solo Pioneer", "total_rounds": 2}],
+            "default_rounds": 2,
+            "date_started": "2026-03-01",
+            "date_delivered": "2026-03-10",
+            "working_days": 5,
+            "xcsg_team_size": "2",
+            "xcsg_revision_rounds": "1",
+        },
+    )
+    test("Create 2-round project returns 201", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
+    if r.status_code not in (200, 201):
+        return
+    proj = r.json()
+    r1_tok = _pioneer_round1_token(proj, "Solo Pioneer")
+
+    submit = requests.post(f"{BASE}/api/expert/{r1_tok}", json=_VALID_EXPERT_PAYLOAD)
+    test("Round 1 submit returns 201", submit.status_code in (200, 201), f"got {submit.status_code}: {submit.text[:120]}")
+    body = submit.json() if submit.status_code in (200, 201) else {}
+    test("Submit response includes next_round_token (not None)", bool(body.get("next_round_token")), f"got {body.get('next_round_token')}")
+    test("Submit response reports current_round=1", body.get("current_round") == 1, f"got {body.get('current_round')}")
+    test("Submit response reports total_rounds=2", body.get("total_rounds") == 2, f"got {body.get('total_rounds')}")
+
+    # Verify GET /api/projects/{id} shows the new round 2 token as issued.
+    proj_after = requests.get(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk)).json()
+    pioneers = proj_after.get("pioneers", [])
+    solo = next((p for p in pioneers if (p.get("pioneer_name") or p.get("name")) == "Solo Pioneer"), None)
+    test("Pioneer is present in project after submit", solo is not None)
+    if solo is not None:
+        rounds = solo.get("rounds", [])
+        r2_row = next((rnd for rnd in rounds if rnd.get("round_number") == 2), None)
+        test("Round 2 row exists after auto-issue", r2_row is not None, f"rounds={[r.get('round_number') for r in rounds]}")
+        if r2_row is not None:
+            test("Round 2 token matches submit response", r2_row.get("token") == body.get("next_round_token"), f"db={r2_row.get('token')} resp={body.get('next_round_token')}")
+            test("Round 2 token is not yet completed", r2_row.get("completed_at") in (None, ""), f"got {r2_row.get('completed_at')}")
+
+    # Also verify the new token actually works as an expert-view token.
+    if body.get("next_round_token"):
+        ctx = requests.get(f"{BASE}/api/expert/{body['next_round_token']}").json()
+        test("next_round_token opens expert view at round 2", ctx.get("current_round") == 2, f"got {ctx.get('current_round')}")
+        test("next_round_token already_completed=False", ctx.get("already_completed") is False, f"got {ctx.get('already_completed')}")
+
+    requests.delete(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk))
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
+
+def test_dashboard_takeaways():
+    print("\n── T. Dashboard takeaways endpoint ──")
+    tok = admin_token()
+    r = requests.get(f"{BASE}/api/dashboard/takeaways", headers=auth_h(tok))
+    test("GET /api/dashboard/takeaways 200", r.status_code == 200)
+    if r.status_code != 200:
+        return
+    body = r.json()
+    test("takeaways has chartDisprove", isinstance(body.get("chartDisprove"), str))
+    test("takeaways has chartQuarterly", isinstance(body.get("chartQuarterly"), str))
+    test("takeaways has chartPulse", isinstance(body.get("chartPulse"), str))
+    test("takeaways has trackGates", isinstance(body.get("trackGates"), str))
+    test("takeaways has chartTopMovers", isinstance(body.get("chartTopMovers"), str) and body["chartTopMovers"])
+    test("takeaways has chartBottomMovers", isinstance(body.get("chartBottomMovers"), str) and body["chartBottomMovers"])
+    test("takeaways has chartEffortTrend", isinstance(body.get("chartEffortTrend"), str) and body["chartEffortTrend"])
+    # Every chart in DASHBOARD_CONFIG must have a key in the response
+    from backend.schema import DASHBOARD_CONFIG
+    missing = [c["id"] for c in DASHBOARD_CONFIG["charts"] if c["id"] not in body]
+    test("every chart has a takeaway key", not missing, detail=f"missing={missing}")
+    # Takeaways ≤ 80 chars (≤ 60 is the target, allow slack)
+    too_long = {cid: v for cid, v in body.items() if len(v) > 80}
+    test("takeaways are concise", not too_long, detail=f"too_long={too_long}")
+    empty = {cid: v for cid, v in body.items() if not v or not v.strip()}
+    test("takeaways are all non-empty", not empty, detail=f"empty={list(empty.keys())}")
+
 
 def main():
     global passed, failed, failures
@@ -665,6 +1024,7 @@ def main():
     test_authentication()
     test_expert_options()
     test_categories()
+    test_practices()
     test_create_deliverable()
     test_expert_assessment()
     test_metrics()
@@ -674,8 +1034,15 @@ def main():
     test_string_consistency()
     test_frontend_js()
     test_norms()
+    test_schema_endpoint()
+    test_metrics_summary_fields()
     test_schema()
-    
+    test_dashboard_config()
+    test_seed_field_coverage()
+    test_show_other_pioneers_flag()
+    test_auto_issue_next_round()
+    test_dashboard_takeaways()
+
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
     print("=" * 70)

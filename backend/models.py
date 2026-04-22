@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, model_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -65,6 +65,19 @@ class CategoryUpdate(BaseModel):
     description: Optional[str] = None
 
 
+# ── Practices ────────────────────────────────────────────────────────────────
+
+class PracticeCreate(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+
+
+class PracticeUpdate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 def _validate_project_dates(date_started, date_delivered):
@@ -83,10 +96,12 @@ def _validate_project_dates(date_started, date_delivered):
 class ProjectCreate(BaseModel):
     project_name: str
     category_id: int
+    practice_id: Optional[int] = None
     client_name: Optional[str] = None
     pioneers: List[PioneerCreate] = []
     default_rounds: int = 1
     show_previous_answers: bool = False
+    show_other_pioneers_answers: bool = False
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = "Not yet received"
@@ -105,8 +120,19 @@ class ProjectCreate(BaseModel):
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
 
+    @field_validator("pioneers")
+    @classmethod
+    def _must_have_pioneer(cls, v):
+        if not v:
+            raise ValueError("At least one pioneer is required")
+        return v
+
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectCreate":
+        # Also guards against the default empty list case where field_validator
+        # doesn't run (validate_default is off by default in Pydantic v2).
+        if not self.pioneers:
+            raise ValueError("At least one pioneer is required")
         _validate_project_dates(self.date_started, self.date_delivered)
         return self
 
@@ -114,11 +140,13 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     project_name: Optional[str] = None
     category_id: Optional[int] = None
+    practice_id: Optional[int] = None
     client_name: Optional[str] = None
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
     default_rounds: Optional[int] = None
     show_previous_answers: Optional[bool] = None
+    show_other_pioneers_answers: Optional[bool] = None
     engagement_stage: Optional[str] = None
     client_contact_email: Optional[EmailStr] = None
     client_pulse: Optional[str] = None
@@ -197,6 +225,8 @@ class ExpertContextResponse(BaseModel):
     project_id: int
     project_name: str
     category_name: str
+    practice_code: Optional[str] = None
+    practice_name: Optional[str] = None
     description: Optional[str] = None
     client_name: Optional[str]
     pioneer_name: str
@@ -211,6 +241,8 @@ class ExpertContextResponse(BaseModel):
     total_rounds: int
     show_previous: bool
     previous_responses: Optional[list] = None
+    show_other_pioneers: bool = False
+    other_pioneers_responses: Optional[list] = None
 
 
 # ── Norms ─────────────────────────────────────────────────────────────────────
@@ -228,6 +260,8 @@ class ProjectMetrics(BaseModel):
     id: int
     project_name: str
     category_name: str
+    practice_code: Optional[str] = None
+    practice_name: Optional[str] = None
     pioneer_name: str
     client_name: Optional[str]
     xcsg_person_days: Optional[float]
@@ -263,6 +297,10 @@ class MetricsSummary(BaseModel):
     machine_first_avg: float
     senior_led_avg: float
     proprietary_knowledge_avg: float
+    average_quality_ratio: Optional[float] = None
+    rework_efficiency_avg: Optional[float] = None
+    client_impact_avg: Optional[float] = None
+    data_independence_avg: Optional[float] = None
     checkpoint: int
     projects_to_next_checkpoint: int
 
@@ -271,6 +309,8 @@ class TrendPoint(BaseModel):
     id: int
     project_name: str
     category_name: str
+    practice_code: Optional[str] = None
+    practice_name: Optional[str] = None
     pioneer_name: str
     effort_ratio: Optional[float]
     quality_score: Optional[float]

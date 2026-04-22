@@ -246,17 +246,24 @@ def _compute_effort_metrics(data: dict) -> dict:
 
 
 def _compute_quality_metrics(data: dict, xcsg_person_days, legacy_person_days) -> dict:
-    """Compute quality scores and value gain."""
+    """Compute quality scores and value gain.
+
+    IMPORTANT: don't round xcsg_qpd/legacy_qpd before the ratio — legacy_qpd
+    frequently rounds to 0.00 at 2 decimals (e.g. 0.3 / 150 = 0.002), which
+    then makes compute_ratio return None. Ratio the raw values; round the
+    displayed per-day metrics separately.
+    """
     quality_score = compute_quality_score(data)
     legacy_quality = compute_legacy_quality(data)
     output_quality = compute_ratio(quality_score, legacy_quality)
-    xcsg_qpd = round2(quality_score / xcsg_person_days) if quality_score is not None and xcsg_person_days else None
-    legacy_qpd = round2(legacy_quality / legacy_person_days) if legacy_quality is not None and legacy_person_days else None
+    xcsg_qpd = (quality_score / xcsg_person_days) if quality_score is not None and xcsg_person_days else None
+    legacy_qpd = (legacy_quality / legacy_person_days) if legacy_quality is not None and legacy_person_days else None
     productivity_ratio = compute_ratio(xcsg_qpd, legacy_qpd)
     return {
         "quality_score": quality_score, "legacy_quality": legacy_quality, "legacy_quality_score": legacy_quality,
         "quality_ratio": output_quality, "output_quality": output_quality,
-        "xcsg_quality_per_day": xcsg_qpd, "legacy_quality_per_day": legacy_qpd,
+        "xcsg_quality_per_day": round2(xcsg_qpd) if xcsg_qpd is not None else None,
+        "legacy_quality_per_day": round2(legacy_qpd) if legacy_qpd is not None else None,
         "productivity_ratio": productivity_ratio, "xcsg_advantage": productivity_ratio,
         "value_multiplier": productivity_ratio, "outcome_rate_ratio": productivity_ratio,
     }
@@ -301,11 +308,25 @@ def compute_project_metrics(data: dict) -> dict:
     flywheel = _compute_flywheel_metrics(data)
     signals = _compute_signal_metrics(data)
 
+    # Raw survey strings needed by downstream aggregators (scaling gates).
+    # Keep them on the metric dict so compute_scaling_gates doesn't have to
+    # re-open the response table.
+    raw_strings = {
+        key: data.get(key) for key in (
+            "d2_knowledge_reuse", "f2_productization", "g1_reuse_intent",
+            "c6_self_assessment", "e1_client_decision", "b5_ai_survival",
+            "revision_depth", "xcsg_revision_rounds", "xcsg_scope_expansion",
+            "client_pulse",
+        )
+    }
+
     return {
         "id": data.get("id"),
         "project_id": data.get("id"),
         "project_name": data.get("project_name", ""),
         "category_name": data.get("category_name", data.get("project_category", "")),
+        "practice_code": data.get("practice_code"),
+        "practice_name": data.get("practice_name"),
         "pioneer_name": data.get("pioneer_name", ""),
         "client_name": data.get("client_name"),
         "created_at": data.get("created_at", ""),
@@ -313,6 +334,7 @@ def compute_project_metrics(data: dict) -> dict:
         "outcome_rate_xcsg": None,
         "outcome_rate_legacy": None,
         "legacy_overridden": bool(data.get("legacy_overridden", 0)),
+        **raw_strings,
         **effort, **quality, **smoothness, **flywheel, **signals,
     }
 
@@ -440,6 +462,8 @@ def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[
             "project_id": project.get("id"),
             "project_name": project.get("project_name"),
             "category_name": project.get("category_name"),
+            "practice_code": project.get("practice_code"),
+            "practice_name": project.get("practice_name"),
             "delta_days": delta,
             "date_expected_delivered": project.get("date_expected_delivered"),
             "date_delivered": project.get("date_delivered"),
@@ -461,6 +485,7 @@ def compute_dashboard_metrics(complete_projects: list[dict], all_projects: list[
         "average_outcome_rate_ratio": average_advantage,
         "average_value_multiplier": average_advantage,
         "average_advantage": average_advantage,
+        "average_productivity_ratio": average_advantage,  # alias: productivity_ratio == xcsg_advantage
         "flywheel_health": flywheel_health,
         "machine_first_avg": machine_first_avg,
         "senior_led_avg": senior_led_avg,
