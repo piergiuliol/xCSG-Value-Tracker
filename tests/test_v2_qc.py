@@ -1336,13 +1336,118 @@ def test_economics_models():
     assert u.engagement_revenue == 999
 
 
+def test_economics_metrics():
+    """_compute_economics_metrics covers all formulas + edge cases per spec."""
+    from backend.metrics import _compute_economics_metrics
+
+    # Happy path: all inputs populated, single pioneer.
+    out = _compute_economics_metrics(
+        engagement_revenue=120000,
+        xcsg_person_days=20,
+        legacy_person_days=80,
+        pioneer_rates=[1500],
+        legacy_rate_effective=900,
+        quality_score=0.85,
+        legacy_quality_score=0.5,
+        scope_expansion_revenue=15000,
+        currency="EUR",
+    )
+    assert out["xcsg_blended_rate"] == 1500
+    assert out["xcsg_cost"] == 30000.0          # 1500 * 20
+    assert out["legacy_rate_effective"] == 900
+    assert out["legacy_cost"] == 72000.0        # 900 * 80
+    assert out["xcsg_margin"] == 90000.0        # 120000 - 30000
+    assert out["legacy_margin"] == 48000.0      # 120000 - 72000
+    assert round(out["xcsg_margin_pct"], 4) == 0.75
+    assert round(out["legacy_margin_pct"], 4) == 0.4
+    assert round(out["margin_gain"], 2) == 1.88  # 90000 / 48000
+    assert out["scope_expansion_revenue"] == 15000
+    assert out["currency"] == "EUR"
+
+    # Multi-pioneer averaging, mixed null/non-null rates.
+    out = _compute_economics_metrics(
+        engagement_revenue=100000,
+        xcsg_person_days=10,
+        legacy_person_days=40,
+        pioneer_rates=[2000, None, 1000],   # null skipped
+        legacy_rate_effective=800,
+        quality_score=0.8,
+        legacy_quality_score=0.4,
+        scope_expansion_revenue=None,
+        currency="USD",
+    )
+    assert out["xcsg_blended_rate"] == 1500   # mean of [2000, 1000]
+
+    # Negative legacy margin → margin_gain is None.
+    out = _compute_economics_metrics(
+        engagement_revenue=10000,
+        xcsg_person_days=5,
+        legacy_person_days=200,
+        pioneer_rates=[1000],
+        legacy_rate_effective=200,           # legacy_cost = 40000 > revenue
+        quality_score=0.7,
+        legacy_quality_score=0.4,
+        scope_expansion_revenue=None,
+        currency="EUR",
+    )
+    assert out["legacy_margin"] == -30000
+    assert out["margin_gain"] is None
+
+    # No pioneer rates → cost / margin / gain all None, but revenue still surfaces.
+    out = _compute_economics_metrics(
+        engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
+        pioneer_rates=[None, None], legacy_rate_effective=900,
+        quality_score=0.7, legacy_quality_score=0.4,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    assert out["xcsg_blended_rate"] is None
+    assert out["xcsg_cost"] is None
+    assert out["xcsg_margin"] is None
+    assert out["margin_gain"] is None
+    assert out["legacy_cost"] == 36000.0  # legacy still computes
+    assert out["legacy_margin"] == 14000.0
+
+    # No legacy rate → legacy cost / margin / gain all None.
+    out = _compute_economics_metrics(
+        engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
+        pioneer_rates=[1500], legacy_rate_effective=None,
+        quality_score=0.7, legacy_quality_score=0.4,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    assert out["legacy_cost"] is None
+    assert out["legacy_margin"] is None
+    assert out["margin_gain"] is None
+
+    # Cost-per-quality-point gain.
+    out = _compute_economics_metrics(
+        engagement_revenue=120000, xcsg_person_days=20, legacy_person_days=80,
+        pioneer_rates=[1500], legacy_rate_effective=900,
+        quality_score=0.85, legacy_quality_score=0.5,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    # xcsg_cppq = 30000/0.85, legacy_cppq = 72000/0.5
+    # gain = legacy_cppq / xcsg_cppq = (72000/0.5) / (30000/0.85)
+    expected_cppq_gain = (72000 / 0.5) / (30000 / 0.85)
+    assert abs(out["cost_per_quality_point_gain"] - round(expected_cppq_gain, 2)) < 0.01
+
+    # margin_gain capped at 10x. Setup: xcsg_cost=10, legacy_cost=10000,
+    # so xcsg_margin=10990, legacy_margin=1000, raw ratio=10.99 → cap to 10.0.
+    out = _compute_economics_metrics(
+        engagement_revenue=11000, xcsg_person_days=1, legacy_person_days=100,
+        pioneer_rates=[10], legacy_rate_effective=100,
+        quality_score=0.9, legacy_quality_score=0.5,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    assert out["margin_gain"] == 10.0
+
+
 def main():
     global passed, failed, failures
 
     print("=" * 70)
     print("xCSG Value Tracker V2 — Comprehensive QA/QC Test Suite")
     print("=" * 70)
-    
+
     # Health check
     try:
         r = requests.get(f"{BASE}/api/health", timeout=5)
@@ -1351,7 +1456,7 @@ def main():
         test("Server reachable", False, str(e))
         print("\nFATAL: Server not reachable. Exiting.")
         sys.exit(1)
-    
+
     test_authentication()
     test_expert_options()
     test_categories()
@@ -1373,6 +1478,7 @@ def main():
     test_economics_schema()
     test_migrate_v15_idempotent()
     test_economics_models()
+    test_economics_metrics()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
