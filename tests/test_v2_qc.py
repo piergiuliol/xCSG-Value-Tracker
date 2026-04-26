@@ -1525,6 +1525,18 @@ def test_create_project_persists_economics():
 
         pioneer_rates = sorted(p["day_rate"] for p in detail.get("pioneers", []))
         test("economics: pioneer day_rates stored", pioneer_rates == [1000, 1500], f"got {pioneer_rates}")
+
+        # Adding a pioneer post-creation must also persist day_rate.
+        add = requests.post(
+            f"{BASE}/api/projects/{pid}/pioneers",
+            headers={**auth_h(tk), "Content-Type": "application/json"},
+            json={"name": "P3", "day_rate": 2000},
+        )
+        test("economics: POST pioneer returns 201", add.status_code == 201, add.text)
+        if add.status_code == 201:
+            detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=auth_h(tk)).json()
+            rates2 = sorted(p["day_rate"] for p in detail2.get("pioneers", []))
+            test("economics: post-creation pioneer day_rate persisted", rates2 == [1000, 1500, 2000], f"got {rates2}")
     finally:
         requests.delete(f"{BASE}/api/projects/{pid}", headers=auth_h(tk))
 

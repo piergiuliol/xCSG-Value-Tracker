@@ -1303,7 +1303,7 @@ def list_pioneers(project_id: int) -> list:
         return pioneers
 
 
-def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None) -> int:
+def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None, day_rate: Optional[float] = None) -> int:
     """Add a new pioneer to an existing project and auto-issue round 1 token.
 
     Returns the new pioneer id.
@@ -1311,9 +1311,9 @@ def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int
     token = secrets.token_urlsafe(32)
     with _db() as conn:
         cur = conn.execute(
-            """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token)
-               VALUES (?, ?, ?, ?, ?)""",
-            (project_id, name, email, total_rounds, token),
+            """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (project_id, name, email, total_rounds, token, day_rate),
         )
         pioneer_id = cur.lastrowid
         conn.execute(

@@ -563,7 +563,7 @@ async def add_project_pioneer(
     current_count = len(db.list_pioneers(project_id))
     if current_count >= MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
-    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds)
+    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds, day_rate=body.day_rate)
     pioneers = db.list_pioneers(project_id)
     new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
     db.log_activity(
