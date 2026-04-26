@@ -643,6 +643,20 @@ def compute_averaged_project_metrics(project: dict, responses: list[dict]) -> di
         "overall_xcsg_score", "client_impact", "data_independence",
         "ai_survival_rate", "reuse_intent_score", "client_pulse_score",
         "revenue_productivity_xcsg", "revenue_productivity_legacy",
+        "xcsg_blended_rate",
+        "xcsg_cost",
+        "legacy_cost",
+        "xcsg_margin",
+        "legacy_margin",
+        "xcsg_margin_pct",
+        "legacy_margin_pct",
+        "margin_gain",
+        "revenue_per_day_xcsg",
+        "revenue_per_day_legacy",
+        "revenue_per_day_gain",
+        "cost_per_quality_point_xcsg",
+        "cost_per_quality_point_legacy",
+        "cost_per_quality_point_gain",
     ]
 
     per_response_metrics = []

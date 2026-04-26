@@ -678,15 +678,7 @@ async def get_pioneer_round(
     project_row = db.get_project(pp["project_id"])
     merged = dict(project_row)
     merged.update(dict(response))
-    with db._db() as conn:
-        pioneer_rates = [
-            row["day_rate"]
-            for row in conn.execute(
-                "SELECT day_rate FROM project_pioneers WHERE project_id = ?",
-                (pp["project_id"],),
-            ).fetchall()
-        ]
-    merged["pioneer_day_rates"] = pioneer_rates
+    merged["pioneer_day_rates"] = db.get_pioneer_day_rates(pp["project_id"])
     metrics = mtx.compute_project_metrics(merged)
     return {
         "round_number": round_number,
