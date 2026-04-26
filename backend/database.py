@@ -1079,8 +1079,9 @@ def create_project(data: dict) -> int:
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
-                default_rounds, show_previous_answers, show_other_pioneers_answers, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                default_rounds, show_previous_answers, show_other_pioneers_answers, status,
+                currency, xcsg_pricing_model, scope_expansion_revenue, legacy_day_rate_override)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -1112,6 +1113,10 @@ def create_project(data: dict) -> int:
                 show_previous_answers,
                 show_other_pioneers_answers,
                 "pending",
+                data.get("currency"),
+                data.get("xcsg_pricing_model"),
+                data.get("scope_expansion_revenue"),
+                data.get("legacy_day_rate_override"),
             ),
         )
         project_id = cur.lastrowid
@@ -1122,9 +1127,9 @@ def create_project(data: dict) -> int:
                 token = secrets.token_urlsafe(32)
                 cur_pp = conn.execute(
                     """INSERT INTO project_pioneers
-                       (project_id, pioneer_name, pioneer_email, total_rounds, expert_token)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (project_id, p["name"], p.get("email"), p.get("total_rounds"), token),
+                       (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (project_id, p["name"], p.get("email"), p.get("total_rounds"), token, p.get("day_rate")),
                 )
                 conn.execute(
                     """INSERT INTO pioneer_round_tokens
@@ -1335,7 +1340,7 @@ def remove_pioneer(pioneer_id: int) -> bool:
 
 def update_pioneer(pioneer_id: int, data: dict) -> bool:
     """Update allowed fields on a pioneer."""
-    allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous"}
+    allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous", "day_rate"}
     fields = {k: v for k, v in data.items() if k in allowed and v is not None}
     if not fields:
         return False

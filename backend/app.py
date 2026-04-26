@@ -439,7 +439,7 @@ async def create_project(
 
     data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
-    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds} for p in body.pioneers]
+    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds, "day_rate": p.day_rate} for p in body.pioneers]
 
     norm = db.get_norm_by_category(body.category_id)
     if norm:

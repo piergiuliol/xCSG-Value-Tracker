@@ -1494,6 +1494,41 @@ def test_compute_project_metrics_includes_economics():
     assert out2["margin_gain"] is None
 
 
+def test_create_project_persists_economics():
+    """POST /api/projects accepts and stores economics fields, including pioneer rates."""
+    tk = admin_token()
+    payload = {
+        "project_name": "Econ test",
+        "category_id": 1,
+        "pioneers": [{"name": "P1", "day_rate": 1500}, {"name": "P2", "day_rate": 1000}],
+        "xcsg_team_size": "2",
+        "xcsg_revision_rounds": "1",
+        "engagement_revenue": 80000,
+        "currency": "USD",
+        "xcsg_pricing_model": "Fixed fee",
+        "scope_expansion_revenue": 5000,
+        "legacy_day_rate_override": 750,
+    }
+    r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json=payload)
+    test("POST /api/projects with economics returns 201", r.status_code == 201, f"got {r.status_code}: {r.text[:200]}")
+    if r.status_code != 201:
+        return
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=auth_h(tk)).json()
+        test("economics: engagement_revenue stored", detail.get("engagement_revenue") == 80000, f"got {detail.get('engagement_revenue')}")
+        test("economics: currency stored", detail.get("currency") == "USD", f"got {detail.get('currency')}")
+        test("economics: xcsg_pricing_model stored", detail.get("xcsg_pricing_model") == "Fixed fee", f"got {detail.get('xcsg_pricing_model')}")
+        test("economics: scope_expansion_revenue stored", detail.get("scope_expansion_revenue") == 5000, f"got {detail.get('scope_expansion_revenue')}")
+        test("economics: legacy_day_rate_override stored", detail.get("legacy_day_rate_override") == 750, f"got {detail.get('legacy_day_rate_override')}")
+
+        pioneer_rates = sorted(p["day_rate"] for p in detail.get("pioneers", []))
+        test("economics: pioneer day_rates stored", pioneer_rates == [1000, 1500], f"got {pioneer_rates}")
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=auth_h(tk))
+
+
 def main():
     global passed, failed, failures
 
@@ -1533,6 +1568,7 @@ def main():
     test_economics_models()
     test_economics_metrics()
     test_compute_project_metrics_includes_economics()
+    test_create_project_persists_economics()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
