@@ -78,6 +78,88 @@ function scoreColor(s) {
   return 'var(--danger, #EF4444)';
 }
 
+function fmtCurrency(value, currency) {
+  if (value == null || isNaN(value)) return '—';
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'EUR', maximumFractionDigits: 0 }).format(value);
+  } catch (e) {
+    return `${currency || 'EUR'} ${Number(value).toLocaleString()}`;
+  }
+}
+
+function fmtPctMaybe(v) {
+  return v == null ? '—' : `${(v * 100).toFixed(1)}%`;
+}
+
+function fmtRatioMaybe(v) {
+  return v == null ? '—' : `${v.toFixed(2)}×`;
+}
+
+function ratioTone(v) {
+  if (v == null) return '';
+  if (v >= 1.5) return 'chip-green';
+  if (v >= 1.0) return 'chip-amber';
+  if (v >= 0.8) return 'chip-amber';
+  return 'chip-red';
+}
+
+function pctTone(v) {
+  if (v == null) return '';
+  if (v < 0) return 'chip-red';
+  if (v >= 0.8) return 'chip-green';
+  if (v >= 0.6) return 'chip-amber';
+  if (v >= 0.4) return 'chip-amber';
+  return 'chip-red';
+}
+
+function renderEconomicsCard(project, metrics) {
+  if (!project) return '';
+  const hasSignal = (
+    project.engagement_revenue != null ||
+    (project.pioneers || []).some(p => p.day_rate != null) ||
+    metrics.legacy_rate_effective != null
+  );
+  if (!hasSignal) return '';
+
+  const cur = project.currency || window._defaultCurrency || 'EUR';
+  const fc = (v) => fmtCurrency(v, cur);
+
+  const header = `
+    <div class="econ-header" style="display:flex;gap:18px;flex-wrap:wrap;color:var(--gray-600);font-size:13px;margin-bottom:10px">
+      <span><strong>Revenue:</strong> ${fc(project.engagement_revenue)}</span>
+      <span><strong>Pricing:</strong> ${esc(project.xcsg_pricing_model || '—')}</span>
+      <span><strong>Currency:</strong> ${esc(cur)}</span>
+    </div>`;
+
+  const chip = (toneFn, value, label, fmt) => `
+    <div class="assessment-metric-chip ${toneFn(value)}">
+      <span class="chip-value">${fmt(value)}</span>
+      <span class="chip-label">${label}</span>
+    </div>`;
+
+  const grid = `
+    <div class="metric-chips-grid" style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:8px">
+      ${chip(ratioTone, metrics.margin_gain, 'Margin Gain', fmtRatioMaybe)}
+      ${chip(() => '', metrics.xcsg_cost, 'xCSG cost', fc)}
+      ${chip(() => '', metrics.legacy_cost, 'Legacy cost', fc)}
+      ${chip(() => metrics.xcsg_margin != null && metrics.xcsg_margin < 0 ? 'chip-red' : '', metrics.xcsg_margin, 'xCSG margin', fc)}
+      ${chip(pctTone, metrics.xcsg_margin_pct, 'xCSG margin %', fmtPctMaybe)}
+      ${chip(ratioTone, metrics.cost_per_quality_point_gain, 'Cost/quality gain', fmtRatioMaybe)}
+    </div>`;
+
+  const footer = project.scope_expansion_revenue != null
+    ? `<div style="margin-top:10px;color:var(--gray-600);font-size:13px"><strong>Scope-expansion revenue:</strong> ${fc(project.scope_expansion_revenue)}</div>`
+    : '';
+
+  return `
+    <div class="economics-card" style="margin-top:16px;padding:16px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
+      <h3 style="margin:0 0 12px;color:var(--navy);font-size:15px">Economics</h3>
+      ${header}
+      ${grid}
+      ${footer}
+    </div>`;
+}
+
 function gaugeHTML(score, size) {
   const pct = Math.round(score * 100);
   const color = scoreColor(score);
@@ -749,7 +831,7 @@ function barHTML(score, label) {
   </div>`;
 }
 
-function renderExpertAssessment(er, metrics) {
+function renderExpertAssessment(er, metrics, project) {
   const sectionScores = {};
   for (const sec of getAssessmentFields()) {
     let sum = 0, count = 0;
@@ -790,6 +872,8 @@ function renderExpertAssessment(er, metrics) {
         <span class="chip-value">${fmtRatio(metrics.outcome_rate_ratio)}</span><span class="chip-label">xCSG Value Gain ${infoIcon('productivity_ratio')}</span></div>
     </div>
   </div>`;
+
+  html += renderEconomicsCard(project, metrics);
 
   for (const sec of getAssessmentFields()) {
     const secScore = sectionScores[sec.section];
@@ -1492,7 +1576,7 @@ async function renderEditProject(id) {
       const card = document.createElement('div');
       card.className = 'card';
       card.style.marginTop = '24px';
-      card.innerHTML = renderExpertAssessment(er, m);
+      card.innerHTML = renderExpertAssessment(er, m, p);
       mc.appendChild(card);
     }
 
