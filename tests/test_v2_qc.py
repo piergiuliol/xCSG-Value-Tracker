@@ -1245,7 +1245,6 @@ def test_economics_schema():
 
 def test_migrate_v15_idempotent():
     """migrate_v15 adds new columns + app_settings table, runs idempotently."""
-    import sqlite3
     from backend import database
 
     database.init_db()
