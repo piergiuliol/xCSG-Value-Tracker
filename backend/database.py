@@ -1852,3 +1852,17 @@ def list_norm_aggregates() -> list:
             "avg_productivity": avg([m["productivity_ratio"] for m in metrics_list]),
         })
     return rows
+
+
+# ── App Settings ──────────────────────────────────────────────────────────────
+
+def get_app_settings() -> dict:
+    with _db() as conn:
+        row = conn.execute("SELECT default_currency FROM app_settings WHERE id=1").fetchone()
+        return {"default_currency": row["default_currency"] if row else "EUR"}
+
+
+def update_app_settings(*, default_currency: str) -> None:
+    with _db() as conn:
+        conn.execute("UPDATE app_settings SET default_currency = ? WHERE id=1", (default_currency,))
+        conn.commit()

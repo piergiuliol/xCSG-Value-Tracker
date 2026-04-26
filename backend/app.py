@@ -20,6 +20,8 @@ from backend import database as db
 from backend import metrics as mtx
 from backend.models import (
     ActivityLogEntry,
+    AppSettings,
+    AppSettingsUpdate,
     CategoryCreate,
     CategoryUpdate,
     ExpertAssessmentMetrics,
@@ -1280,6 +1282,22 @@ async def download_export_file(
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Export file not found")
     return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
+# ── Settings ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/settings", response_model=AppSettings)
+async def get_settings(current_user: dict = Depends(auth.get_current_user)):
+    return db.get_app_settings()
+
+
+@app.put("/api/settings", response_model=AppSettings)
+async def update_settings(
+    payload: AppSettingsUpdate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    db.update_app_settings(default_currency=payload.default_currency)
+    return db.get_app_settings()
 
 
 # ── Static file mount — MUST BE LAST ─────────────────────────────────────────

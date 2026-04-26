@@ -1585,6 +1585,55 @@ def test_practice_default_legacy_day_rate():
         )
 
 
+def test_app_settings_endpoints():
+    """GET /api/settings is open to all roles; PUT requires admin."""
+    print("\n── App Settings ──")
+
+    def login_token(username, password):
+        r = requests.post(f"{BASE}/api/auth/login", json={"username": username, "password": password})
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    admin = admin_token()
+    analyst = login_token("pmo", "AliraPMO2026!")
+    viewer = login_token("viewer", "AliraView2026!")
+
+    h_admin = auth_h(admin)
+    h_analyst = auth_h(analyst)
+    h_viewer = auth_h(viewer)
+
+    r = requests.get(f"{BASE}/api/settings", headers=h_admin)
+    test("GET /api/settings returns 200 for admin", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+    initial = r.json()["default_currency"]
+
+    test("GET /api/settings returns 200 for analyst",
+         requests.get(f"{BASE}/api/settings", headers=h_analyst).status_code == 200)
+    test("GET /api/settings returns 200 for viewer",
+         requests.get(f"{BASE}/api/settings", headers=h_viewer).status_code == 200)
+
+    try:
+        # Admin can change.
+        upd = requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": "USD"})
+        test("PUT /api/settings returns 200 for admin", upd.status_code == 200, f"got {upd.status_code}: {upd.text[:120]}")
+        test("PUT /api/settings persists new currency",
+             requests.get(f"{BASE}/api/settings", headers=h_admin).json()["default_currency"] == "USD")
+
+        # Analyst and viewer cannot.
+        test("PUT /api/settings returns 403 for analyst",
+             requests.put(f"{BASE}/api/settings", headers=h_analyst, json={"default_currency": "EUR"}).status_code == 403)
+        test("PUT /api/settings returns 403 for viewer",
+             requests.put(f"{BASE}/api/settings", headers=h_viewer, json={"default_currency": "EUR"}).status_code == 403)
+
+        # Invalid currency rejected.
+        bad = requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": "XYZ"})
+        test("PUT /api/settings rejects invalid currency with 422", bad.status_code == 422, f"got {bad.status_code}: {bad.text[:120]}")
+    finally:
+        # Restore.
+        requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": initial})
+
+
 def main():
     global passed, failed, failures
 
@@ -1624,6 +1673,7 @@ def main():
     test_migrate_v15_idempotent()
     test_economics_models()
     test_economics_metrics()
+    test_app_settings_endpoints()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
     test_show_other_pioneers_flag()
