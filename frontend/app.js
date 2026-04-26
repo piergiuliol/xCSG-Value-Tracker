@@ -3160,6 +3160,7 @@ async function renderSettings() {
     { id: 'tabPassword', label: 'Change Password', key: 'password' },
   ];
   if (isAdmin()) tabs.splice(3, 0, { id: 'tabUsers', label: 'Users', key: 'users' });
+  if (isAdmin()) tabs.splice(3, 0, { id: 'tabAppSettings', label: 'App Settings', key: 'appsettings' });
 
   mc.innerHTML = `
     <div class="settings-tabs">
@@ -3171,13 +3172,14 @@ async function renderSettings() {
 
 function switchSettingsTab(tab) {
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  const tabMap = { categories: 'tabCategories', practices: 'tabPractices', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword' };
+  const tabMap = { categories: 'tabCategories', practices: 'tabPractices', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword', appsettings: 'tabAppSettings' };
   const el = document.getElementById(tabMap[tab]);
   if (el) el.classList.add('active');
   if (tab === 'categories') renderCategoriesTab();
   else if (tab === 'practices') renderPracticesTab();
   else if (tab === 'users') renderUsersTab();
   else if (tab === 'password') renderPasswordTab();
+  else if (tab === 'appsettings') renderAppSettingsTab();
   else renderNormsTab();
 }
 
@@ -3347,7 +3349,7 @@ async function renderPracticesTab() {
         <td>${esc(p.description || '—')}</td>
         <td>${count}</td>
         ${_isAdmin ? `<td class="actions-cell">
-          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}',${p.default_legacy_day_rate ?? 'null'})"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deletePractice(" + p.id + ",'" + esc(p.code) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
         </td>` : ''}
       </tr>`;
@@ -3372,11 +3374,16 @@ async function addPractice() {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-function editPractice(id, name, desc) {
+function editPractice(id, name, desc, rate) {
   showModal(`
     <h3>Edit Practice</h3>
     <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editPrName" value="${esc(name)}"></div>
     <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editPrDesc" value="${esc(desc)}"></div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Default legacy day-rate</label>
+      <input type="number" id="editPracticeRate" min="0" step="0.01" placeholder="optional" value="${rate != null ? esc(String(rate)) : ''}">
+      <small class="field-help" style="color:var(--gray-500)">Used as legacy-cost fallback when a project has no override.</small>
+    </div>
     <div class="form-actions">
       <button class="btn btn-primary" onclick="savePractice(${id})">Save</button>
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -3388,8 +3395,10 @@ async function savePractice(id) {
   const name = document.getElementById('editPrName')?.value.trim();
   const desc = document.getElementById('editPrDesc')?.value.trim() || null;
   if (!name) { showToast('Name is required', 'error'); return; }
+  const rateRaw = document.getElementById('editPracticeRate')?.value;
+  const default_legacy_day_rate = rateRaw !== '' && rateRaw != null ? (parseFloat(rateRaw) || null) : null;
   try {
-    await apiCall('PUT', `/practices/${id}`, { name, description: desc });
+    await apiCall('PUT', `/practices/${id}`, { name, description: desc, default_legacy_day_rate });
     hideModal();
     showToast('Practice updated');
     state.practices = [];
@@ -3416,6 +3425,40 @@ async function doDeletePractice(id) {
     state.practices = [];
     renderPracticesTab();
   } catch (err) { showToast(err.message, 'error'); }
+}
+
+function renderAppSettingsTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = `
+    <div class="card">
+      <div style="padding:16px 24px;border-bottom:1px solid var(--gray-200)">
+        <h3 style="margin:0 0 4px;color:var(--navy)">App Settings</h3>
+        <p style="margin:0;color:var(--gray-500);font-size:13px">Global defaults applied across the application.</p>
+      </div>
+      <div style="padding:8px 0">
+        <div style="display:flex;gap:12px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--gray-200)">
+          <label for="settingDefaultCurrency" style="font-weight:600;min-width:200px">Default currency</label>
+          <select id="settingDefaultCurrency">
+            ${(schema?.currencies || ['EUR']).map(c =>
+              `<option value="${esc(c)}"${c === window._defaultCurrency ? ' selected' : ''}>${esc(c)}</option>`
+            ).join('')}
+          </select>
+          <button class="btn btn-secondary btn-sm" onclick="saveDefaultCurrency()">Save</button>
+          <span class="field-help" style="color:var(--gray-500);font-size:12px">Pre-fills the currency selector on new projects.</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveDefaultCurrency() {
+  const v = document.getElementById('settingDefaultCurrency').value;
+  try {
+    await apiCall('PUT', '/settings', { default_currency: v });
+    window._defaultCurrency = v;
+    showToast('Default currency updated');
+  } catch (e) {
+    showToast('Failed to save: ' + (e?.message || e), 'error');
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
