@@ -345,7 +345,7 @@ async def update_practice_endpoint(
     practice = db.get_practice(practice_id)
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
-    db.update_practice(practice_id, body.name, body.description)
+    db.update_practice(practice_id, body.name, body.description, body.default_legacy_day_rate)
     db.log_activity(
         current_user["sub"],
         "practice_updated",

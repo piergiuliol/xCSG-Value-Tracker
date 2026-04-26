@@ -999,12 +999,17 @@ def create_practice(code: str, name: str, description: Optional[str] = None) -> 
         return cur.lastrowid
 
 
-def update_practice(practice_id: int, name: str, description: Optional[str] = None) -> bool:
-    """Update name and description. `code` is immutable once seeded."""
+def update_practice(
+    practice_id: int,
+    name: str,
+    description: Optional[str] = None,
+    default_legacy_day_rate: Optional[float] = None,
+) -> bool:
+    """Update name, description, and default_legacy_day_rate. `code` is immutable once seeded."""
     with _db() as conn:
         conn.execute(
-            "UPDATE practices SET name = ?, description = ? WHERE id = ?",
-            (name, description, practice_id),
+            "UPDATE practices SET name = ?, description = ?, default_legacy_day_rate = ? WHERE id = ?",
+            (name, description, default_legacy_day_rate, practice_id),
         )
         conn.commit()
         return True

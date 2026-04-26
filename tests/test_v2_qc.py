@@ -1541,6 +1541,50 @@ def test_create_project_persists_economics():
         requests.delete(f"{BASE}/api/projects/{pid}", headers=auth_h(tk))
 
 
+def test_practice_default_legacy_day_rate():
+    """PUT /api/practices/{id} stores default_legacy_day_rate; GET surfaces it."""
+    print("\n── C3. Practice default_legacy_day_rate ──")
+    tk = admin_token()
+    headers = auth_h(tk)
+
+    list_r = requests.get(f"{BASE}/api/practices", headers=headers)
+    test("GET /api/practices reachable for rate test", list_r.status_code == 200, f"got {list_r.status_code}")
+    if list_r.status_code != 200:
+        return
+    practice = list_r.json()[0]
+    pid = practice["id"]
+    original_name = practice["name"]
+    original_rate = practice.get("default_legacy_day_rate")
+
+    try:
+        upd = requests.put(
+            f"{BASE}/api/practices/{pid}",
+            headers=headers,
+            json={"name": original_name, "default_legacy_day_rate": 950},
+        )
+        test("PUT practice with default_legacy_day_rate=950 returns 200", upd.status_code == 200, upd.text)
+
+        after = requests.get(f"{BASE}/api/practices", headers=headers).json()
+        target = next(p for p in after if p["id"] == pid)
+        test("default_legacy_day_rate persisted as 950", target["default_legacy_day_rate"] == 950,
+             f"got {target.get('default_legacy_day_rate')}")
+
+        bad = requests.put(
+            f"{BASE}/api/practices/{pid}",
+            headers=headers,
+            json={"name": original_name, "default_legacy_day_rate": -1},
+        )
+        test("PUT practice with negative rate returns 422", bad.status_code == 422,
+             f"got {bad.status_code}: {bad.text[:120]}")
+    finally:
+        # Restore original rate
+        requests.put(
+            f"{BASE}/api/practices/{pid}",
+            headers=headers,
+            json={"name": original_name, "default_legacy_day_rate": original_rate},
+        )
+
+
 def main():
     global passed, failed, failures
 
@@ -1561,6 +1605,7 @@ def main():
     test_expert_options()
     test_categories()
     test_practices()
+    test_practice_default_legacy_day_rate()
     test_create_deliverable()
     test_expert_assessment()
     test_metrics()
