@@ -1827,10 +1827,3 @@ def list_norm_aggregates() -> list:
             "avg_productivity": avg([m["productivity_ratio"] for m in metrics_list]),
         })
     return rows
-
-
-# Auto-initialise when the module is imported so tests that import
-# ``backend.database`` directly (without a live FastAPI server) still get a
-# fully migrated DB.  init_db() is idempotent so the double-call from
-# app.py's startup_event is safe.
-init_db()

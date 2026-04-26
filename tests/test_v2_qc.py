@@ -1248,7 +1248,9 @@ def test_migrate_v15_idempotent():
     import sqlite3
     from backend import database
 
-    # init_db is invoked at module import; just verify the post-state.
+    database.init_db()
+
+    # init_db just ran above; verify the post-state.
     with database._db() as conn:
         proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
         for col in ("currency", "xcsg_pricing_model", "scope_expansion_revenue", "legacy_day_rate_override"):
