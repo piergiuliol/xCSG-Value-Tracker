@@ -38,6 +38,16 @@ async function loadSchema() {
   }
 }
 
+async function loadSettings() {
+  if (window._defaultCurrency) return;
+  try {
+    const s = await apiCall('GET', '/settings');
+    window._defaultCurrency = s?.default_currency || 'EUR';
+  } catch {
+    window._defaultCurrency = 'EUR';
+  }
+}
+
 function getAssessmentFields() {
   if (!schema) return [];
   const sectionOrder = ['B', 'C', 'D', 'E', 'F', 'G'];
@@ -324,7 +334,7 @@ async function route() {
   if (!state.token) { showScreen('login'); return; }
   showScreen('app');
 
-  await Promise.all([loadTaxonomy(), loadSchema()]);
+  await Promise.all([loadTaxonomy(), loadSchema(), loadSettings()]);
   if (thisRoute !== _routeCounter) return; // stale route — newer navigation happened
 
   // Hide write-only UI for viewers
@@ -850,6 +860,38 @@ function renderExpertAssessment(er, metrics) {
    NEW / EDIT PROJECT FORM
    ═══════════════════════════════════════════════════════════════════════ */
 
+function toggleEconomics() {
+  const body = document.getElementById('economicsBody');
+  const tog = document.getElementById('econToggle');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (tog) tog.textContent = open ? '▸' : '▾';
+}
+
+function onCurrencyChange() {
+  const sel = document.getElementById('fCurrency');
+  if (!sel) return;
+  const newCur = sel.value;
+  const hasValues = (
+    document.getElementById('fRevenue')?.value ||
+    document.getElementById('fScopeRev')?.value ||
+    document.getElementById('fLegacyRate')?.value ||
+    Array.from(document.querySelectorAll('.pioneer-day-rate')).some(i => i.value)
+  );
+  if (hasValues) {
+    if (!confirm('Existing values will not be converted — they will be reinterpreted in the new currency. Continue?')) {
+      sel.value = sel.dataset.previous || sel.value;
+      return;
+    }
+  }
+  sel.dataset.previous = newCur;
+  document.querySelectorAll('[data-suffix]').forEach(el => {
+    const txt = el.textContent;
+    el.textContent = txt.includes('/day') ? `${newCur}/day` : newCur;
+  });
+}
+
 async function renderNewProject(existing) {
   await loadTaxonomy();
   const mc = document.getElementById('mainContent');
@@ -961,6 +1003,58 @@ async function renderNewProject(existing) {
         </div>
       </fieldset>
 
+      <fieldset>
+        <legend style="cursor:pointer;user-select:none" onclick="toggleEconomics()">
+          <span id="econToggle">▸</span> Economics <span style="font-weight:400;font-size:12px;color:var(--gray-500)">(optional)</span>
+        </legend>
+        <div id="economicsBody" style="display:none">
+          <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Financial parameters for value-gain ROI calculations. All fields are optional.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Currency</label>
+              <select id="fCurrency" onchange="onCurrencyChange()" data-previous="${esc(p.currency || window._defaultCurrency || 'EUR')}">
+                ${(schema?.currencies || ['EUR','USD','GBP','CHF','CAD','AUD']).map(c => `<option value="${esc(c)}"${(p.currency || window._defaultCurrency || 'EUR') === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Engagement Revenue</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="fRevenue" min="0" step="0.01" value="${esc(p.engagement_revenue ?? '')}" placeholder="e.g. 50000">
+                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}</span>
+              </div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Pricing Model</label>
+              <select id="fPricingModel">
+                <option value="">—</option>
+                ${(schema?.pricing_models || ['Fixed fee','Time & materials','Retainer','Milestone','Other']).map(m => `<option value="${esc(m)}"${p.xcsg_pricing_model === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Scope-Expansion Revenue</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="fScopeRev" min="0" step="0.01" value="${esc(p.scope_expansion_revenue ?? '')}" placeholder="e.g. 10000">
+                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}</span>
+              </div>
+              <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Revenue from scope expansions triggered by this engagement</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Legacy Day-Rate Override</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="fLegacyRate" min="0" step="0.01" value="${esc(p.legacy_day_rate_override ?? '')}" placeholder="e.g. 1200">
+                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}/day</span>
+              </div>
+              <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Override the category default blended day-rate for legacy cost estimates</span>
+            </div>
+            <div class="form-group"></div>
+          </div>
+        </div>
+      </fieldset>
+
       <div style="display:flex;gap:12px;margin-top:24px;align-items:center">
         ${canWrite() ? `<button type="submit" class="btn btn-primary" id="fSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>` : ''}
         ${isEdit ? '<button type="button" class="btn btn-secondary" onclick="window.location.hash=\'#projects\'">Back to Projects</button>' : ''}
@@ -970,15 +1064,17 @@ async function renderNewProject(existing) {
 
   // Pioneer row management
   let pioneerIndex = 0;
-  function addPioneerRow(name, email, rounds) {
+  function addPioneerRow(name, email, rounds, dayRate) {
     const container = document.getElementById('pioneersContainer');
     const idx = pioneerIndex++;
     const row = document.createElement('div');
     row.className = 'pioneer-row';
     row.dataset.idx = idx;
+    const currentCurrency = document.getElementById('fCurrency')?.value || window._defaultCurrency || 'EUR';
     row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
       + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
       + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" data-hint="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:110px"></div>`
+      + `<div class="form-group" style="flex:0 0 160px"><label>Day rate <span class="field-hint" data-hint="Pioneer day rate for cost calculations. Optional.">&#9432;</span></label><div style="display:flex;align-items:center;gap:4px"><input type="number" class="pioneer-day-rate" min="0" step="0.01" value="${esc(dayRate ?? '')}" placeholder="Day rate (optional)" style="width:110px"><span class="field-help" data-suffix style="white-space:nowrap">${esc(currentCurrency)}</span></div></div>`
       + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
     container.appendChild(row);
     row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
@@ -993,17 +1089,17 @@ async function renderNewProject(existing) {
   // Populate pioneers: edit mode uses p.pioneers, new mode starts with one empty row
   if (isEdit && p.pioneers && p.pioneers.length) {
     for (const pi of p.pioneers) {
-      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds);
+      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds, pi.day_rate);
     }
   } else if (!isEdit) {
-    addPioneerRow('', '', '');
+    addPioneerRow('', '', '', '');
   } else {
     // Edit mode fallback: use legacy pioneer_name if no pioneers array
-    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '');
+    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '', '');
   }
 
   document.getElementById('addPioneerBtn').addEventListener('click', function() {
-    addPioneerRow('', '', '');
+    addPioneerRow('', '', '', '');
   });
 
   // Pioneer table for edit mode
@@ -1095,7 +1191,8 @@ async function renderNewProject(existing) {
       const email = row.querySelector('.pioneer-email').value.trim() || null;
       const roundsVal = row.querySelector('.pioneer-rounds').value;
       const total_rounds = roundsVal ? parseInt(roundsVal) : null;
-      if (name) pioneers.push({ name, email, total_rounds });
+      const day_rate = parseFloat(row.querySelector('.pioneer-day-rate')?.value) || null;
+      if (name) pioneers.push({ name, email, total_rounds, day_rate });
     }
     if (pioneers.length === 0) {
       showToast('At least one pioneer is required', 'error');
@@ -1131,6 +1228,11 @@ async function renderNewProject(existing) {
       legacy_calendar_days: document.getElementById('fLDays').value || null,
       legacy_team_size: document.getElementById('fLTeam').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
+      currency: document.getElementById('fCurrency')?.value || null,
+      engagement_revenue: parseFloat(document.getElementById('fRevenue').value) || null,
+      xcsg_pricing_model: document.getElementById('fPricingModel')?.value || null,
+      scope_expansion_revenue: parseFloat(document.getElementById('fScopeRev').value) || null,
+      legacy_day_rate_override: parseFloat(document.getElementById('fLegacyRate').value) || null,
     };
     try {
       if (isEdit) {
