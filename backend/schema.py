@@ -184,6 +184,33 @@ METRICS = {
     "reuse_intent_avg":            {"label": "Reuse Intent", "format": "pct", "icon": "\U0001F504", "tip": "Expert loyalty signal. Would they choose xCSG again? 100% = all said yes without hesitation, 50% = mixed, 0% = all said no."},
     "ai_survival_avg":             {"label": "AI Survival", "format": "pct", "icon": "\U0001F30D", "tip": "How much of the initial AI-generated draft made it into the final deliverable unchanged. Higher = AI produced better starting material."},
     "client_pulse_avg":            {"label": "Client Pulse", "format": "pct", "icon": "\u2764", "tip": "How clients rated the deliverable. 100% = all exceeded expectations, 60% = met expectations, 10% = below."},
+
+    "margin_gain":                 {"label": "Margin Gain", "format": "ratio", "icon": "💰", "tip": "xCSG margin ÷ legacy margin (same revenue, different cost basis). Capped at 10×. Undefined when legacy margin ≤ 0."},
+    "xcsg_margin_pct":             {"label": "xCSG Margin %", "format": "pct", "icon": "📊", "tip": "xCSG margin as a percentage of revenue."},
+    "cost_per_quality_point_gain": {"label": "Cost / Quality Gain", "format": "ratio", "icon": "⚖️", "tip": "How much less it costs xCSG to deliver each quality point vs legacy. Higher = cheaper per quality unit."},
+    "revenue_per_day_gain":        {"label": "Revenue / Day Gain", "format": "ratio", "icon": "💵", "tip": "Revenue per person-day, xCSG vs legacy. Mathematically equals delivery speed when revenue is constant."},
+}
+
+# ── Economics (Phase 1) ───────────────────────────────────────────────────────────────────────────
+
+CURRENCIES = ["EUR", "USD", "GBP", "CHF", "CAD", "AUD"]
+
+PRICING_MODELS = ["Fixed fee", "Time & materials", "Retainer", "Milestone", "Other"]
+
+ECONOMICS_FIELDS = {
+    "engagement_revenue":       {"label": "Engagement revenue", "type": "number", "min": 0, "optional": True},
+    "currency":                 {"label": "Currency", "type": "select", "options": CURRENCIES, "optional": True},
+    "xcsg_pricing_model":       {"label": "Pricing model", "type": "select", "options": PRICING_MODELS, "optional": True},
+    "scope_expansion_revenue":  {"label": "Scope-expansion revenue", "type": "number", "min": 0, "optional": True,
+                                 "help": "Only meaningful when scope expanded — Yes."},
+    "legacy_day_rate_override": {"label": "Legacy day-rate override", "type": "number", "min": 0, "optional": True,
+                                 "help": "Defaults to practice norm if blank."},
+    "pioneer_day_rate":         {"label": "Pioneer day rate", "type": "number", "min": 0, "optional": True,
+                                 "scope": "pioneer",
+                                 "help": "Effective day rate for this pioneer's contribution to this engagement."},
+    "default_legacy_day_rate":  {"label": "Default legacy day rate", "type": "number", "min": 0, "optional": True,
+                                 "scope": "practice",
+                                 "help": "Practice-level fallback for legacy cost computation."},
 }
 
 # ── Dashboard configuration (single source of truth for the frontend) ───────
@@ -312,4 +339,7 @@ def build_schema_response() -> dict:
         "max_rounds": MAX_ROUNDS_PER_PIONEER,
         "max_pioneers": MAX_PIONEERS_PER_PROJECT,
         "dashboard": DASHBOARD_CONFIG,
+        "currencies": CURRENCIES,
+        "pricing_models": PRICING_MODELS,
+        "economics_fields": ECONOMICS_FIELDS,
     }

@@ -1216,6 +1216,33 @@ def test_dashboard_takeaways():
     test("takeaways are all non-empty", not empty, detail=f"empty={list(empty.keys())}")
 
 
+def test_economics_schema():
+    """Schema response exposes economics fields, currencies, and pricing models."""
+    from backend.schema import CURRENCIES, PRICING_MODELS, ECONOMICS_FIELDS, METRICS, build_schema_response
+
+    assert CURRENCIES == ["EUR", "USD", "GBP", "CHF", "CAD", "AUD"]
+    assert "Fixed fee" in PRICING_MODELS
+    assert "Time & materials" in PRICING_MODELS
+    assert "Retainer" in PRICING_MODELS
+    assert "Milestone" in PRICING_MODELS
+    assert "Other" in PRICING_MODELS
+    assert len(PRICING_MODELS) == 5
+
+    expected_econ = {
+        "engagement_revenue", "currency", "xcsg_pricing_model",
+        "scope_expansion_revenue", "legacy_day_rate_override",
+    }
+    assert expected_econ.issubset(set(ECONOMICS_FIELDS.keys()))
+
+    for key in ("margin_gain", "xcsg_margin_pct", "cost_per_quality_point_gain"):
+        assert key in METRICS, f"missing metric {key}"
+
+    response = build_schema_response()
+    assert response["currencies"] == CURRENCIES
+    assert response["pricing_models"] == PRICING_MODELS
+    assert "economics_fields" in response
+
+
 def main():
     global passed, failed, failures
     
