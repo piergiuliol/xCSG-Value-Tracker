@@ -205,6 +205,7 @@ def init_db() -> None:
     migrate_v12()
     migrate_v13()
     migrate_v14()
+    migrate_v15()
 
     seed_data()
 
@@ -355,6 +356,46 @@ def migrate_v14() -> None:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
         if "notes" not in cols:
             conn.execute("ALTER TABLE expert_responses ADD COLUMN notes TEXT")
+        conn.commit()
+
+
+def migrate_v15() -> None:
+    """v1.5: add Project Economics fields and app_settings table.
+
+    All new columns are nullable. app_settings is a single-row table seeded
+    with default_currency='EUR'. Existing projects/pioneers/practices keep
+    NULL economics values until a user fills them in — the project-detail
+    Economics card stays hidden when no economics signal is present.
+    """
+    with _db() as conn:
+        proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        for statement in [
+            "ALTER TABLE projects ADD COLUMN currency TEXT",
+            "ALTER TABLE projects ADD COLUMN xcsg_pricing_model TEXT",
+            "ALTER TABLE projects ADD COLUMN scope_expansion_revenue REAL",
+            "ALTER TABLE projects ADD COLUMN legacy_day_rate_override REAL",
+        ]:
+            col = statement.split()[5]
+            if col not in proj_cols:
+                conn.execute(statement)
+
+        pp_cols = {row[1] for row in conn.execute("PRAGMA table_info(project_pioneers)").fetchall()}
+        if "day_rate" not in pp_cols:
+            conn.execute("ALTER TABLE project_pioneers ADD COLUMN day_rate REAL")
+
+        prac_cols = {row[1] for row in conn.execute("PRAGMA table_info(practices)").fetchall()}
+        if "default_legacy_day_rate" not in prac_cols:
+            conn.execute("ALTER TABLE practices ADD COLUMN default_legacy_day_rate REAL")
+
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS app_settings (
+                   id INTEGER PRIMARY KEY CHECK (id = 1),
+                   default_currency TEXT NOT NULL DEFAULT 'EUR'
+               )"""
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO app_settings (id, default_currency) VALUES (1, 'EUR')"
+        )
         conn.commit()
 
 
@@ -1786,3 +1827,10 @@ def list_norm_aggregates() -> list:
             "avg_productivity": avg([m["productivity_ratio"] for m in metrics_list]),
         })
     return rows
+
+
+# Auto-initialise when the module is imported so tests that import
+# ``backend.database`` directly (without a live FastAPI server) still get a
+# fully migrated DB.  init_db() is idempotent so the double-call from
+# app.py's startup_event is safe.
+init_db()

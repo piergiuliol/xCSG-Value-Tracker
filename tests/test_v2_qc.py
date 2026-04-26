@@ -1243,9 +1243,42 @@ def test_economics_schema():
     assert "economics_fields" in response
 
 
+def test_migrate_v15_idempotent():
+    """migrate_v15 adds new columns + app_settings table, runs idempotently."""
+    import sqlite3
+    from backend import database
+
+    # init_db is invoked at module import; just verify the post-state.
+    with database._db() as conn:
+        proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        for col in ("currency", "xcsg_pricing_model", "scope_expansion_revenue", "legacy_day_rate_override"):
+            assert col in proj_cols, f"projects.{col} missing"
+
+        pp_cols = {r[1] for r in conn.execute("PRAGMA table_info(project_pioneers)").fetchall()}
+        assert "day_rate" in pp_cols, "project_pioneers.day_rate missing"
+
+        prac_cols = {r[1] for r in conn.execute("PRAGMA table_info(practices)").fetchall()}
+        assert "default_legacy_day_rate" in prac_cols, "practices.default_legacy_day_rate missing"
+
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "app_settings" in tables
+
+        row = conn.execute("SELECT id, default_currency FROM app_settings WHERE id=1").fetchone()
+        assert row is not None
+        assert row["default_currency"] == "EUR"
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v15()
+    database.migrate_v15()
+
+    with database._db() as conn:
+        rows = conn.execute("SELECT COUNT(*) AS n FROM app_settings").fetchone()
+        assert rows["n"] == 1, "app_settings must remain a single row"
+
+
 def main():
     global passed, failed, failures
-    
+
     print("=" * 70)
     print("xCSG Value Tracker V2 — Comprehensive QA/QC Test Suite")
     print("=" * 70)
@@ -1278,6 +1311,7 @@ def main():
     test_dashboard_config()
     test_seed_field_coverage()
     test_economics_schema()
+    test_migrate_v15_idempotent()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
