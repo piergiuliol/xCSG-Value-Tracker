@@ -97,18 +97,26 @@ function fmtRatioMaybe(v) {
 
 function ratioTone(v) {
   if (v == null) return '';
-  if (v >= 1.5) return 'chip-green';
-  if (v >= 1.0) return 'chip-amber';
-  if (v >= 0.8) return 'chip-amber';
+  const t = schema?.dashboard?.thresholds?.metric_tone;
+  const success = t?.success_above ?? 1.5;
+  const blue    = t?.blue_above    ?? 1.0;
+  const warning = t?.warning_above ?? 0.8;
+  if (v >= success) return 'chip-green';
+  if (v >= blue)    return 'chip-amber';   // chip-blue not in CSS; amber used per Task 10 adaptation
+  if (v >= warning) return 'chip-amber';
   return 'chip-red';
 }
 
 function pctTone(v) {
   if (v == null) return '';
   if (v < 0) return 'chip-red';
-  if (v >= 0.8) return 'chip-green';
-  if (v >= 0.6) return 'chip-amber';
-  if (v >= 0.4) return 'chip-amber';
+  const t = schema?.dashboard?.thresholds?.pct_tone;
+  const success = t?.success_above ?? 0.8;
+  const blue    = t?.blue_above    ?? 0.6;
+  const warning = t?.warning_above ?? 0.4;
+  if (v >= success) return 'chip-green';
+  if (v >= blue)    return 'chip-amber';
+  if (v >= warning) return 'chip-amber';
   return 'chip-red';
 }
 
@@ -944,6 +952,14 @@ function renderExpertAssessment(er, metrics, project) {
    NEW / EDIT PROJECT FORM
    ═══════════════════════════════════════════════════════════════════════ */
 
+function parseOptionalNumber(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return isFinite(n) ? n : null;
+}
+
 function toggleEconomics() {
   const body = document.getElementById('economicsBody');
   const tog = document.getElementById('econToggle');
@@ -1276,7 +1292,7 @@ async function renderNewProject(existing) {
       const email = row.querySelector('.pioneer-email').value.trim() || null;
       const roundsVal = row.querySelector('.pioneer-rounds').value;
       const total_rounds = roundsVal ? parseInt(roundsVal) : null;
-      const day_rate = parseFloat(row.querySelector('.pioneer-day-rate')?.value) || null;
+      const day_rate = parseOptionalNumber(row.querySelector('.pioneer-day-rate')?.value);
       if (name) pioneers.push({ name, email, total_rounds, day_rate });
     }
     if (pioneers.length === 0) {
@@ -1314,10 +1330,10 @@ async function renderNewProject(existing) {
       legacy_team_size: document.getElementById('fLTeam').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
       currency: document.getElementById('fCurrency')?.value || null,
-      engagement_revenue: parseFloat(document.getElementById('fRevenue').value) || null,
+      engagement_revenue: parseOptionalNumber(document.getElementById('fRevenue').value),
       xcsg_pricing_model: document.getElementById('fPricingModel')?.value || null,
-      scope_expansion_revenue: parseFloat(document.getElementById('fScopeRev').value) || null,
-      legacy_day_rate_override: parseFloat(document.getElementById('fLegacyRate').value) || null,
+      scope_expansion_revenue: parseOptionalNumber(document.getElementById('fScopeRev').value),
+      legacy_day_rate_override: parseOptionalNumber(document.getElementById('fLegacyRate').value),
     };
     try {
       if (isEdit) {
@@ -3396,7 +3412,7 @@ async function savePractice(id) {
   const desc = document.getElementById('editPrDesc')?.value.trim() || null;
   if (!name) { showToast('Name is required', 'error'); return; }
   const rateRaw = document.getElementById('editPracticeRate')?.value;
-  const default_legacy_day_rate = rateRaw !== '' && rateRaw != null ? (parseFloat(rateRaw) || null) : null;
+  const default_legacy_day_rate = parseOptionalNumber(rateRaw);
   try {
     await apiCall('PUT', `/practices/${id}`, { name, description: desc, default_legacy_day_rate });
     hideModal();
