@@ -1277,6 +1277,65 @@ def test_migrate_v15_idempotent():
         assert rows["n"] == 1, "app_settings must remain a single row"
 
 
+def test_economics_models():
+    """ProjectCreate, PioneerCreate, PracticeUpdate accept and validate economics fields."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        ProjectCreate, ProjectUpdate, PioneerCreate, PracticeUpdate,
+        AppSettings, AppSettingsUpdate,
+    )
+
+    base = {
+        "project_name": "Demo",
+        "category_id": 1,
+        "pioneers": [{"name": "Pia", "day_rate": 1500}],
+        "xcsg_team_size": "2",
+        "xcsg_revision_rounds": "1",
+    }
+    p = ProjectCreate(
+        **base,
+        engagement_revenue=120000,
+        currency="EUR",
+        xcsg_pricing_model="Fixed fee",
+        scope_expansion_revenue=15000,
+        legacy_day_rate_override=900,
+    )
+    assert p.engagement_revenue == 120000
+    assert p.currency == "EUR"
+    assert p.xcsg_pricing_model == "Fixed fee"
+    assert p.pioneers[0].day_rate == 1500
+
+    # Negative numeric fields are rejected.
+    for bad_field in ("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override"):
+        with pytest.raises(ValidationError):
+            ProjectCreate(**{**base, bad_field: -1})
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="Pia", day_rate=-50)
+
+    # Invalid currency / pricing model are rejected.
+    with pytest.raises(ValidationError):
+        ProjectCreate(**base, currency="XYZ")
+    with pytest.raises(ValidationError):
+        ProjectCreate(**base, xcsg_pricing_model="Pay what you want")
+
+    # Practices accept default_legacy_day_rate.
+    pu = PracticeUpdate(name="P", default_legacy_day_rate=1000)
+    assert pu.default_legacy_day_rate == 1000
+    with pytest.raises(ValidationError):
+        PracticeUpdate(name="P", default_legacy_day_rate=-1)
+
+    # AppSettings models.
+    s = AppSettings(default_currency="USD")
+    assert s.default_currency == "USD"
+    with pytest.raises(ValidationError):
+        AppSettingsUpdate(default_currency="XYZ")
+
+    # Update model also accepts econ fields.
+    u = ProjectUpdate(engagement_revenue=999, currency="USD")
+    assert u.engagement_revenue == 999
+
+
 def main():
     global passed, failed, failures
 
@@ -1313,6 +1372,7 @@ def main():
     test_seed_field_coverage()
     test_economics_schema()
     test_migrate_v15_idempotent()
+    test_economics_models()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()

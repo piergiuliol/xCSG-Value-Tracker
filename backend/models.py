@@ -9,6 +9,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
+from backend.schema import CURRENCIES, PRICING_MODELS
+
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -44,6 +46,14 @@ class PioneerCreate(BaseModel):
     name: str
     email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
+    day_rate: Optional[float] = None
+
+    @field_validator("day_rate")
+    @classmethod
+    def _non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("day_rate must be >= 0")
+        return v
 
 
 class PioneerUpdate(BaseModel):
@@ -51,6 +61,14 @@ class PioneerUpdate(BaseModel):
     pioneer_email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
     show_previous: Optional[bool] = None
+    day_rate: Optional[float] = None
+
+    @field_validator("day_rate")
+    @classmethod
+    def _non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("day_rate must be >= 0")
+        return v
 
 
 # ── Project Categories ───────────────────────────────────────────────────────
@@ -76,6 +94,14 @@ class PracticeCreate(BaseModel):
 class PracticeUpdate(BaseModel):
     name: str
     description: Optional[str] = None
+    default_legacy_day_rate: Optional[float] = None
+
+    @field_validator("default_legacy_day_rate")
+    @classmethod
+    def _non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("default_legacy_day_rate must be >= 0")
+        return v
 
 
 # ── Projects ─────────────────────────────────────────────────────────────────
@@ -116,6 +142,10 @@ class ProjectCreate(BaseModel):
     revision_depth: Optional[str] = None
     xcsg_scope_expansion: Optional[str] = None
     engagement_revenue: Optional[float] = None
+    currency: Optional[str] = None
+    xcsg_pricing_model: Optional[str] = None
+    scope_expansion_revenue: Optional[float] = None
+    legacy_day_rate_override: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
@@ -125,6 +155,27 @@ class ProjectCreate(BaseModel):
     def _must_have_pioneer(cls, v):
         if not v:
             raise ValueError("At least one pioneer is required")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def _valid_currency(cls, v):
+        if v is not None and v not in CURRENCIES:
+            raise ValueError(f"currency must be one of {CURRENCIES}")
+        return v
+
+    @field_validator("xcsg_pricing_model")
+    @classmethod
+    def _valid_pricing(cls, v):
+        if v is not None and v not in PRICING_MODELS:
+            raise ValueError(f"xcsg_pricing_model must be one of {PRICING_MODELS}")
+        return v
+
+    @field_validator("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override")
+    @classmethod
+    def _non_negative_econ(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("economics numeric fields must be >= 0")
         return v
 
     @model_validator(mode="after")
@@ -161,9 +212,34 @@ class ProjectUpdate(BaseModel):
     revision_depth: Optional[str] = None
     xcsg_scope_expansion: Optional[str] = None
     engagement_revenue: Optional[float] = None
+    currency: Optional[str] = None
+    xcsg_pricing_model: Optional[str] = None
+    scope_expansion_revenue: Optional[float] = None
+    legacy_day_rate_override: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
+
+    @field_validator("currency")
+    @classmethod
+    def _valid_currency(cls, v):
+        if v is not None and v not in CURRENCIES:
+            raise ValueError(f"currency must be one of {CURRENCIES}")
+        return v
+
+    @field_validator("xcsg_pricing_model")
+    @classmethod
+    def _valid_pricing(cls, v):
+        if v is not None and v not in PRICING_MODELS:
+            raise ValueError(f"xcsg_pricing_model must be one of {PRICING_MODELS}")
+        return v
+
+    @field_validator("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override")
+    @classmethod
+    def _non_negative_econ(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("economics numeric fields must be >= 0")
+        return v
 
     @model_validator(mode="after")
     def validate_dates(self) -> "ProjectUpdate":
@@ -351,3 +427,20 @@ class ActivityLogEntry(BaseModel):
     project_id: Optional[int]
     details: Optional[str]
     created_at: str
+
+
+# ── App settings ──────────────────────────────────────────────────────────────
+
+class AppSettings(BaseModel):
+    default_currency: str
+
+
+class AppSettingsUpdate(BaseModel):
+    default_currency: str
+
+    @field_validator("default_currency")
+    @classmethod
+    def _valid_currency(cls, v):
+        if v not in CURRENCIES:
+            raise ValueError(f"default_currency must be one of {CURRENCIES}")
+        return v
