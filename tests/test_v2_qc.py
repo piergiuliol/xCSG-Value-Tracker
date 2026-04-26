@@ -1441,6 +1441,59 @@ def test_economics_metrics():
     assert out["margin_gain"] == 10.0
 
 
+def test_compute_project_metrics_includes_economics():
+    """compute_project_metrics merges economics keys into its output."""
+    from backend.metrics import compute_project_metrics
+
+    data = {
+        "id": 1, "project_name": "T",
+        "category_name": "Cat", "practice_code": "PC", "practice_name": "PName",
+        "pioneer_name": "Pia", "client_name": "C",
+        "xcsg_team_size": "2", "working_days": 10,
+        "l1_legacy_working_days": 40, "l2_legacy_team_size": "2",
+        "engagement_revenue": 100000,
+        "currency": "EUR",
+        "xcsg_pricing_model": "Fixed fee",
+        "scope_expansion_revenue": 10000,
+        "legacy_day_rate_override": None,
+        "practice_default_legacy_day_rate": 800,
+        "pioneer_day_rates": [1500],
+        # quality inputs (minimum to make quality_score non-null)
+        "c6_self_assessment": "Significantly better",
+        "c7_analytical_depth": "Strong",
+        "c8_decision_readiness": "Yes without caveats",
+        "l13_legacy_c7_depth": "Adequate",
+        "l14_legacy_c8_decision": "Yes with minor caveats",
+        "l5_legacy_client_reaction": "Met expectations",
+    }
+    out = compute_project_metrics(data)
+    for key in (
+        "xcsg_blended_rate", "xcsg_cost", "legacy_cost",
+        "xcsg_margin", "legacy_margin", "margin_gain",
+        "xcsg_margin_pct", "legacy_margin_pct",
+        "revenue_per_day_xcsg", "revenue_per_day_legacy",
+        "cost_per_quality_point_xcsg", "cost_per_quality_point_legacy",
+        "cost_per_quality_point_gain",
+        "currency", "engagement_revenue", "scope_expansion_revenue",
+    ):
+        assert key in out, f"compute_project_metrics output missing {key}"
+    assert out["currency"] == "EUR"
+    assert out["xcsg_cost"] == 30000.0
+    assert out["legacy_cost"] == 64000.0  # 800 * (40 * 2)
+    assert out["xcsg_pricing_model"] == "Fixed fee"
+
+    # No economics inputs → all econ keys present but None.
+    bare = {k: v for k, v in data.items() if k not in (
+        "engagement_revenue", "currency", "xcsg_pricing_model",
+        "scope_expansion_revenue", "legacy_day_rate_override",
+        "practice_default_legacy_day_rate", "pioneer_day_rates",
+    )}
+    out2 = compute_project_metrics(bare)
+    assert out2["xcsg_cost"] is None
+    assert out2["legacy_cost"] is None
+    assert out2["margin_gain"] is None
+
+
 def main():
     global passed, failed, failures
 
@@ -1479,6 +1532,7 @@ def main():
     test_migrate_v15_idempotent()
     test_economics_models()
     test_economics_metrics()
+    test_compute_project_metrics_includes_economics()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()

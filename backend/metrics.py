@@ -377,6 +377,23 @@ def compute_project_metrics(data: dict) -> dict:
     flywheel = _compute_flywheel_metrics(data)
     signals = _compute_signal_metrics(data)
 
+    # Economics (optional — every key may be None)
+    legacy_rate_effective = parse_number(data.get("legacy_day_rate_override"))
+    if legacy_rate_effective is None:
+        legacy_rate_effective = parse_number(data.get("practice_default_legacy_day_rate"))
+    pioneer_day_rates = data.get("pioneer_day_rates") or []
+    economics = _compute_economics_metrics(
+        engagement_revenue=parse_number(data.get("engagement_revenue")),
+        xcsg_person_days=effort["xcsg_person_days"],
+        legacy_person_days=effort["legacy_person_days"],
+        pioneer_rates=[parse_number(r) for r in pioneer_day_rates],
+        legacy_rate_effective=legacy_rate_effective,
+        quality_score=quality["quality_score"],
+        legacy_quality_score=quality["legacy_quality"],
+        scope_expansion_revenue=parse_number(data.get("scope_expansion_revenue")),
+        currency=data.get("currency"),
+    )
+
     # Raw survey strings needed by downstream aggregators (scaling gates).
     # Keep them on the metric dict so compute_scaling_gates doesn't have to
     # re-open the response table.
@@ -405,6 +422,8 @@ def compute_project_metrics(data: dict) -> dict:
         "legacy_overridden": bool(data.get("legacy_overridden", 0)),
         **raw_strings,
         **effort, **quality, **smoothness, **flywheel, **signals,
+        **economics,
+        "xcsg_pricing_model": data.get("xcsg_pricing_model"),
     }
 
 

@@ -1141,7 +1141,8 @@ def get_project(project_id: int) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name AS category_name,
-                      pr.code AS practice_code, pr.name AS practice_name
+                      pr.code AS practice_code, pr.name AS practice_name,
+                      pr.default_legacy_day_rate AS practice_default_legacy_day_rate
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                LEFT JOIN practices pr ON p.practice_id = pr.id
@@ -1229,7 +1230,8 @@ def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name AS category_name,
-                      pr.code AS practice_code, pr.name AS practice_name
+                      pr.code AS practice_code, pr.name AS practice_name,
+                      pr.default_legacy_day_rate AS practice_default_legacy_day_rate
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                LEFT JOIN practices pr ON p.practice_id = pr.id
@@ -1239,6 +1241,19 @@ def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
 
 
 # ── Pioneer CRUD ─────────────────────────────────────────────────────────────
+
+def get_pioneer_day_rates(project_id: int) -> list:
+    """Return a list of day_rate values for all pioneers on a project.
+
+    None entries are preserved so callers can detect missing rates.
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT day_rate FROM project_pioneers WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+    return [row["day_rate"] for row in rows]
+
 
 def list_pioneers(project_id: int) -> list:
     """Return all pioneers for a project with response counts and round tokens.
