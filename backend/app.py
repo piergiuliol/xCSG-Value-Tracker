@@ -678,10 +678,14 @@ async def get_pioneer_round(
         raise HTTPException(status_code=404, detail="Pioneer not found")
 
     project_row = db.get_project(pp["project_id"])
-    merged = dict(project_row)
+    project_dict = dict(project_row)
+    merged = dict(project_dict)
     merged.update(dict(response))
     merged["pioneer_day_rates"] = db.get_pioneer_day_rates(pp["project_id"])
     metrics = mtx.compute_project_metrics(merged)
+    # Include project-level economics fields so the frontend can render the
+    # economics card (renderEconomicsCard needs project.engagement_revenue etc.)
+    pioneers = db.list_pioneers(pp["project_id"])
     return {
         "round_number": round_number,
         "pioneer_id": pioneer_id,
@@ -689,6 +693,16 @@ async def get_pioneer_round(
         "submitted_at": response.get("submitted_at"),
         "response": dict(response),
         "metrics": metrics,
+        "project": {
+            "id": project_dict.get("id"),
+            "project_name": project_dict.get("project_name"),
+            "engagement_revenue": project_dict.get("engagement_revenue"),
+            "scope_expansion_revenue": project_dict.get("scope_expansion_revenue"),
+            "xcsg_pricing_model": project_dict.get("xcsg_pricing_model"),
+            "currency": project_dict.get("currency"),
+            "legacy_day_rate_override": project_dict.get("legacy_day_rate_override"),
+            "pioneers": pioneers,
+        },
     }
 
 

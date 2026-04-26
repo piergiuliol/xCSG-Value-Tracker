@@ -1495,7 +1495,7 @@ async function viewPioneerRound(pioneerId, roundNumber) {
     const data = await apiCall('GET', '/pioneers/' + pioneerId + '/rounds/' + roundNumber);
     const header = '<h3 style="color:var(--navy);margin-bottom:4px">' + esc(data.pioneer_name) + ' \u2014 Round ' + data.round_number + '</h3>'
       + '<p style="color:var(--gray-500);font-size:13px;margin-bottom:16px">Submitted ' + esc(formatDateTime(data.submitted_at)) + '</p>';
-    const body = renderExpertAssessment(data.response, data.metrics || {});
+    const body = renderExpertAssessment(data.response, data.metrics || {}, data.project);
     const footer = '<div style="display:flex;justify-content:flex-end;margin-top:16px"><button type="button" class="btn btn-secondary btn-sm" onclick="hideModal()">Close</button></div>';
     showModal('<div class="pioneer-round-modal">' + header + body + footer + '</div>');
   } catch (err) {
