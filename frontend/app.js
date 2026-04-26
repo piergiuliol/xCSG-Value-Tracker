@@ -886,7 +886,8 @@ function onCurrencyChange() {
     }
   }
   sel.dataset.previous = newCur;
-  document.querySelectorAll('[data-suffix]').forEach(el => {
+  const formScope = sel.closest('form, fieldset, .form-shell, [data-scope="project-form"]') || document.body;
+  formScope.querySelectorAll('[data-suffix]').forEach(el => {
     const txt = el.textContent;
     el.textContent = txt.includes('/day') ? `${newCur}/day` : newCur;
   });
@@ -1003,7 +1004,7 @@ async function renderNewProject(existing) {
         </div>
       </fieldset>
 
-      <fieldset>
+      <fieldset class="economics-section">
         <legend style="cursor:pointer;user-select:none" onclick="toggleEconomics()">
           <span id="econToggle">▸</span> Economics <span style="font-weight:400;font-size:12px;color:var(--gray-500)">(optional)</span>
         </legend>
