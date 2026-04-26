@@ -1234,7 +1234,7 @@ def test_economics_schema():
     }
     assert expected_econ.issubset(set(ECONOMICS_FIELDS.keys()))
 
-    for key in ("margin_gain", "xcsg_margin_pct", "cost_per_quality_point_gain"):
+    for key in ("margin_gain", "xcsg_margin_pct", "cost_per_quality_point_gain", "revenue_per_day_gain"):
         assert key in METRICS, f"missing metric {key}"
 
     response = build_schema_response()
