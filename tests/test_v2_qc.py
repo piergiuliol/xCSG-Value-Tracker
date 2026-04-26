@@ -1277,6 +1277,7 @@ def main():
     test_schema()
     test_dashboard_config()
     test_seed_field_coverage()
+    test_economics_schema()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
