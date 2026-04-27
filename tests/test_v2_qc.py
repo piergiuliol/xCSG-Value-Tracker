@@ -1819,6 +1819,96 @@ def test_practice_role_models():
     assert u3.roles == []
 
 
+def test_practice_roles_crud():
+    """GET returns rows; PUT replaces atomically."""
+    token = admin_token()
+    headers = auth_h(token)
+
+    practices = requests.get(f"{BASE}/api/practices", headers=headers).json()
+    assert practices, "must have at least one seeded practice"
+    pid = practices[0]["id"]
+
+    try:
+        # Initial GET — empty list (no roles defined yet for this practice).
+        r = requests.get(f"{BASE}/api/practices/{pid}/roles", headers=headers)
+        assert r.status_code == 200
+        initial = r.json()
+        assert isinstance(initial, list)
+
+        # PUT — bulk replace with two roles.
+        body = {"roles": [
+            {"role_name": "Senior", "day_rate": 1500, "currency": "EUR", "display_order": 0},
+            {"role_name": "Manager", "day_rate": 1000, "currency": "EUR", "display_order": 1},
+        ]}
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json=body)
+        assert r.status_code == 200, r.text
+
+        # GET — confirm replacement.
+        rows = requests.get(f"{BASE}/api/practices/{pid}/roles", headers=headers).json()
+        assert len(rows) == 2
+        names = sorted(r["role_name"] for r in rows)
+        assert names == ["Manager", "Senior"]
+
+        # PUT — replace with a different set; old rows go away.
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={
+            "roles": [{"role_name": "Analyst", "day_rate": 600, "currency": "EUR"}]
+        })
+        assert r.status_code == 200
+        rows = requests.get(f"{BASE}/api/practices/{pid}/roles", headers=headers).json()
+        assert len(rows) == 1
+        assert rows[0]["role_name"] == "Analyst"
+
+        # PUT — invalid currency rejected.
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={
+            "roles": [{"role_name": "X", "day_rate": 100, "currency": "XYZ"}]
+        })
+        assert r.status_code == 422
+
+        # PUT — duplicate (role_name, currency) rejected.
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={
+            "roles": [
+                {"role_name": "Dup", "day_rate": 100, "currency": "EUR"},
+                {"role_name": "Dup", "day_rate": 200, "currency": "EUR"},
+            ]
+        })
+        assert r.status_code == 422
+    finally:
+        # Restore: empty list (clears whatever was added during the test).
+        requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={"roles": []})
+
+
+def test_practice_roles_admin_only():
+    """GET is open to all roles; PUT requires admin."""
+    def login_token(username, password):
+        r = requests.post(f"{BASE}/api/auth/login", json={"username": username, "password": password})
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    admin = admin_token()
+    analyst = login_token("pmo", "AliraPMO2026!")
+    viewer = login_token("viewer", "AliraView2026!")
+    h_admin = auth_h(admin)
+    h_analyst = auth_h(analyst)
+    h_viewer = auth_h(viewer)
+
+    practices = requests.get(f"{BASE}/api/practices", headers=h_admin).json()
+    pid = practices[0]["id"]
+
+    # GET allowed for all three roles.
+    assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_admin).status_code == 200
+    assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst).status_code == 200
+    assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer).status_code == 200
+
+    # PUT allowed for admin, blocked for analyst and viewer.
+    body = {"roles": [{"role_name": "X", "day_rate": 1, "currency": "EUR"}]}
+    assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json=body).status_code == 200
+    assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst, json=body).status_code == 403
+    assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer, json=body).status_code == 403
+
+    # Restore.
+    requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json={"roles": []})
+
+
 def main():
     global passed, failed, failures
 
@@ -1863,6 +1953,8 @@ def main():
     test_practice_role_models()
     test_economics_metrics()
     test_app_settings_endpoints()
+    test_practice_roles_crud()
+    test_practice_roles_admin_only()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
     test_show_other_pioneers_flag()
