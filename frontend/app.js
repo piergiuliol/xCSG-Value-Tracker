@@ -363,6 +363,16 @@ async function loadPracticeRoles(practiceId) {
   }
 }
 
+async function loadProjectPracticeRoles(practiceId, currency) {
+  if (!practiceId || !currency) return [];
+  try {
+    const all = await apiCall('GET', `/practices/${practiceId}/roles`);
+    return all.filter(r => r.currency === currency);
+  } catch (e) {
+    return [];
+  }
+}
+
 async function loadTaxonomy() {
   await Promise.all([loadCategories(), loadPractices()]);
 }
@@ -999,6 +1009,55 @@ function onCurrencyChange() {
     const txt = el.textContent;
     el.textContent = txt.includes('/day') ? `${newCur}/day` : newCur;
   });
+  refreshPioneerRoleSelects();
+}
+
+function renderPioneerRoleSelect(currentRoleName, availableRoles) {
+  const opts = ['<option value="">—</option>'];
+  let foundCurrent = false;
+  availableRoles.forEach(r => {
+    const selected = r.role_name === currentRoleName ? 'selected' : '';
+    if (selected) foundCurrent = true;
+    const ratePart = r.day_rate != null ? ` — ${r.day_rate}` : '';
+    opts.push(`<option value="${esc(r.role_name)}" data-rate="${r.day_rate}" ${selected}>${esc(r.role_name)}${esc(ratePart)}</option>`);
+  });
+  if (currentRoleName && !foundCurrent) {
+    opts.push(`<option value="${esc(currentRoleName)}" selected>${esc(currentRoleName)} (not in catalog)</option>`);
+  }
+  return `<select class="pioneer-role">${opts.join('')}</select>`;
+}
+
+function wirePioneerRoleSelectEvents(rowEl) {
+  const sel = rowEl.querySelector('.pioneer-role');
+  const rateInput = rowEl.querySelector('.pioneer-day-rate');
+  if (!sel || !rateInput) return;
+  sel.addEventListener('change', () => {
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt) return;
+    const rate = opt.dataset.rate;
+    if (rate != null && rate !== '' && rate !== 'undefined') {
+      rateInput.value = parseFloat(rate);
+    }
+    // Picking "—" (empty) intentionally does NOT clear the rate — leave existing value.
+  });
+}
+
+async function refreshPioneerRoleSelects() {
+  const practiceSel = document.getElementById('fPractice') || document.getElementById('fPracticeId');
+  const currencySel = document.getElementById('fCurrency');
+  const practiceId = practiceSel?.value;
+  const currency = currencySel?.value || window._defaultCurrency || 'EUR';
+  window._availableRoles = await loadProjectPracticeRoles(practiceId, currency);
+  document.querySelectorAll('.pioneer-row').forEach(row => {
+    const oldSel = row.querySelector('.pioneer-role');
+    if (!oldSel) return;
+    const currentRoleName = oldSel.value;
+    const newHtml = renderPioneerRoleSelect(currentRoleName, window._availableRoles);
+    const wrapper = document.createElement('span');
+    wrapper.innerHTML = newHtml;
+    oldSel.replaceWith(wrapper.firstChild);
+  });
+  document.querySelectorAll('.pioneer-row').forEach(wirePioneerRoleSelectEvents);
 }
 
 async function renderNewProject(existing) {
@@ -1171,9 +1230,14 @@ async function renderNewProject(existing) {
       </div>
     </form>`;
 
+  // Load role catalog before populating pioneer rows
+  const _practiceIdForRoles = p.practice_id || null;
+  const _currencyForRoles = p.currency || window._defaultCurrency || 'EUR';
+  window._availableRoles = await loadProjectPracticeRoles(_practiceIdForRoles, _currencyForRoles);
+
   // Pioneer row management
   let pioneerIndex = 0;
-  function addPioneerRow(name, email, rounds, dayRate) {
+  function addPioneerRow(name, email, rounds, dayRate, roleName) {
     const container = document.getElementById('pioneersContainer');
     const idx = pioneerIndex++;
     const row = document.createElement('div');
@@ -1183,9 +1247,11 @@ async function renderNewProject(existing) {
     row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
       + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
       + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" data-hint="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:110px"></div>`
+      + `<div class="form-group" style="flex:0 0 160px"><label>Role</label>${renderPioneerRoleSelect(roleName || null, window._availableRoles || [])}</div>`
       + `<div class="form-group" style="flex:0 0 160px"><label>Day rate <span class="field-hint" data-hint="Pioneer day rate for cost calculations. Optional.">&#9432;</span></label><div style="display:flex;align-items:center;gap:4px"><input type="number" class="pioneer-day-rate" min="0" step="0.01" value="${esc(dayRate ?? '')}" placeholder="Day rate (optional)" style="width:110px"><span class="field-help" data-suffix style="white-space:nowrap">${esc(currentCurrency)}</span></div></div>`
       + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
     container.appendChild(row);
+    wirePioneerRoleSelectEvents(row);
     row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
       if (container.querySelectorAll('.pioneer-row').length <= 1) {
         showToast('At least one pioneer is required', 'error');
@@ -1198,17 +1264,22 @@ async function renderNewProject(existing) {
   // Populate pioneers: edit mode uses p.pioneers, new mode starts with one empty row
   if (isEdit && p.pioneers && p.pioneers.length) {
     for (const pi of p.pioneers) {
-      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds, pi.day_rate);
+      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds, pi.day_rate, pi.role_name);
     }
   } else if (!isEdit) {
-    addPioneerRow('', '', '', '');
+    addPioneerRow('', '', '', '', null);
   } else {
     // Edit mode fallback: use legacy pioneer_name if no pioneers array
-    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '', '');
+    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '', '', null);
   }
 
   document.getElementById('addPioneerBtn').addEventListener('click', function() {
-    addPioneerRow('', '', '', '');
+    addPioneerRow('', '', '', '', null);
+  });
+
+  // Re-populate role pickers when practice changes
+  document.getElementById('fPractice').addEventListener('change', function() {
+    refreshPioneerRoleSelects();
   });
 
   // Pioneer table for edit mode
@@ -1301,7 +1372,8 @@ async function renderNewProject(existing) {
       const roundsVal = row.querySelector('.pioneer-rounds').value;
       const total_rounds = roundsVal ? parseInt(roundsVal) : null;
       const day_rate = parseOptionalNumber(row.querySelector('.pioneer-day-rate')?.value);
-      if (name) pioneers.push({ name, email, total_rounds, day_rate });
+      const role_name = row.querySelector('.pioneer-role')?.value || null;
+      if (name) pioneers.push({ name, email, total_rounds, day_rate, role_name });
     }
     if (pioneers.length === 0) {
       showToast('At least one pioneer is required', 'error');
