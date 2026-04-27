@@ -360,6 +360,9 @@ async def update_practice_endpoint(
 
 @app.get("/api/practices/{practice_id}/roles")
 def get_practice_roles(practice_id: int, user=Depends(auth.get_current_user)):
+    practice = db.get_practice(practice_id)
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
     return db.list_practice_roles(practice_id)
 
 
@@ -369,6 +372,9 @@ def update_practice_roles(
     payload: PracticeRolesUpdate,
     user=Depends(auth.get_current_user_admin),
 ):
+    practice = db.get_practice(practice_id)
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
     db.replace_practice_roles(
         practice_id,
         [r.model_dump() for r in payload.roles],

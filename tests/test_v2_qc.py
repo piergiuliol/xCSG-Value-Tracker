@@ -1894,19 +1894,36 @@ def test_practice_roles_admin_only():
     practices = requests.get(f"{BASE}/api/practices", headers=h_admin).json()
     pid = practices[0]["id"]
 
-    # GET allowed for all three roles.
-    assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_admin).status_code == 200
-    assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst).status_code == 200
-    assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer).status_code == 200
+    try:
+        # GET allowed for all three roles.
+        assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_admin).status_code == 200
+        assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst).status_code == 200
+        assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer).status_code == 200
 
-    # PUT allowed for admin, blocked for analyst and viewer.
-    body = {"roles": [{"role_name": "X", "day_rate": 1, "currency": "EUR"}]}
-    assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json=body).status_code == 200
-    assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst, json=body).status_code == 403
-    assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer, json=body).status_code == 403
+        # PUT allowed for admin, blocked for analyst and viewer.
+        body = {"roles": [{"role_name": "X", "day_rate": 1, "currency": "EUR"}]}
+        assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json=body).status_code == 200
+        assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst, json=body).status_code == 403
+        assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer, json=body).status_code == 403
+    finally:
+        # Restore.
+        requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json={"roles": []})
 
-    # Restore.
-    requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json={"roles": []})
+
+def test_practice_roles_404_for_unknown_practice():
+    """Routes return 404 for non-existent practice IDs."""
+    headers = auth_h(admin_token())
+    bad_id = 99999
+
+    r = requests.get(f"{BASE}/api/practices/{bad_id}/roles", headers=headers)
+    assert r.status_code == 404, f"GET expected 404, got {r.status_code}: {r.text}"
+
+    r = requests.put(
+        f"{BASE}/api/practices/{bad_id}/roles",
+        headers=headers,
+        json={"roles": [{"role_name": "X", "day_rate": 1, "currency": "EUR"}]},
+    )
+    assert r.status_code == 404, f"PUT expected 404, got {r.status_code}: {r.text}"
 
 
 def main():
@@ -1955,6 +1972,7 @@ def main():
     test_app_settings_endpoints()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
+    test_practice_roles_404_for_unknown_practice()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
     test_show_other_pioneers_flag()
