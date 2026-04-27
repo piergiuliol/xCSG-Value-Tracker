@@ -1326,6 +1326,49 @@ def test_migrate_v16_idempotent():
         assert remaining["n"] == 0, "practice_roles should CASCADE-delete"
 
 
+def test_migrate_v17_idempotent():
+    """migrate_v17 adds project_pioneers.role_name (nullable), runs idempotently."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(project_pioneers)"
+        ).fetchall()}
+        assert "role_name" in cols, "project_pioneers.role_name missing"
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v17()
+    database.migrate_v17()
+
+    # Existing rows should have NULL role_name.
+    with database._db() as conn:
+        # Insert a quick test fixture: a project + pioneer.
+        cur = conn.execute(
+            "INSERT INTO projects (created_by, project_name, category_id, "
+            "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
+            "legacy_calendar_days, legacy_team_size, legacy_revision_rounds, "
+            "expert_token, status) "
+            "VALUES (1, 'mig17 test', 1, 'P', 'p@x.io', '2', '1', '10', '2', '1', 'tok-mig17', 'pending')"
+        )
+        project_id = cur.lastrowid
+        cur = conn.execute(
+            "INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, expert_token) "
+            "VALUES (?, 'P', 'p@x.io', 'tok-mig17-pp')",
+            (project_id,),
+        )
+        pid = cur.lastrowid
+        row = conn.execute(
+            "SELECT role_name FROM project_pioneers WHERE id = ?", (pid,)
+        ).fetchone()
+        assert row["role_name"] is None
+        # Cleanup — delete pioneer before project to satisfy FK constraint.
+        conn.execute("DELETE FROM project_pioneers WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        conn.commit()
+
+
 def test_practice_roles_db_helpers():
     """list_practice_roles and replace_practice_roles round-trip correctly."""
     from backend import database
@@ -1965,6 +2008,7 @@ def main():
     test_practice_roles_schema()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
+    test_migrate_v17_idempotent()
     test_practice_roles_db_helpers()
     test_economics_models()
     test_practice_role_models()

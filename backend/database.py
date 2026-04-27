@@ -207,6 +207,7 @@ def init_db() -> None:
     migrate_v14()
     migrate_v15()
     migrate_v16()
+    migrate_v17()
 
     seed_data()
 
@@ -427,6 +428,23 @@ def migrate_v16() -> None:
             """CREATE INDEX IF NOT EXISTS idx_practice_roles_practice
                    ON practice_roles(practice_id, display_order)"""
         )
+        conn.commit()
+
+
+def migrate_v17() -> None:
+    """v1.7: add project_pioneers.role_name (nullable).
+
+    Phase 2b — pioneer role picker. Stores the role_name string the user
+    selected from the practice catalog. The day_rate column from Phase 1
+    remains the stored rate snapshot; this column is metadata for the
+    audit trail and the role picker UI.
+    """
+    with _db() as conn:
+        cols = {row[1] for row in conn.execute(
+            "PRAGMA table_info(project_pioneers)"
+        ).fetchall()}
+        if "role_name" not in cols:
+            conn.execute("ALTER TABLE project_pioneers ADD COLUMN role_name TEXT")
         conn.commit()
 
 
