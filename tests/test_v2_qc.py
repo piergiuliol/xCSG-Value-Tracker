@@ -1277,6 +1277,55 @@ def test_migrate_v15_idempotent():
         assert rows["n"] == 1, "app_settings must remain a single row"
 
 
+def test_migrate_v16_idempotent():
+    """migrate_v16 creates practice_roles table + index, runs idempotently."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "practice_roles" in tables
+
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(practice_roles)"
+        ).fetchall()}
+        for col in ("id", "practice_id", "role_name", "day_rate", "currency",
+                    "display_order", "created_at"):
+            assert col in cols, f"practice_roles.{col} missing"
+
+        indexes = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='practice_roles'"
+        ).fetchall()}
+        assert "idx_practice_roles_practice" in indexes
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v16()
+    database.migrate_v16()
+
+    # FK CASCADE: deleting a practice removes its roles.
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO practices (code, name, description) VALUES (?, ?, ?)",
+            ("TST", "Test practice", "for migration test"),
+        )
+        practice_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO practice_roles (practice_id, role_name, day_rate, currency) "
+            "VALUES (?, ?, ?, ?)",
+            (practice_id, "Senior", 1500, "EUR"),
+        )
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM practices WHERE id = ?", (practice_id,))
+        remaining = conn.execute(
+            "SELECT COUNT(*) AS n FROM practice_roles WHERE practice_id = ?",
+            (practice_id,),
+        ).fetchone()
+        assert remaining["n"] == 0, "practice_roles should CASCADE-delete"
+
+
 def test_practice_roles_schema():
     """schema.py exposes PRACTICE_ROLE_FIELDS and surfaces it via build_schema_response."""
     from backend.schema import PRACTICE_ROLE_FIELDS, build_schema_response
@@ -1696,6 +1745,7 @@ def main():
     test_economics_schema()
     test_practice_roles_schema()
     test_migrate_v15_idempotent()
+    test_migrate_v16_idempotent()
     test_economics_models()
     test_economics_metrics()
     test_app_settings_endpoints()

@@ -206,6 +206,7 @@ def init_db() -> None:
     migrate_v13()
     migrate_v14()
     migrate_v15()
+    migrate_v16()
 
     seed_data()
 
@@ -395,6 +396,36 @@ def migrate_v15() -> None:
         )
         conn.execute(
             "INSERT OR IGNORE INTO app_settings (id, default_currency) VALUES (1, 'EUR')"
+        )
+        conn.commit()
+
+
+def migrate_v16() -> None:
+    """v1.6: create practice_roles table for the per-practice rate catalog.
+
+    Each row is a (practice_id, role_name, day_rate, currency) tuple.
+    Multiple rows per (practice_id, role_name) are allowed if currency
+    differs — this supports practices that bill in multiple currencies.
+    Uniqueness is enforced on (practice_id, role_name, currency).
+    Idempotent.
+    """
+    with _db() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS practice_roles (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   practice_id INTEGER NOT NULL,
+                   role_name TEXT NOT NULL,
+                   day_rate REAL NOT NULL,
+                   currency TEXT NOT NULL,
+                   display_order INTEGER NOT NULL DEFAULT 0,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   FOREIGN KEY (practice_id) REFERENCES practices(id) ON DELETE CASCADE,
+                   UNIQUE (practice_id, role_name, currency)
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_practice_roles_practice
+                   ON practice_roles(practice_id, display_order)"""
         )
         conn.commit()
 
