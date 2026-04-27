@@ -205,6 +205,7 @@ def init_db() -> None:
     migrate_v12()
     migrate_v13()
     migrate_v14()
+    migrate_v15()
 
     seed_data()
 
@@ -355,6 +356,46 @@ def migrate_v14() -> None:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
         if "notes" not in cols:
             conn.execute("ALTER TABLE expert_responses ADD COLUMN notes TEXT")
+        conn.commit()
+
+
+def migrate_v15() -> None:
+    """v1.5: add Project Economics fields and app_settings table.
+
+    All new columns are nullable. app_settings is a single-row table seeded
+    with default_currency='EUR'. Existing projects/pioneers/practices keep
+    NULL economics values until a user fills them in — the project-detail
+    Economics card stays hidden when no economics signal is present.
+    """
+    with _db() as conn:
+        proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        for statement in [
+            "ALTER TABLE projects ADD COLUMN currency TEXT",
+            "ALTER TABLE projects ADD COLUMN xcsg_pricing_model TEXT",
+            "ALTER TABLE projects ADD COLUMN scope_expansion_revenue REAL",
+            "ALTER TABLE projects ADD COLUMN legacy_day_rate_override REAL",
+        ]:
+            col = statement.split()[5]
+            if col not in proj_cols:
+                conn.execute(statement)
+
+        pp_cols = {row[1] for row in conn.execute("PRAGMA table_info(project_pioneers)").fetchall()}
+        if "day_rate" not in pp_cols:
+            conn.execute("ALTER TABLE project_pioneers ADD COLUMN day_rate REAL")
+
+        prac_cols = {row[1] for row in conn.execute("PRAGMA table_info(practices)").fetchall()}
+        if "default_legacy_day_rate" not in prac_cols:
+            conn.execute("ALTER TABLE practices ADD COLUMN default_legacy_day_rate REAL")
+
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS app_settings (
+                   id INTEGER PRIMARY KEY CHECK (id = 1),
+                   default_currency TEXT NOT NULL DEFAULT 'EUR'
+               )"""
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO app_settings (id, default_currency) VALUES (1, 'EUR')"
+        )
         conn.commit()
 
 
@@ -958,12 +999,17 @@ def create_practice(code: str, name: str, description: Optional[str] = None) -> 
         return cur.lastrowid
 
 
-def update_practice(practice_id: int, name: str, description: Optional[str] = None) -> bool:
-    """Update name and description. `code` is immutable once seeded."""
+def update_practice(
+    practice_id: int,
+    name: str,
+    description: Optional[str] = None,
+    default_legacy_day_rate: Optional[float] = None,
+) -> bool:
+    """Update name, description, and default_legacy_day_rate. `code` is immutable once seeded."""
     with _db() as conn:
         conn.execute(
-            "UPDATE practices SET name = ?, description = ? WHERE id = ?",
-            (name, description, practice_id),
+            "UPDATE practices SET name = ?, description = ?, default_legacy_day_rate = ? WHERE id = ?",
+            (name, description, default_legacy_day_rate, practice_id),
         )
         conn.commit()
         return True
@@ -1038,8 +1084,9 @@ def create_project(data: dict) -> int:
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
-                default_rounds, show_previous_answers, show_other_pioneers_answers, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                default_rounds, show_previous_answers, show_other_pioneers_answers, status,
+                currency, xcsg_pricing_model, scope_expansion_revenue, legacy_day_rate_override)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -1071,6 +1118,10 @@ def create_project(data: dict) -> int:
                 show_previous_answers,
                 show_other_pioneers_answers,
                 "pending",
+                data.get("currency"),
+                data.get("xcsg_pricing_model"),
+                data.get("scope_expansion_revenue"),
+                data.get("legacy_day_rate_override"),
             ),
         )
         project_id = cur.lastrowid
@@ -1081,9 +1132,9 @@ def create_project(data: dict) -> int:
                 token = secrets.token_urlsafe(32)
                 cur_pp = conn.execute(
                     """INSERT INTO project_pioneers
-                       (project_id, pioneer_name, pioneer_email, total_rounds, expert_token)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (project_id, p["name"], p.get("email"), p.get("total_rounds"), token),
+                       (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (project_id, p["name"], p.get("email"), p.get("total_rounds"), token, p.get("day_rate")),
                 )
                 conn.execute(
                     """INSERT INTO pioneer_round_tokens
@@ -1100,7 +1151,8 @@ def get_project(project_id: int) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name AS category_name,
-                      pr.code AS practice_code, pr.name AS practice_name
+                      pr.code AS practice_code, pr.name AS practice_name,
+                      pr.default_legacy_day_rate AS practice_default_legacy_day_rate
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                LEFT JOIN practices pr ON p.practice_id = pr.id
@@ -1188,7 +1240,8 @@ def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name AS category_name,
-                      pr.code AS practice_code, pr.name AS practice_name
+                      pr.code AS practice_code, pr.name AS practice_name,
+                      pr.default_legacy_day_rate AS practice_default_legacy_day_rate
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                LEFT JOIN practices pr ON p.practice_id = pr.id
@@ -1198,6 +1251,19 @@ def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
 
 
 # ── Pioneer CRUD ─────────────────────────────────────────────────────────────
+
+def get_pioneer_day_rates(project_id: int) -> list:
+    """Return a list of day_rate values for all pioneers on a project.
+
+    None entries are preserved so callers can detect missing rates.
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT day_rate FROM project_pioneers WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+    return [row["day_rate"] for row in rows]
+
 
 def list_pioneers(project_id: int) -> list:
     """Return all pioneers for a project with response counts and round tokens.
@@ -1242,7 +1308,7 @@ def list_pioneers(project_id: int) -> list:
         return pioneers
 
 
-def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None) -> int:
+def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None, day_rate: Optional[float] = None) -> int:
     """Add a new pioneer to an existing project and auto-issue round 1 token.
 
     Returns the new pioneer id.
@@ -1250,9 +1316,9 @@ def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int
     token = secrets.token_urlsafe(32)
     with _db() as conn:
         cur = conn.execute(
-            """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token)
-               VALUES (?, ?, ?, ?, ?)""",
-            (project_id, name, email, total_rounds, token),
+            """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (project_id, name, email, total_rounds, token, day_rate),
         )
         pioneer_id = cur.lastrowid
         conn.execute(
@@ -1279,7 +1345,7 @@ def remove_pioneer(pioneer_id: int) -> bool:
 
 def update_pioneer(pioneer_id: int, data: dict) -> bool:
     """Update allowed fields on a pioneer."""
-    allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous"}
+    allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous", "day_rate"}
     fields = {k: v for k, v in data.items() if k in allowed and v is not None}
     if not fields:
         return False
@@ -1786,3 +1852,17 @@ def list_norm_aggregates() -> list:
             "avg_productivity": avg([m["productivity_ratio"] for m in metrics_list]),
         })
     return rows
+
+
+# ── App Settings ──────────────────────────────────────────────────────────────
+
+def get_app_settings() -> dict:
+    with _db() as conn:
+        row = conn.execute("SELECT default_currency FROM app_settings WHERE id=1").fetchone()
+        return {"default_currency": row["default_currency"] if row else "EUR"}
+
+
+def update_app_settings(*, default_currency: str) -> None:
+    with _db() as conn:
+        conn.execute("UPDATE app_settings SET default_currency = ? WHERE id=1", (default_currency,))
+        conn.commit()

@@ -301,12 +301,98 @@ def _compute_signal_metrics(data: dict) -> dict:
     }
 
 
+def _compute_economics_metrics(
+    engagement_revenue: Optional[float],
+    xcsg_person_days: Optional[float],
+    legacy_person_days: Optional[float],
+    pioneer_rates: list,
+    legacy_rate_effective: Optional[float],
+    quality_score: Optional[float],
+    legacy_quality_score: Optional[float],
+    scope_expansion_revenue: Optional[float],
+    currency: Optional[str],
+) -> dict:
+    """Compute optional economics metrics.
+
+    Every metric returns None when its inputs are missing — this is what
+    makes the section truly optional. Frontend renders '—' for None values.
+    """
+    rates_present = [r for r in pioneer_rates if r is not None]
+    xcsg_blended_rate = round2(sum(rates_present) / len(rates_present)) if rates_present else None
+
+    xcsg_cost = round2(xcsg_blended_rate * xcsg_person_days) if xcsg_blended_rate is not None and xcsg_person_days else None
+    legacy_cost = round2(legacy_rate_effective * legacy_person_days) if legacy_rate_effective is not None and legacy_person_days else None
+
+    xcsg_margin = round2(engagement_revenue - xcsg_cost) if engagement_revenue is not None and xcsg_cost is not None else None
+    legacy_margin = round2(engagement_revenue - legacy_cost) if engagement_revenue is not None and legacy_cost is not None else None
+
+    xcsg_margin_pct = round2(xcsg_margin / engagement_revenue) if xcsg_margin is not None and engagement_revenue else None
+    legacy_margin_pct = round2(legacy_margin / engagement_revenue) if legacy_margin is not None and engagement_revenue else None
+
+    if xcsg_margin is not None and legacy_margin is not None and legacy_margin > 0:
+        margin_gain = round2(min(xcsg_margin / legacy_margin, 10.0))
+    else:
+        margin_gain = None
+
+    revenue_per_day_xcsg = round2(engagement_revenue / xcsg_person_days) if engagement_revenue is not None and xcsg_person_days else None
+    revenue_per_day_legacy = round2(engagement_revenue / legacy_person_days) if engagement_revenue is not None and legacy_person_days else None
+    if revenue_per_day_xcsg is not None and revenue_per_day_legacy:
+        revenue_per_day_gain = round2(revenue_per_day_xcsg / revenue_per_day_legacy)
+    else:
+        revenue_per_day_gain = None
+
+    xcsg_cppq = (xcsg_cost / quality_score) if xcsg_cost is not None and quality_score else None
+    legacy_cppq = (legacy_cost / legacy_quality_score) if legacy_cost is not None and legacy_quality_score else None
+    if xcsg_cppq is not None and legacy_cppq is not None and xcsg_cppq > 0:
+        cppq_gain = round2(legacy_cppq / xcsg_cppq)
+    else:
+        cppq_gain = None
+
+    return {
+        "currency": currency,
+        "engagement_revenue": engagement_revenue,
+        "scope_expansion_revenue": scope_expansion_revenue,
+        "xcsg_blended_rate": xcsg_blended_rate,
+        "xcsg_cost": xcsg_cost,
+        "legacy_rate_effective": legacy_rate_effective,
+        "legacy_cost": legacy_cost,
+        "xcsg_margin": xcsg_margin,
+        "legacy_margin": legacy_margin,
+        "xcsg_margin_pct": xcsg_margin_pct,
+        "legacy_margin_pct": legacy_margin_pct,
+        "margin_gain": margin_gain,
+        "revenue_per_day_xcsg": revenue_per_day_xcsg,
+        "revenue_per_day_legacy": revenue_per_day_legacy,
+        "revenue_per_day_gain": revenue_per_day_gain,
+        "cost_per_quality_point_xcsg": round2(xcsg_cppq) if xcsg_cppq is not None else None,
+        "cost_per_quality_point_legacy": round2(legacy_cppq) if legacy_cppq is not None else None,
+        "cost_per_quality_point_gain": cppq_gain,
+    }
+
+
 def compute_project_metrics(data: dict) -> dict:
     effort = _compute_effort_metrics(data)
     quality = _compute_quality_metrics(data, effort["xcsg_person_days"], effort["legacy_person_days"])
     smoothness = _compute_smoothness_metrics(data)
     flywheel = _compute_flywheel_metrics(data)
     signals = _compute_signal_metrics(data)
+
+    # Economics (optional — every key may be None)
+    legacy_rate_effective = parse_number(data.get("legacy_day_rate_override"))
+    if legacy_rate_effective is None:
+        legacy_rate_effective = parse_number(data.get("practice_default_legacy_day_rate"))
+    pioneer_day_rates = data.get("pioneer_day_rates") or []
+    economics = _compute_economics_metrics(
+        engagement_revenue=parse_number(data.get("engagement_revenue")),
+        xcsg_person_days=effort["xcsg_person_days"],
+        legacy_person_days=effort["legacy_person_days"],
+        pioneer_rates=[parse_number(r) for r in pioneer_day_rates],
+        legacy_rate_effective=legacy_rate_effective,
+        quality_score=quality["quality_score"],
+        legacy_quality_score=quality["legacy_quality"],
+        scope_expansion_revenue=parse_number(data.get("scope_expansion_revenue")),
+        currency=data.get("currency"),
+    )
 
     # Raw survey strings needed by downstream aggregators (scaling gates).
     # Keep them on the metric dict so compute_scaling_gates doesn't have to
@@ -336,6 +422,8 @@ def compute_project_metrics(data: dict) -> dict:
         "legacy_overridden": bool(data.get("legacy_overridden", 0)),
         **raw_strings,
         **effort, **quality, **smoothness, **flywheel, **signals,
+        **economics,
+        "xcsg_pricing_model": data.get("xcsg_pricing_model"),
     }
 
 
@@ -555,6 +643,20 @@ def compute_averaged_project_metrics(project: dict, responses: list[dict]) -> di
         "overall_xcsg_score", "client_impact", "data_independence",
         "ai_survival_rate", "reuse_intent_score", "client_pulse_score",
         "revenue_productivity_xcsg", "revenue_productivity_legacy",
+        "xcsg_blended_rate",
+        "xcsg_cost",
+        "legacy_cost",
+        "xcsg_margin",
+        "legacy_margin",
+        "xcsg_margin_pct",
+        "legacy_margin_pct",
+        "margin_gain",
+        "revenue_per_day_xcsg",
+        "revenue_per_day_legacy",
+        "revenue_per_day_gain",
+        "cost_per_quality_point_xcsg",
+        "cost_per_quality_point_legacy",
+        "cost_per_quality_point_gain",
     ]
 
     per_response_metrics = []

@@ -1216,13 +1216,431 @@ def test_dashboard_takeaways():
     test("takeaways are all non-empty", not empty, detail=f"empty={list(empty.keys())}")
 
 
+def test_economics_schema():
+    """Schema response exposes economics fields, currencies, and pricing models."""
+    from backend.schema import CURRENCIES, PRICING_MODELS, ECONOMICS_FIELDS, METRICS, build_schema_response
+
+    assert CURRENCIES == ["EUR", "USD", "GBP", "CHF", "CAD", "AUD"]
+    assert "Fixed fee" in PRICING_MODELS
+    assert "Time & materials" in PRICING_MODELS
+    assert "Retainer" in PRICING_MODELS
+    assert "Milestone" in PRICING_MODELS
+    assert "Other" in PRICING_MODELS
+    assert len(PRICING_MODELS) == 5
+
+    expected_econ = {
+        "engagement_revenue", "currency", "xcsg_pricing_model",
+        "scope_expansion_revenue", "legacy_day_rate_override",
+    }
+    assert expected_econ.issubset(set(ECONOMICS_FIELDS.keys()))
+
+    for key in ("margin_gain", "xcsg_margin_pct", "cost_per_quality_point_gain", "revenue_per_day_gain"):
+        assert key in METRICS, f"missing metric {key}"
+
+    response = build_schema_response()
+    assert response["currencies"] == CURRENCIES
+    assert response["pricing_models"] == PRICING_MODELS
+    assert "economics_fields" in response
+
+
+def test_migrate_v15_idempotent():
+    """migrate_v15 adds new columns + app_settings table, runs idempotently."""
+    from backend import database
+
+    database.init_db()
+
+    # init_db just ran above; verify the post-state.
+    with database._db() as conn:
+        proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        for col in ("currency", "xcsg_pricing_model", "scope_expansion_revenue", "legacy_day_rate_override"):
+            assert col in proj_cols, f"projects.{col} missing"
+
+        pp_cols = {r[1] for r in conn.execute("PRAGMA table_info(project_pioneers)").fetchall()}
+        assert "day_rate" in pp_cols, "project_pioneers.day_rate missing"
+
+        prac_cols = {r[1] for r in conn.execute("PRAGMA table_info(practices)").fetchall()}
+        assert "default_legacy_day_rate" in prac_cols, "practices.default_legacy_day_rate missing"
+
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "app_settings" in tables
+
+        row = conn.execute("SELECT id, default_currency FROM app_settings WHERE id=1").fetchone()
+        assert row is not None
+        assert row["default_currency"] == "EUR"
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v15()
+    database.migrate_v15()
+
+    with database._db() as conn:
+        rows = conn.execute("SELECT COUNT(*) AS n FROM app_settings").fetchone()
+        assert rows["n"] == 1, "app_settings must remain a single row"
+
+
+def test_economics_models():
+    """ProjectCreate, PioneerCreate, PracticeUpdate accept and validate economics fields."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        ProjectCreate, ProjectUpdate, PioneerCreate, PracticeUpdate,
+        AppSettings, AppSettingsUpdate,
+    )
+
+    base = {
+        "project_name": "Demo",
+        "category_id": 1,
+        "pioneers": [{"name": "Pia", "day_rate": 1500}],
+        "xcsg_team_size": "2",
+        "xcsg_revision_rounds": "1",
+    }
+    p = ProjectCreate(
+        **base,
+        engagement_revenue=120000,
+        currency="EUR",
+        xcsg_pricing_model="Fixed fee",
+        scope_expansion_revenue=15000,
+        legacy_day_rate_override=900,
+    )
+    assert p.engagement_revenue == 120000
+    assert p.currency == "EUR"
+    assert p.xcsg_pricing_model == "Fixed fee"
+    assert p.pioneers[0].day_rate == 1500
+
+    # Negative numeric fields are rejected.
+    for bad_field in ("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override"):
+        with pytest.raises(ValidationError):
+            ProjectCreate(**{**base, bad_field: -1})
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="Pia", day_rate=-50)
+
+    # Invalid currency / pricing model are rejected.
+    with pytest.raises(ValidationError):
+        ProjectCreate(**base, currency="XYZ")
+    with pytest.raises(ValidationError):
+        ProjectCreate(**base, xcsg_pricing_model="Pay what you want")
+
+    # Practices accept default_legacy_day_rate.
+    pu = PracticeUpdate(name="P", default_legacy_day_rate=1000)
+    assert pu.default_legacy_day_rate == 1000
+    with pytest.raises(ValidationError):
+        PracticeUpdate(name="P", default_legacy_day_rate=-1)
+
+    # AppSettings models.
+    s = AppSettings(default_currency="USD")
+    assert s.default_currency == "USD"
+    with pytest.raises(ValidationError):
+        AppSettingsUpdate(default_currency="XYZ")
+
+    # Update model also accepts econ fields.
+    u = ProjectUpdate(engagement_revenue=999, currency="USD")
+    assert u.engagement_revenue == 999
+
+
+def test_economics_metrics():
+    """_compute_economics_metrics covers all formulas + edge cases per spec."""
+    from backend.metrics import _compute_economics_metrics
+
+    # Happy path: all inputs populated, single pioneer.
+    out = _compute_economics_metrics(
+        engagement_revenue=120000,
+        xcsg_person_days=20,
+        legacy_person_days=80,
+        pioneer_rates=[1500],
+        legacy_rate_effective=900,
+        quality_score=0.85,
+        legacy_quality_score=0.5,
+        scope_expansion_revenue=15000,
+        currency="EUR",
+    )
+    assert out["xcsg_blended_rate"] == 1500
+    assert out["xcsg_cost"] == 30000.0          # 1500 * 20
+    assert out["legacy_rate_effective"] == 900
+    assert out["legacy_cost"] == 72000.0        # 900 * 80
+    assert out["xcsg_margin"] == 90000.0        # 120000 - 30000
+    assert out["legacy_margin"] == 48000.0      # 120000 - 72000
+    assert round(out["xcsg_margin_pct"], 4) == 0.75
+    assert round(out["legacy_margin_pct"], 4) == 0.4
+    assert round(out["margin_gain"], 2) == 1.88  # 90000 / 48000
+    assert out["scope_expansion_revenue"] == 15000
+    assert out["currency"] == "EUR"
+
+    # Multi-pioneer averaging, mixed null/non-null rates.
+    out = _compute_economics_metrics(
+        engagement_revenue=100000,
+        xcsg_person_days=10,
+        legacy_person_days=40,
+        pioneer_rates=[2000, None, 1000],   # null skipped
+        legacy_rate_effective=800,
+        quality_score=0.8,
+        legacy_quality_score=0.4,
+        scope_expansion_revenue=None,
+        currency="USD",
+    )
+    assert out["xcsg_blended_rate"] == 1500   # mean of [2000, 1000]
+
+    # Negative legacy margin → margin_gain is None.
+    out = _compute_economics_metrics(
+        engagement_revenue=10000,
+        xcsg_person_days=5,
+        legacy_person_days=200,
+        pioneer_rates=[1000],
+        legacy_rate_effective=200,           # legacy_cost = 40000 > revenue
+        quality_score=0.7,
+        legacy_quality_score=0.4,
+        scope_expansion_revenue=None,
+        currency="EUR",
+    )
+    assert out["legacy_margin"] == -30000
+    assert out["margin_gain"] is None
+
+    # No pioneer rates → cost / margin / gain all None, but revenue still surfaces.
+    out = _compute_economics_metrics(
+        engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
+        pioneer_rates=[None, None], legacy_rate_effective=900,
+        quality_score=0.7, legacy_quality_score=0.4,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    assert out["xcsg_blended_rate"] is None
+    assert out["xcsg_cost"] is None
+    assert out["xcsg_margin"] is None
+    assert out["margin_gain"] is None
+    assert out["legacy_cost"] == 36000.0  # legacy still computes
+    assert out["legacy_margin"] == 14000.0
+
+    # No legacy rate → legacy cost / margin / gain all None.
+    out = _compute_economics_metrics(
+        engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
+        pioneer_rates=[1500], legacy_rate_effective=None,
+        quality_score=0.7, legacy_quality_score=0.4,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    assert out["legacy_cost"] is None
+    assert out["legacy_margin"] is None
+    assert out["margin_gain"] is None
+
+    # Cost-per-quality-point gain.
+    out = _compute_economics_metrics(
+        engagement_revenue=120000, xcsg_person_days=20, legacy_person_days=80,
+        pioneer_rates=[1500], legacy_rate_effective=900,
+        quality_score=0.85, legacy_quality_score=0.5,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    # xcsg_cppq = 30000/0.85, legacy_cppq = 72000/0.5
+    # gain = legacy_cppq / xcsg_cppq = (72000/0.5) / (30000/0.85)
+    expected_cppq_gain = (72000 / 0.5) / (30000 / 0.85)
+    assert abs(out["cost_per_quality_point_gain"] - round(expected_cppq_gain, 2)) < 0.01
+
+    # margin_gain capped at 10x. Setup: xcsg_cost=10, legacy_cost=10000,
+    # so xcsg_margin=10990, legacy_margin=1000, raw ratio=10.99 → cap to 10.0.
+    out = _compute_economics_metrics(
+        engagement_revenue=11000, xcsg_person_days=1, legacy_person_days=100,
+        pioneer_rates=[10], legacy_rate_effective=100,
+        quality_score=0.9, legacy_quality_score=0.5,
+        scope_expansion_revenue=None, currency="EUR",
+    )
+    assert out["margin_gain"] == 10.0
+
+
+def test_compute_project_metrics_includes_economics():
+    """compute_project_metrics merges economics keys into its output."""
+    from backend.metrics import compute_project_metrics
+
+    data = {
+        "id": 1, "project_name": "T",
+        "category_name": "Cat", "practice_code": "PC", "practice_name": "PName",
+        "pioneer_name": "Pia", "client_name": "C",
+        "xcsg_team_size": "2", "working_days": 10,
+        "l1_legacy_working_days": 40, "l2_legacy_team_size": "2",
+        "engagement_revenue": 100000,
+        "currency": "EUR",
+        "xcsg_pricing_model": "Fixed fee",
+        "scope_expansion_revenue": 10000,
+        "legacy_day_rate_override": None,
+        "practice_default_legacy_day_rate": 800,
+        "pioneer_day_rates": [1500],
+        # quality inputs (minimum to make quality_score non-null)
+        "c6_self_assessment": "Significantly better",
+        "c7_analytical_depth": "Strong",
+        "c8_decision_readiness": "Yes without caveats",
+        "l13_legacy_c7_depth": "Adequate",
+        "l14_legacy_c8_decision": "Yes with minor caveats",
+        "l5_legacy_client_reaction": "Met expectations",
+    }
+    out = compute_project_metrics(data)
+    for key in (
+        "xcsg_blended_rate", "xcsg_cost", "legacy_cost",
+        "xcsg_margin", "legacy_margin", "margin_gain",
+        "xcsg_margin_pct", "legacy_margin_pct",
+        "revenue_per_day_xcsg", "revenue_per_day_legacy",
+        "cost_per_quality_point_xcsg", "cost_per_quality_point_legacy",
+        "cost_per_quality_point_gain",
+        "currency", "engagement_revenue", "scope_expansion_revenue",
+    ):
+        assert key in out, f"compute_project_metrics output missing {key}"
+    assert out["currency"] == "EUR"
+    assert out["xcsg_cost"] == 30000.0
+    assert out["legacy_cost"] == 64000.0  # 800 * (40 * 2)
+    assert out["xcsg_pricing_model"] == "Fixed fee"
+
+    # No economics inputs → all econ keys present but None.
+    bare = {k: v for k, v in data.items() if k not in (
+        "engagement_revenue", "currency", "xcsg_pricing_model",
+        "scope_expansion_revenue", "legacy_day_rate_override",
+        "practice_default_legacy_day_rate", "pioneer_day_rates",
+    )}
+    out2 = compute_project_metrics(bare)
+    assert out2["xcsg_cost"] is None
+    assert out2["legacy_cost"] is None
+    assert out2["margin_gain"] is None
+
+
+def test_create_project_persists_economics():
+    """POST /api/projects accepts and stores economics fields, including pioneer rates."""
+    tk = admin_token()
+    payload = {
+        "project_name": "Econ test",
+        "category_id": 1,
+        "pioneers": [{"name": "P1", "day_rate": 1500}, {"name": "P2", "day_rate": 1000}],
+        "xcsg_team_size": "2",
+        "xcsg_revision_rounds": "1",
+        "engagement_revenue": 80000,
+        "currency": "USD",
+        "xcsg_pricing_model": "Fixed fee",
+        "scope_expansion_revenue": 5000,
+        "legacy_day_rate_override": 750,
+    }
+    r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json=payload)
+    test("POST /api/projects with economics returns 201", r.status_code == 201, f"got {r.status_code}: {r.text[:200]}")
+    if r.status_code != 201:
+        return
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=auth_h(tk)).json()
+        test("economics: engagement_revenue stored", detail.get("engagement_revenue") == 80000, f"got {detail.get('engagement_revenue')}")
+        test("economics: currency stored", detail.get("currency") == "USD", f"got {detail.get('currency')}")
+        test("economics: xcsg_pricing_model stored", detail.get("xcsg_pricing_model") == "Fixed fee", f"got {detail.get('xcsg_pricing_model')}")
+        test("economics: scope_expansion_revenue stored", detail.get("scope_expansion_revenue") == 5000, f"got {detail.get('scope_expansion_revenue')}")
+        test("economics: legacy_day_rate_override stored", detail.get("legacy_day_rate_override") == 750, f"got {detail.get('legacy_day_rate_override')}")
+
+        pioneer_rates = sorted(p["day_rate"] for p in detail.get("pioneers", []))
+        test("economics: pioneer day_rates stored", pioneer_rates == [1000, 1500], f"got {pioneer_rates}")
+
+        # Adding a pioneer post-creation must also persist day_rate.
+        add = requests.post(
+            f"{BASE}/api/projects/{pid}/pioneers",
+            headers={**auth_h(tk), "Content-Type": "application/json"},
+            json={"name": "P3", "day_rate": 2000},
+        )
+        test("economics: POST pioneer returns 201", add.status_code == 201, add.text)
+        if add.status_code == 201:
+            detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=auth_h(tk)).json()
+            rates2 = sorted(p["day_rate"] for p in detail2.get("pioneers", []))
+            test("economics: post-creation pioneer day_rate persisted", rates2 == [1000, 1500, 2000], f"got {rates2}")
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=auth_h(tk))
+
+
+def test_practice_default_legacy_day_rate():
+    """PUT /api/practices/{id} stores default_legacy_day_rate; GET surfaces it."""
+    print("\n── C3. Practice default_legacy_day_rate ──")
+    tk = admin_token()
+    headers = auth_h(tk)
+
+    list_r = requests.get(f"{BASE}/api/practices", headers=headers)
+    test("GET /api/practices reachable for rate test", list_r.status_code == 200, f"got {list_r.status_code}")
+    if list_r.status_code != 200:
+        return
+    practice = list_r.json()[0]
+    pid = practice["id"]
+    original_name = practice["name"]
+    original_rate = practice.get("default_legacy_day_rate")
+
+    try:
+        upd = requests.put(
+            f"{BASE}/api/practices/{pid}",
+            headers=headers,
+            json={"name": original_name, "default_legacy_day_rate": 950},
+        )
+        test("PUT practice with default_legacy_day_rate=950 returns 200", upd.status_code == 200, upd.text)
+
+        after = requests.get(f"{BASE}/api/practices", headers=headers).json()
+        target = next(p for p in after if p["id"] == pid)
+        test("default_legacy_day_rate persisted as 950", target["default_legacy_day_rate"] == 950,
+             f"got {target.get('default_legacy_day_rate')}")
+
+        bad = requests.put(
+            f"{BASE}/api/practices/{pid}",
+            headers=headers,
+            json={"name": original_name, "default_legacy_day_rate": -1},
+        )
+        test("PUT practice with negative rate returns 422", bad.status_code == 422,
+             f"got {bad.status_code}: {bad.text[:120]}")
+    finally:
+        # Restore original rate
+        requests.put(
+            f"{BASE}/api/practices/{pid}",
+            headers=headers,
+            json={"name": original_name, "default_legacy_day_rate": original_rate},
+        )
+
+
+def test_app_settings_endpoints():
+    """GET /api/settings is open to all roles; PUT requires admin."""
+    print("\n── App Settings ──")
+
+    def login_token(username, password):
+        r = requests.post(f"{BASE}/api/auth/login", json={"username": username, "password": password})
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    admin = admin_token()
+    analyst = login_token("pmo", "AliraPMO2026!")
+    viewer = login_token("viewer", "AliraView2026!")
+
+    h_admin = auth_h(admin)
+    h_analyst = auth_h(analyst)
+    h_viewer = auth_h(viewer)
+
+    r = requests.get(f"{BASE}/api/settings", headers=h_admin)
+    test("GET /api/settings returns 200 for admin", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+    initial = r.json()["default_currency"]
+
+    test("GET /api/settings returns 200 for analyst",
+         requests.get(f"{BASE}/api/settings", headers=h_analyst).status_code == 200)
+    test("GET /api/settings returns 200 for viewer",
+         requests.get(f"{BASE}/api/settings", headers=h_viewer).status_code == 200)
+
+    try:
+        # Admin can change.
+        upd = requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": "USD"})
+        test("PUT /api/settings returns 200 for admin", upd.status_code == 200, f"got {upd.status_code}: {upd.text[:120]}")
+        test("PUT /api/settings persists new currency",
+             requests.get(f"{BASE}/api/settings", headers=h_admin).json()["default_currency"] == "USD")
+
+        # Analyst and viewer cannot.
+        test("PUT /api/settings returns 403 for analyst",
+             requests.put(f"{BASE}/api/settings", headers=h_analyst, json={"default_currency": "EUR"}).status_code == 403)
+        test("PUT /api/settings returns 403 for viewer",
+             requests.put(f"{BASE}/api/settings", headers=h_viewer, json={"default_currency": "EUR"}).status_code == 403)
+
+        # Invalid currency rejected.
+        bad = requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": "XYZ"})
+        test("PUT /api/settings rejects invalid currency with 422", bad.status_code == 422, f"got {bad.status_code}: {bad.text[:120]}")
+    finally:
+        # Restore.
+        requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": initial})
+
+
 def main():
     global passed, failed, failures
-    
+
     print("=" * 70)
     print("xCSG Value Tracker V2 — Comprehensive QA/QC Test Suite")
     print("=" * 70)
-    
+
     # Health check
     try:
         r = requests.get(f"{BASE}/api/health", timeout=5)
@@ -1231,11 +1649,12 @@ def main():
         test("Server reachable", False, str(e))
         print("\nFATAL: Server not reachable. Exiting.")
         sys.exit(1)
-    
+
     test_authentication()
     test_expert_options()
     test_categories()
     test_practices()
+    test_practice_default_legacy_day_rate()
     test_create_deliverable()
     test_expert_assessment()
     test_metrics()
@@ -1250,6 +1669,13 @@ def main():
     test_schema()
     test_dashboard_config()
     test_seed_field_coverage()
+    test_economics_schema()
+    test_migrate_v15_idempotent()
+    test_economics_models()
+    test_economics_metrics()
+    test_app_settings_endpoints()
+    test_compute_project_metrics_includes_economics()
+    test_create_project_persists_economics()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()

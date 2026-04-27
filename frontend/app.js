@@ -38,6 +38,16 @@ async function loadSchema() {
   }
 }
 
+async function loadSettings() {
+  if (window._defaultCurrency) return;
+  try {
+    const s = await apiCall('GET', '/settings');
+    window._defaultCurrency = s?.default_currency || 'EUR';
+  } catch {
+    window._defaultCurrency = 'EUR';
+  }
+}
+
 function getAssessmentFields() {
   if (!schema) return [];
   const sectionOrder = ['B', 'C', 'D', 'E', 'F', 'G'];
@@ -66,6 +76,96 @@ function scoreColor(s) {
   if (s >= 0.5) return 'var(--blue, #3B82F6)';
   if (s >= 0.25) return 'var(--warning, #F59E0B)';
   return 'var(--danger, #EF4444)';
+}
+
+function fmtCurrency(value, currency) {
+  if (value == null || isNaN(value)) return '—';
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'EUR', maximumFractionDigits: 0 }).format(value);
+  } catch (e) {
+    return `${currency || 'EUR'} ${Number(value).toLocaleString()}`;
+  }
+}
+
+function fmtPctMaybe(v) {
+  return v == null ? '—' : `${(v * 100).toFixed(1)}%`;
+}
+
+function fmtRatioMaybe(v) {
+  return v == null ? '—' : `${v.toFixed(2)}×`;
+}
+
+function ratioTone(v) {
+  if (v == null) return '';
+  const t = schema?.dashboard?.thresholds?.metric_tone;
+  const success = t?.success_above ?? 1.5;
+  const blue    = t?.blue_above    ?? 1.0;
+  const warning = t?.warning_above ?? 0.8;
+  if (v >= success) return 'chip-green';
+  if (v >= blue)    return 'chip-amber';   // chip-blue not in CSS; amber used per Task 10 adaptation
+  if (v >= warning) return 'chip-amber';
+  return 'chip-red';
+}
+
+function pctTone(v) {
+  if (v == null) return '';
+  if (v < 0) return 'chip-red';
+  const t = schema?.dashboard?.thresholds?.pct_tone;
+  const success = t?.success_above ?? 0.8;
+  const blue    = t?.blue_above    ?? 0.6;
+  const warning = t?.warning_above ?? 0.4;
+  if (v >= success) return 'chip-green';
+  if (v >= blue)    return 'chip-amber';
+  if (v >= warning) return 'chip-amber';
+  return 'chip-red';
+}
+
+function renderEconomicsCard(project, metrics) {
+  if (!project) return '';
+  const hasSignal = (
+    project.engagement_revenue != null ||
+    (project.pioneers || []).some(p => p.day_rate != null) ||
+    metrics.legacy_rate_effective != null
+  );
+  if (!hasSignal) return '';
+
+  const cur = project.currency || window._defaultCurrency || 'EUR';
+  const fc = (v) => fmtCurrency(v, cur);
+
+  const header = `
+    <div class="econ-header" style="display:flex;gap:18px;flex-wrap:wrap;color:var(--gray-600);font-size:13px;margin-bottom:10px">
+      <span><strong>Revenue:</strong> ${fc(project.engagement_revenue)}</span>
+      <span><strong>Pricing:</strong> ${esc(project.xcsg_pricing_model || '—')}</span>
+      <span><strong>Currency:</strong> ${esc(cur)}</span>
+    </div>`;
+
+  const chip = (toneFn, value, label, fmt) => `
+    <div class="assessment-metric-chip ${toneFn(value)}">
+      <span class="chip-value">${fmt(value)}</span>
+      <span class="chip-label">${label}</span>
+    </div>`;
+
+  const grid = `
+    <div class="metric-chips-grid" style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:8px">
+      ${chip(ratioTone, metrics.margin_gain, 'Margin Gain', fmtRatioMaybe)}
+      ${chip(() => '', metrics.xcsg_cost, 'xCSG cost', fc)}
+      ${chip(() => '', metrics.legacy_cost, 'Legacy cost', fc)}
+      ${chip(() => metrics.xcsg_margin != null && metrics.xcsg_margin < 0 ? 'chip-red' : '', metrics.xcsg_margin, 'xCSG margin', fc)}
+      ${chip(pctTone, metrics.xcsg_margin_pct, 'xCSG margin %', fmtPctMaybe)}
+      ${chip(ratioTone, metrics.cost_per_quality_point_gain, 'Cost/quality gain', fmtRatioMaybe)}
+    </div>`;
+
+  const footer = project.scope_expansion_revenue != null
+    ? `<div style="margin-top:10px;color:var(--gray-600);font-size:13px"><strong>Scope-expansion revenue:</strong> ${fc(project.scope_expansion_revenue)}</div>`
+    : '';
+
+  return `
+    <div class="economics-card" style="margin-top:16px;padding:16px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
+      <h3 style="margin:0 0 12px;color:var(--navy);font-size:15px">Economics</h3>
+      ${header}
+      ${grid}
+      ${footer}
+    </div>`;
 }
 
 function gaugeHTML(score, size) {
@@ -324,7 +424,7 @@ async function route() {
   if (!state.token) { showScreen('login'); return; }
   showScreen('app');
 
-  await Promise.all([loadTaxonomy(), loadSchema()]);
+  await Promise.all([loadTaxonomy(), loadSchema(), loadSettings()]);
   if (thisRoute !== _routeCounter) return; // stale route — newer navigation happened
 
   // Hide write-only UI for viewers
@@ -739,7 +839,7 @@ function barHTML(score, label) {
   </div>`;
 }
 
-function renderExpertAssessment(er, metrics) {
+function renderExpertAssessment(er, metrics, project) {
   const sectionScores = {};
   for (const sec of getAssessmentFields()) {
     let sum = 0, count = 0;
@@ -780,6 +880,8 @@ function renderExpertAssessment(er, metrics) {
         <span class="chip-value">${fmtRatio(metrics.outcome_rate_ratio)}</span><span class="chip-label">xCSG Value Gain ${infoIcon('productivity_ratio')}</span></div>
     </div>
   </div>`;
+
+  html += renderEconomicsCard(project, metrics);
 
   for (const sec of getAssessmentFields()) {
     const secScore = sectionScores[sec.section];
@@ -849,6 +951,47 @@ function renderExpertAssessment(er, metrics) {
 /* ═══════════════════════════════════════════════════════════════════════
    NEW / EDIT PROJECT FORM
    ═══════════════════════════════════════════════════════════════════════ */
+
+function parseOptionalNumber(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return isFinite(n) ? n : null;
+}
+
+function toggleEconomics() {
+  const body = document.getElementById('economicsBody');
+  const tog = document.getElementById('econToggle');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (tog) tog.textContent = open ? '▸' : '▾';
+}
+
+function onCurrencyChange() {
+  const sel = document.getElementById('fCurrency');
+  if (!sel) return;
+  const newCur = sel.value;
+  const hasValues = (
+    document.getElementById('fRevenue')?.value ||
+    document.getElementById('fScopeRev')?.value ||
+    document.getElementById('fLegacyRate')?.value ||
+    Array.from(document.querySelectorAll('.pioneer-day-rate')).some(i => i.value)
+  );
+  if (hasValues) {
+    if (!confirm('Existing values will not be converted — they will be reinterpreted in the new currency. Continue?')) {
+      sel.value = sel.dataset.previous || sel.value;
+      return;
+    }
+  }
+  sel.dataset.previous = newCur;
+  const formScope = sel.closest('form, fieldset, .form-shell, [data-scope="project-form"]') || document.body;
+  formScope.querySelectorAll('[data-suffix]').forEach(el => {
+    const txt = el.textContent;
+    el.textContent = txt.includes('/day') ? `${newCur}/day` : newCur;
+  });
+}
 
 async function renderNewProject(existing) {
   await loadTaxonomy();
@@ -961,6 +1104,58 @@ async function renderNewProject(existing) {
         </div>
       </fieldset>
 
+      <fieldset class="economics-section">
+        <legend style="cursor:pointer;user-select:none" onclick="toggleEconomics()">
+          <span id="econToggle">▸</span> Economics <span style="font-weight:400;font-size:12px;color:var(--gray-500)">(optional)</span>
+        </legend>
+        <div id="economicsBody" style="display:none">
+          <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Financial parameters for value-gain ROI calculations. All fields are optional.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Currency</label>
+              <select id="fCurrency" onchange="onCurrencyChange()" data-previous="${esc(p.currency || window._defaultCurrency || 'EUR')}">
+                ${(schema?.currencies || ['EUR','USD','GBP','CHF','CAD','AUD']).map(c => `<option value="${esc(c)}"${(p.currency || window._defaultCurrency || 'EUR') === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Engagement Revenue</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="fRevenue" min="0" step="0.01" value="${esc(p.engagement_revenue ?? '')}" placeholder="e.g. 50000">
+                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}</span>
+              </div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Pricing Model</label>
+              <select id="fPricingModel">
+                <option value="">—</option>
+                ${(schema?.pricing_models || ['Fixed fee','Time & materials','Retainer','Milestone','Other']).map(m => `<option value="${esc(m)}"${p.xcsg_pricing_model === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Scope-Expansion Revenue</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="fScopeRev" min="0" step="0.01" value="${esc(p.scope_expansion_revenue ?? '')}" placeholder="e.g. 10000">
+                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}</span>
+              </div>
+              <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Revenue from scope expansions triggered by this engagement</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Legacy Day-Rate Override</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="fLegacyRate" min="0" step="0.01" value="${esc(p.legacy_day_rate_override ?? '')}" placeholder="e.g. 1200">
+                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}/day</span>
+              </div>
+              <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Override the category default blended day-rate for legacy cost estimates</span>
+            </div>
+            <div class="form-group"></div>
+          </div>
+        </div>
+      </fieldset>
+
       <div style="display:flex;gap:12px;margin-top:24px;align-items:center">
         ${canWrite() ? `<button type="submit" class="btn btn-primary" id="fSubmit">${isEdit ? 'Save Changes' : 'Create Project'}</button>` : ''}
         ${isEdit ? '<button type="button" class="btn btn-secondary" onclick="window.location.hash=\'#projects\'">Back to Projects</button>' : ''}
@@ -970,15 +1165,17 @@ async function renderNewProject(existing) {
 
   // Pioneer row management
   let pioneerIndex = 0;
-  function addPioneerRow(name, email, rounds) {
+  function addPioneerRow(name, email, rounds, dayRate) {
     const container = document.getElementById('pioneersContainer');
     const idx = pioneerIndex++;
     const row = document.createElement('div');
     row.className = 'pioneer-row';
     row.dataset.idx = idx;
+    const currentCurrency = document.getElementById('fCurrency')?.value || window._defaultCurrency || 'EUR';
     row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
       + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
       + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" data-hint="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:110px"></div>`
+      + `<div class="form-group" style="flex:0 0 160px"><label>Day rate <span class="field-hint" data-hint="Pioneer day rate for cost calculations. Optional.">&#9432;</span></label><div style="display:flex;align-items:center;gap:4px"><input type="number" class="pioneer-day-rate" min="0" step="0.01" value="${esc(dayRate ?? '')}" placeholder="Day rate (optional)" style="width:110px"><span class="field-help" data-suffix style="white-space:nowrap">${esc(currentCurrency)}</span></div></div>`
       + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
     container.appendChild(row);
     row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
@@ -993,17 +1190,17 @@ async function renderNewProject(existing) {
   // Populate pioneers: edit mode uses p.pioneers, new mode starts with one empty row
   if (isEdit && p.pioneers && p.pioneers.length) {
     for (const pi of p.pioneers) {
-      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds);
+      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds, pi.day_rate);
     }
   } else if (!isEdit) {
-    addPioneerRow('', '', '');
+    addPioneerRow('', '', '', '');
   } else {
     // Edit mode fallback: use legacy pioneer_name if no pioneers array
-    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '');
+    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '', '');
   }
 
   document.getElementById('addPioneerBtn').addEventListener('click', function() {
-    addPioneerRow('', '', '');
+    addPioneerRow('', '', '', '');
   });
 
   // Pioneer table for edit mode
@@ -1095,7 +1292,8 @@ async function renderNewProject(existing) {
       const email = row.querySelector('.pioneer-email').value.trim() || null;
       const roundsVal = row.querySelector('.pioneer-rounds').value;
       const total_rounds = roundsVal ? parseInt(roundsVal) : null;
-      if (name) pioneers.push({ name, email, total_rounds });
+      const day_rate = parseOptionalNumber(row.querySelector('.pioneer-day-rate')?.value);
+      if (name) pioneers.push({ name, email, total_rounds, day_rate });
     }
     if (pioneers.length === 0) {
       showToast('At least one pioneer is required', 'error');
@@ -1131,6 +1329,11 @@ async function renderNewProject(existing) {
       legacy_calendar_days: document.getElementById('fLDays').value || null,
       legacy_team_size: document.getElementById('fLTeam').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
+      currency: document.getElementById('fCurrency')?.value || null,
+      engagement_revenue: parseOptionalNumber(document.getElementById('fRevenue').value),
+      xcsg_pricing_model: document.getElementById('fPricingModel')?.value || null,
+      scope_expansion_revenue: parseOptionalNumber(document.getElementById('fScopeRev').value),
+      legacy_day_rate_override: parseOptionalNumber(document.getElementById('fLegacyRate').value),
     };
     try {
       if (isEdit) {
@@ -1308,7 +1511,7 @@ async function viewPioneerRound(pioneerId, roundNumber) {
     const data = await apiCall('GET', '/pioneers/' + pioneerId + '/rounds/' + roundNumber);
     const header = '<h3 style="color:var(--navy);margin-bottom:4px">' + esc(data.pioneer_name) + ' \u2014 Round ' + data.round_number + '</h3>'
       + '<p style="color:var(--gray-500);font-size:13px;margin-bottom:16px">Submitted ' + esc(formatDateTime(data.submitted_at)) + '</p>';
-    const body = renderExpertAssessment(data.response, data.metrics || {});
+    const body = renderExpertAssessment(data.response, data.metrics || {}, data.project);
     const footer = '<div style="display:flex;justify-content:flex-end;margin-top:16px"><button type="button" class="btn btn-secondary btn-sm" onclick="hideModal()">Close</button></div>';
     showModal('<div class="pioneer-round-modal">' + header + body + footer + '</div>');
   } catch (err) {
@@ -1389,7 +1592,7 @@ async function renderEditProject(id) {
       const card = document.createElement('div');
       card.className = 'card';
       card.style.marginTop = '24px';
-      card.innerHTML = renderExpertAssessment(er, m);
+      card.innerHTML = renderExpertAssessment(er, m, p);
       mc.appendChild(card);
     }
 
@@ -2973,6 +3176,7 @@ async function renderSettings() {
     { id: 'tabPassword', label: 'Change Password', key: 'password' },
   ];
   if (isAdmin()) tabs.splice(3, 0, { id: 'tabUsers', label: 'Users', key: 'users' });
+  if (isAdmin()) tabs.splice(3, 0, { id: 'tabAppSettings', label: 'App Settings', key: 'appsettings' });
 
   mc.innerHTML = `
     <div class="settings-tabs">
@@ -2984,13 +3188,14 @@ async function renderSettings() {
 
 function switchSettingsTab(tab) {
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  const tabMap = { categories: 'tabCategories', practices: 'tabPractices', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword' };
+  const tabMap = { categories: 'tabCategories', practices: 'tabPractices', norms: 'tabNorms', users: 'tabUsers', password: 'tabPassword', appsettings: 'tabAppSettings' };
   const el = document.getElementById(tabMap[tab]);
   if (el) el.classList.add('active');
   if (tab === 'categories') renderCategoriesTab();
   else if (tab === 'practices') renderPracticesTab();
   else if (tab === 'users') renderUsersTab();
   else if (tab === 'password') renderPasswordTab();
+  else if (tab === 'appsettings') renderAppSettingsTab();
   else renderNormsTab();
 }
 
@@ -3160,7 +3365,7 @@ async function renderPracticesTab() {
         <td>${esc(p.description || '—')}</td>
         <td>${count}</td>
         ${_isAdmin ? `<td class="actions-cell">
-          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}',${p.default_legacy_day_rate ?? 'null'})"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deletePractice(" + p.id + ",'" + esc(p.code) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
         </td>` : ''}
       </tr>`;
@@ -3185,11 +3390,16 @@ async function addPractice() {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-function editPractice(id, name, desc) {
+function editPractice(id, name, desc, rate) {
   showModal(`
     <h3>Edit Practice</h3>
     <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editPrName" value="${esc(name)}"></div>
     <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editPrDesc" value="${esc(desc)}"></div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Default legacy day-rate</label>
+      <input type="number" id="editPracticeRate" min="0" step="0.01" placeholder="optional" value="${rate != null ? esc(String(rate)) : ''}">
+      <small class="field-help" style="color:var(--gray-500)">Used as legacy-cost fallback when a project has no override.</small>
+    </div>
     <div class="form-actions">
       <button class="btn btn-primary" onclick="savePractice(${id})">Save</button>
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -3201,8 +3411,10 @@ async function savePractice(id) {
   const name = document.getElementById('editPrName')?.value.trim();
   const desc = document.getElementById('editPrDesc')?.value.trim() || null;
   if (!name) { showToast('Name is required', 'error'); return; }
+  const rateRaw = document.getElementById('editPracticeRate')?.value;
+  const default_legacy_day_rate = parseOptionalNumber(rateRaw);
   try {
-    await apiCall('PUT', `/practices/${id}`, { name, description: desc });
+    await apiCall('PUT', `/practices/${id}`, { name, description: desc, default_legacy_day_rate });
     hideModal();
     showToast('Practice updated');
     state.practices = [];
@@ -3229,6 +3441,40 @@ async function doDeletePractice(id) {
     state.practices = [];
     renderPracticesTab();
   } catch (err) { showToast(err.message, 'error'); }
+}
+
+function renderAppSettingsTab() {
+  const sc = document.getElementById('settingsContent');
+  sc.innerHTML = `
+    <div class="card">
+      <div style="padding:16px 24px;border-bottom:1px solid var(--gray-200)">
+        <h3 style="margin:0 0 4px;color:var(--navy)">App Settings</h3>
+        <p style="margin:0;color:var(--gray-500);font-size:13px">Global defaults applied across the application.</p>
+      </div>
+      <div style="padding:8px 0">
+        <div style="display:flex;gap:12px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--gray-200)">
+          <label for="settingDefaultCurrency" style="font-weight:600;min-width:200px">Default currency</label>
+          <select id="settingDefaultCurrency">
+            ${(schema?.currencies || ['EUR']).map(c =>
+              `<option value="${esc(c)}"${c === window._defaultCurrency ? ' selected' : ''}>${esc(c)}</option>`
+            ).join('')}
+          </select>
+          <button class="btn btn-secondary btn-sm" onclick="saveDefaultCurrency()">Save</button>
+          <span class="field-help" style="color:var(--gray-500);font-size:12px">Pre-fills the currency selector on new projects.</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveDefaultCurrency() {
+  const v = document.getElementById('settingDefaultCurrency').value;
+  try {
+    await apiCall('PUT', '/settings', { default_currency: v });
+    window._defaultCurrency = v;
+    showToast('Default currency updated');
+  } catch (e) {
+    showToast('Failed to save: ' + (e?.message || e), 'error');
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

@@ -20,6 +20,8 @@ from backend import database as db
 from backend import metrics as mtx
 from backend.models import (
     ActivityLogEntry,
+    AppSettings,
+    AppSettingsUpdate,
     CategoryCreate,
     CategoryUpdate,
     ExpertAssessmentMetrics,
@@ -345,7 +347,7 @@ async def update_practice_endpoint(
     practice = db.get_practice(practice_id)
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
-    db.update_practice(practice_id, body.name, body.description)
+    db.update_practice(practice_id, body.name, body.description, body.default_legacy_day_rate)
     db.log_activity(
         current_user["sub"],
         "practice_updated",
@@ -397,7 +399,9 @@ async def list_projects(
         result["pioneers"] = db.list_pioneers(project["id"])
         responses = db.get_all_project_responses(project["id"])
         if responses:
-            result["metrics"] = mtx.compute_averaged_project_metrics(dict(project), responses)
+            project_dict = dict(project)
+            project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project["id"])
+            result["metrics"] = mtx.compute_averaged_project_metrics(project_dict, responses)
             result["response_count"] = len(responses)
         else:
             result["metrics"] = None
@@ -437,7 +441,7 @@ async def create_project(
 
     data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
-    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds} for p in body.pioneers]
+    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds, "day_rate": p.day_rate} for p in body.pioneers]
 
     norm = db.get_norm_by_category(body.category_id)
     if norm:
@@ -474,7 +478,9 @@ async def get_project(
     result["pioneers"] = db.list_pioneers(project_id)
     responses = db.get_all_project_responses(project_id)
     if responses:
-        result["metrics"] = mtx.compute_averaged_project_metrics(dict(row), responses)
+        project_dict = dict(row)
+        project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+        result["metrics"] = mtx.compute_averaged_project_metrics(project_dict, responses)
         result["response_count"] = len(responses)
     else:
         result["metrics"] = None
@@ -559,7 +565,7 @@ async def add_project_pioneer(
     current_count = len(db.list_pioneers(project_id))
     if current_count >= MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
-    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds)
+    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds, day_rate=body.day_rate)
     pioneers = db.list_pioneers(project_id)
     new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
     db.log_activity(
@@ -672,9 +678,14 @@ async def get_pioneer_round(
         raise HTTPException(status_code=404, detail="Pioneer not found")
 
     project_row = db.get_project(pp["project_id"])
-    merged = dict(project_row)
+    project_dict = dict(project_row)
+    merged = dict(project_dict)
     merged.update(dict(response))
+    merged["pioneer_day_rates"] = db.get_pioneer_day_rates(pp["project_id"])
     metrics = mtx.compute_project_metrics(merged)
+    # Include project-level economics fields so the frontend can render the
+    # economics card (renderEconomicsCard needs project.engagement_revenue etc.)
+    pioneers = db.list_pioneers(pp["project_id"])
     return {
         "round_number": round_number,
         "pioneer_id": pioneer_id,
@@ -682,6 +693,16 @@ async def get_pioneer_round(
         "submitted_at": response.get("submitted_at"),
         "response": dict(response),
         "metrics": metrics,
+        "project": {
+            "id": project_dict.get("id"),
+            "project_name": project_dict.get("project_name"),
+            "engagement_revenue": project_dict.get("engagement_revenue"),
+            "scope_expansion_revenue": project_dict.get("scope_expansion_revenue"),
+            "xcsg_pricing_model": project_dict.get("xcsg_pricing_model"),
+            "currency": project_dict.get("currency"),
+            "legacy_day_rate_override": project_dict.get("legacy_day_rate_override"),
+            "pioneers": pioneers,
+        },
     }
 
 
@@ -764,7 +785,9 @@ async def get_expert_metrics(token: str):
     if not responses:
         raise HTTPException(status_code=404, detail="Assessment not yet submitted")
 
-    metrics = mtx.compute_averaged_project_metrics(dict(project_row), responses)
+    project_dict = dict(project_row)
+    project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+    metrics = mtx.compute_averaged_project_metrics(project_dict, responses)
     return ExpertAssessmentMetrics(
         machine_first_score=metrics.get("machine_first_score"),
         senior_led_score=metrics.get("senior_led_score"),
@@ -818,7 +841,9 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
 
     project_row = db.get_project(project_id)
     responses = db.get_all_project_responses(project_id)
-    metrics = mtx.compute_averaged_project_metrics(dict(project_row), responses)
+    project_dict = dict(project_row)
+    project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+    metrics = mtx.compute_averaged_project_metrics(project_dict, responses)
 
     # Auto-issue the next round token if the pioneer has more rounds remaining
     # and the next round doesn't already have a token.
@@ -906,7 +931,9 @@ async def project_metrics(
         raise HTTPException(status_code=404, detail="Project not found")
 
     responses = db.get_all_project_responses(project_id)
-    return mtx.compute_averaged_project_metrics(dict(row), responses)
+    project_dict = dict(row)
+    project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+    return mtx.compute_averaged_project_metrics(project_dict, responses)
 
 
 def _build_averaged_complete_projects() -> list:
@@ -916,7 +943,9 @@ def _build_averaged_complete_projects() -> list:
     for p in projects_with_responses:
         responses = db.get_all_project_responses(p["id"])
         if responses:
-            avg = mtx.compute_averaged_project_metrics(p, responses)
+            project_dict = dict(p)
+            project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(p["id"])
+            avg = mtx.compute_averaged_project_metrics(project_dict, responses)
             avg["id"] = p["id"]
             avg["project_name"] = p["project_name"]
             avg["category_name"] = p["category_name"]
@@ -1129,7 +1158,9 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
     for p in complete_projects:
         responses = db.get_all_project_responses(p["id"])
         if responses:
-            m = mtx.compute_averaged_project_metrics(p, responses)
+            export_dict = dict(p)
+            export_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(p["id"])
+            m = mtx.compute_averaged_project_metrics(export_dict, responses)
             # Get pioneer names for this project
             comp_pioneers = db.list_pioneers(p["id"])
             comp_pioneer_names = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in comp_pioneers) if comp_pioneers else p.get("pioneer_name", "")
@@ -1265,6 +1296,22 @@ async def download_export_file(
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Export file not found")
     return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
+# ── Settings ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/settings", response_model=AppSettings)
+async def get_settings(current_user: dict = Depends(auth.get_current_user)):
+    return db.get_app_settings()
+
+
+@app.put("/api/settings", response_model=AppSettings)
+async def update_settings(
+    payload: AppSettingsUpdate,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    db.update_app_settings(default_currency=payload.default_currency)
+    return db.get_app_settings()
 
 
 # ── Static file mount — MUST BE LAST ─────────────────────────────────────────
