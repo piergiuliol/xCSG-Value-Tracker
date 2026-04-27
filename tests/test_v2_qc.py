@@ -2060,6 +2060,44 @@ def test_pioneer_day_rate_independent_of_role_name():
         requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
 
 
+def test_update_pioneer_clears_role_name():
+    """PUT /api/projects/{id}/pioneers/{pid} with role_name=null clears the role."""
+    headers = auth_h(admin_token())
+
+    payload = {
+        "project_name": "clear role test",
+        "category_id": 1,
+        "pioneers": [{"name": "P", "email": "p@x.io", "day_rate": 1000, "role_name": "Senior"}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        pioneer = detail["pioneers"][0]
+        pioneer_id = pioneer["id"]
+        assert pioneer["role_name"] == "Senior"
+
+        # PUT with role_name=null should clear it.
+        upd = requests.put(
+            f"{BASE}/api/projects/{pid}/pioneers/{pioneer_id}",
+            headers=headers,
+            json={"role_name": None},
+        )
+        assert upd.status_code == 200, upd.text
+
+        detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert detail2["pioneers"][0]["role_name"] is None
+        # day_rate should be untouched (stayed at 1000) — null on day_rate
+        # was NOT sent so the existing value stays.
+        assert detail2["pioneers"][0]["day_rate"] == 1000
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
+
+
 def main():
     global passed, failed, failures
 
@@ -2113,6 +2151,7 @@ def main():
     test_create_project_persists_economics()
     test_pioneer_role_name_persistence()
     test_pioneer_day_rate_independent_of_role_name()
+    test_update_pioneer_clears_role_name()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()

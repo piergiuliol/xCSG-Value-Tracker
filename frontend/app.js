@@ -1325,6 +1325,7 @@ async function renderNewProject(existing) {
   document.getElementById('fCategory').addEventListener('change', function () {
     const pracSel = document.getElementById('fPractice');
     if (pracSel) pracSel.innerHTML = practiceOptionsHTML(null, this.value);
+    refreshPioneerRoleSelects();
   });
 
   document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);

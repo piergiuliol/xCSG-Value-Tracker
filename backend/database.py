@@ -1433,7 +1433,16 @@ def remove_pioneer(pioneer_id: int) -> bool:
 def update_pioneer(pioneer_id: int, data: dict) -> bool:
     """Update allowed fields on a pioneer."""
     allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous", "day_rate", "role_name"}
-    fields = {k: v for k, v in data.items() if k in allowed and v is not None}
+    fields = {}
+    for k, v in data.items():
+        if k not in allowed:
+            continue
+        # role_name allows None (intentional clear from the UI); other fields skip None
+        # to mean "leave unchanged" so that omitted-or-null in the request body
+        # doesn't accidentally overwrite existing values with NULL.
+        if v is None and k != "role_name":
+            continue
+        fields[k] = v
     if not fields:
         return False
     with _db() as conn:

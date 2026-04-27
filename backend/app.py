@@ -613,7 +613,11 @@ async def update_project_pioneer(
     row = db.get_project(project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset so omitted fields don't appear at all; role_name=null is a
+    # legitimate intentional clear, so we keep it even when None.
+    data = body.model_dump(exclude_unset=True)
+    # Strip None from fields where None means "leave unchanged" (all except role_name).
+    data = {k: v for k, v in data.items() if v is not None or k == "role_name"}
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
     try:
