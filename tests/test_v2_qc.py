@@ -1277,6 +1277,30 @@ def test_migrate_v15_idempotent():
         assert rows["n"] == 1, "app_settings must remain a single row"
 
 
+def test_practice_roles_schema():
+    """schema.py exposes PRACTICE_ROLE_FIELDS and surfaces it via build_schema_response."""
+    from backend.schema import PRACTICE_ROLE_FIELDS, build_schema_response
+
+    expected_fields = {"role_name", "day_rate", "currency", "display_order"}
+    assert expected_fields.issubset(set(PRACTICE_ROLE_FIELDS.keys()))
+
+    role_name = PRACTICE_ROLE_FIELDS["role_name"]
+    assert role_name["type"] == "text"
+    assert role_name.get("max_length") == 80
+
+    day_rate = PRACTICE_ROLE_FIELDS["day_rate"]
+    assert day_rate["type"] == "number"
+    assert day_rate["min"] == 0
+
+    currency = PRACTICE_ROLE_FIELDS["currency"]
+    assert currency["type"] == "select"
+    assert "options" in currency
+
+    response = build_schema_response()
+    assert "practice_role_fields" in response
+    assert response["practice_role_fields"]["role_name"]["max_length"] == 80
+
+
 def test_economics_models():
     """ProjectCreate, PioneerCreate, PracticeUpdate accept and validate economics fields."""
     import pytest
@@ -1670,6 +1694,7 @@ def main():
     test_dashboard_config()
     test_seed_field_coverage()
     test_economics_schema()
+    test_practice_roles_schema()
     test_migrate_v15_idempotent()
     test_economics_models()
     test_economics_metrics()
