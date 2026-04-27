@@ -1067,6 +1067,44 @@ def practice_has_projects(practice_id: int) -> bool:
         return count > 0
 
 
+def list_practice_roles(practice_id: int) -> list[dict]:
+    """Return all role rows for a practice, ordered by display_order then id."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT id, practice_id, role_name, day_rate, currency,
+                      display_order, created_at
+                 FROM practice_roles
+                WHERE practice_id = ?
+             ORDER BY display_order ASC, id ASC""",
+            (practice_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def replace_practice_roles(practice_id: int, roles: list[dict]) -> None:
+    """Bulk-replace all roles for a practice in a single transaction.
+
+    Each entry in `roles` must be a dict with keys: role_name, day_rate,
+    currency, display_order.
+    """
+    with _db() as conn:
+        conn.execute("DELETE FROM practice_roles WHERE practice_id = ?", (practice_id,))
+        for r in roles:
+            conn.execute(
+                """INSERT INTO practice_roles
+                       (practice_id, role_name, day_rate, currency, display_order)
+                       VALUES (?, ?, ?, ?, ?)""",
+                (
+                    practice_id,
+                    r["role_name"],
+                    r["day_rate"],
+                    r["currency"],
+                    r.get("display_order", 0),
+                ),
+            )
+        conn.commit()
+
+
 # ── Projects ─────────────────────────────────────────────────────────────────
 
 def create_project(data: dict) -> int:

@@ -1326,6 +1326,55 @@ def test_migrate_v16_idempotent():
         assert remaining["n"] == 0, "practice_roles should CASCADE-delete"
 
 
+def test_practice_roles_db_helpers():
+    """list_practice_roles and replace_practice_roles round-trip correctly."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO practices (code, name, description) VALUES (?, ?, ?)",
+            ("HLP", "Helper test", "for db helper test"),
+        )
+        practice_id = cur.lastrowid
+        conn.commit()
+
+    try:
+        # Empty list initially.
+        assert database.list_practice_roles(practice_id) == []
+
+        # Replace with a list.
+        database.replace_practice_roles(practice_id, [
+            {"role_name": "Senior", "day_rate": 1500, "currency": "EUR", "display_order": 0},
+            {"role_name": "Manager", "day_rate": 1000, "currency": "EUR", "display_order": 1},
+            {"role_name": "Senior", "day_rate": 1800, "currency": "USD", "display_order": 0},
+        ])
+
+        rows = database.list_practice_roles(practice_id)
+        assert len(rows) == 3
+        names = [(r["role_name"], r["currency"]) for r in rows]
+        assert ("Senior", "EUR") in names
+        assert ("Senior", "USD") in names
+        assert ("Manager", "EUR") in names
+
+        # Replace with a different list — old rows are gone.
+        database.replace_practice_roles(practice_id, [
+            {"role_name": "Analyst", "day_rate": 600, "currency": "EUR", "display_order": 0},
+        ])
+        rows = database.list_practice_roles(practice_id)
+        assert len(rows) == 1
+        assert rows[0]["role_name"] == "Analyst"
+
+        # Replace with empty list — clears the catalog.
+        database.replace_practice_roles(practice_id, [])
+        assert database.list_practice_roles(practice_id) == []
+    finally:
+        with database._db() as conn:
+            conn.execute("DELETE FROM practices WHERE id = ?", (practice_id,))
+            conn.commit()
+
+
 def test_practice_roles_schema():
     """schema.py exposes PRACTICE_ROLE_FIELDS and surfaces it via build_schema_response."""
     from backend.schema import PRACTICE_ROLE_FIELDS, build_schema_response
@@ -1809,6 +1858,7 @@ def main():
     test_practice_roles_schema()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
+    test_practice_roles_db_helpers()
     test_economics_models()
     test_practice_role_models()
     test_economics_metrics()
