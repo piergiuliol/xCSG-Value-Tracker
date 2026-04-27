@@ -1219,9 +1219,9 @@ def create_project(data: dict) -> int:
                 token = secrets.token_urlsafe(32)
                 cur_pp = conn.execute(
                     """INSERT INTO project_pioneers
-                       (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (project_id, p["name"], p.get("email"), p.get("total_rounds"), token, p.get("day_rate")),
+                       (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate, role_name)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (project_id, p["name"], p.get("email"), p.get("total_rounds"), token, p.get("day_rate"), p.get("role_name")),
                 )
                 conn.execute(
                     """INSERT INTO pioneer_round_tokens
@@ -1395,7 +1395,7 @@ def list_pioneers(project_id: int) -> list:
         return pioneers
 
 
-def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None, day_rate: Optional[float] = None) -> int:
+def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None, day_rate: Optional[float] = None, role_name: Optional[str] = None) -> int:
     """Add a new pioneer to an existing project and auto-issue round 1 token.
 
     Returns the new pioneer id.
@@ -1403,9 +1403,9 @@ def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int
     token = secrets.token_urlsafe(32)
     with _db() as conn:
         cur = conn.execute(
-            """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (project_id, name, email, total_rounds, token, day_rate),
+            """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate, role_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (project_id, name, email, total_rounds, token, day_rate, role_name),
         )
         pioneer_id = cur.lastrowid
         conn.execute(
@@ -1432,7 +1432,7 @@ def remove_pioneer(pioneer_id: int) -> bool:
 
 def update_pioneer(pioneer_id: int, data: dict) -> bool:
     """Update allowed fields on a pioneer."""
-    allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous", "day_rate"}
+    allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous", "day_rate", "role_name"}
     fields = {k: v for k, v in data.items() if k in allowed and v is not None}
     if not fields:
         return False

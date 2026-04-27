@@ -1989,6 +1989,77 @@ def test_pioneer_role_name_in_models():
     assert u2.role_name is None
 
 
+def test_pioneer_role_name_persistence():
+    """role_name round-trips through POST /api/projects (with pioneers list)
+    and POST /api/projects/{id}/pioneers (post-creation add)."""
+    headers = auth_h(admin_token())
+
+    # Build a project with one pioneer that has role_name.
+    payload = {
+        "project_name": "Phase 2b round-trip",
+        "category_id": 1,
+        "pioneers": [
+            {"name": "P-with-role", "email": "p1@x.io", "day_rate": 1500, "role_name": "Senior"},
+            {"name": "P-no-role", "email": "p2@x.io", "day_rate": 1000},
+        ],
+        "xcsg_team_size": "2",
+        "xcsg_revision_rounds": "1",
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        by_name = {p["pioneer_name"]: p for p in detail["pioneers"]}
+        assert by_name["P-with-role"]["role_name"] == "Senior"
+        assert by_name["P-no-role"]["role_name"] is None
+
+        # POST a new pioneer with role_name (post-creation add path).
+        add_r = requests.post(
+            f"{BASE}/api/projects/{pid}/pioneers",
+            headers=headers,
+            json={"name": "P3-added", "email": "p3@x.io", "day_rate": 2000, "role_name": "Manager"},
+        )
+        assert add_r.status_code == 201, add_r.text
+
+        detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        by_name2 = {p["pioneer_name"]: p for p in detail2["pioneers"]}
+        assert by_name2["P3-added"]["role_name"] == "Manager"
+        assert by_name2["P3-added"]["day_rate"] == 2000
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
+
+
+def test_pioneer_day_rate_independent_of_role_name():
+    """Server does NOT auto-fill day_rate from role_name — it stores
+    exactly what the request includes. The catalog lookup is the
+    frontend's job."""
+    headers = auth_h(admin_token())
+
+    payload = {
+        "project_name": "Phase 2b independence",
+        "category_id": 1,
+        "pioneers": [
+            # role_name set but day_rate explicitly different from any catalog rate
+            {"name": "P", "email": "p@x.io", "day_rate": 999, "role_name": "Senior"},
+        ],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        p = detail["pioneers"][0]
+        assert p["role_name"] == "Senior"
+        assert p["day_rate"] == 999  # stored as submitted, NOT looked up from any catalog
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
+
+
 def main():
     global passed, failed, failures
 
@@ -2040,6 +2111,8 @@ def main():
     test_practice_roles_404_for_unknown_practice()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
+    test_pioneer_role_name_persistence()
+    test_pioneer_day_rate_independent_of_role_name()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
