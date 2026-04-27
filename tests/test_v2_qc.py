@@ -1707,6 +1707,69 @@ def test_app_settings_endpoints():
         requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": initial})
 
 
+def test_practice_role_models():
+    """PracticeRoleEntry and PracticeRolesUpdate validate correctly."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import PracticeRoleEntry, PracticeRolesUpdate
+
+    # Happy path.
+    e = PracticeRoleEntry(role_name="Senior Partner", day_rate=1500, currency="EUR", display_order=1)
+    assert e.role_name == "Senior Partner"
+    assert e.day_rate == 1500
+    assert e.currency == "EUR"
+    assert e.display_order == 1
+
+    # Default display_order.
+    e2 = PracticeRoleEntry(role_name="Manager", day_rate=1000, currency="EUR")
+    assert e2.display_order == 0
+
+    # Empty role_name rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="", day_rate=1000, currency="EUR")
+
+    # Whitespace-only role_name rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="   ", day_rate=1000, currency="EUR")
+
+    # role_name > 80 chars rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="x" * 81, day_rate=1000, currency="EUR")
+
+    # Negative day_rate rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="X", day_rate=-1, currency="EUR")
+
+    # Invalid currency rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="X", day_rate=100, currency="XYZ")
+
+    # PracticeRolesUpdate accepts a list.
+    u = PracticeRolesUpdate(roles=[
+        {"role_name": "Senior", "day_rate": 1500, "currency": "EUR"},
+        {"role_name": "Manager", "day_rate": 1000, "currency": "EUR"},
+    ])
+    assert len(u.roles) == 2
+
+    # Duplicate (role_name, currency) rejected.
+    with pytest.raises(ValidationError):
+        PracticeRolesUpdate(roles=[
+            {"role_name": "Senior", "day_rate": 1500, "currency": "EUR"},
+            {"role_name": "Senior", "day_rate": 1600, "currency": "EUR"},
+        ])
+
+    # Same role_name with different currencies is OK.
+    u2 = PracticeRolesUpdate(roles=[
+        {"role_name": "Senior", "day_rate": 1500, "currency": "EUR"},
+        {"role_name": "Senior", "day_rate": 1800, "currency": "USD"},
+    ])
+    assert len(u2.roles) == 2
+
+    # Empty list is OK (clears the catalog).
+    u3 = PracticeRolesUpdate(roles=[])
+    assert u3.roles == []
+
+
 def main():
     global passed, failed, failures
 
@@ -1747,6 +1810,7 @@ def main():
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_economics_models()
+    test_practice_role_models()
     test_economics_metrics()
     test_app_settings_endpoints()
     test_compute_project_metrics_includes_economics()
