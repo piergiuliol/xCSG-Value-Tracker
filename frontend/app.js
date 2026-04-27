@@ -355,6 +355,14 @@ async function loadPractices() {
   }
 }
 
+async function loadPracticeRoles(practiceId) {
+  try {
+    return await apiCall('GET', `/practices/${practiceId}/roles`);
+  } catch (e) {
+    return [];
+  }
+}
+
 async function loadTaxonomy() {
   await Promise.all([loadCategories(), loadPractices()]);
 }
@@ -3390,11 +3398,86 @@ async function addPractice() {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-function editPractice(id, name, desc, rate) {
+function buildRolesSectionHtml(existingRoles) {
+  const currencyOpts = (schema?.currencies || ['EUR', 'USD'])
+    .map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+
+  let rowsHtml = '';
+  existingRoles.forEach((r, idx) => {
+    rowsHtml += renderRoleRow(idx, r);
+  });
+  if (existingRoles.length === 0) {
+    rowsHtml = `<div class="role-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles defined yet.</div>`;
+  }
+
+  return `
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="font-weight:600;display:block;margin-bottom:6px">Roles &amp; rates</label>
+      <div id="rolesTableHeader" style="display:grid;grid-template-columns:24px 24px 1fr 110px 90px 32px;gap:6px;font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;padding:0 4px">
+        <span></span><span></span><span>Role</span><span>Day rate</span><span>Currency</span><span></span>
+      </div>
+      <div id="rolesTableBody">${rowsHtml}</div>
+      <button type="button" class="btn btn-secondary btn-sm" id="addRoleRowBtn" style="margin-top:8px">+ Add role</button>
+    </div>`;
+}
+
+function renderRoleRow(idx, r) {
+  const currentCurrency = r.currency || 'EUR';
+  const optsWithSel = (schema?.currencies || ['EUR', 'USD'])
+    .map(c => `<option value="${esc(c)}" ${c === currentCurrency ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  return `
+    <div class="role-row" data-row-idx="${idx}" style="display:grid;grid-template-columns:24px 24px 1fr 110px 90px 32px;gap:6px;align-items:center;padding:4px;border-bottom:1px solid var(--gray-100)">
+      <button type="button" class="btn-icon role-up" title="Move up" style="background:none;border:0;cursor:pointer">▲</button>
+      <button type="button" class="btn-icon role-down" title="Move down" style="background:none;border:0;cursor:pointer">▼</button>
+      <input type="text" class="role-name" maxlength="80" value="${esc(r.role_name || '')}" placeholder="Role name">
+      <input type="number" class="role-rate" min="0" step="0.01" value="${r.day_rate ?? ''}" placeholder="0">
+      <select class="role-currency">${optsWithSel}</select>
+      <button type="button" class="btn-icon role-remove" title="Remove" style="background:none;border:0;cursor:pointer;color:var(--danger)">×</button>
+    </div>`;
+}
+
+function wireRoleRowsEvents() {
+  const body = document.getElementById('rolesTableBody');
+  const addBtn = document.getElementById('addRoleRowBtn');
+  if (!body || !addBtn) return;
+
+  addBtn.addEventListener('click', () => {
+    const empty = body.querySelector('.role-empty');
+    if (empty) empty.remove();
+    const idx = body.querySelectorAll('.role-row').length;
+    body.insertAdjacentHTML('beforeend', renderRoleRow(idx, {role_name: '', day_rate: '', currency: 'EUR'}));
+  });
+
+  body.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (t.classList.contains('role-remove')) {
+      t.closest('.role-row').remove();
+      if (body.querySelectorAll('.role-row').length === 0) {
+        body.innerHTML = `<div class="role-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles defined yet.</div>`;
+      }
+    } else if (t.classList.contains('role-up')) {
+      const row = t.closest('.role-row');
+      const prev = row.previousElementSibling;
+      if (prev && prev.classList.contains('role-row')) {
+        body.insertBefore(row, prev);
+      }
+    } else if (t.classList.contains('role-down')) {
+      const row = t.closest('.role-row');
+      const next = row.nextElementSibling;
+      if (next && next.classList.contains('role-row')) {
+        body.insertBefore(next, row);
+      }
+    }
+  });
+}
+
+async function editPractice(id, name, desc, rate) {
+  const existingRoles = await loadPracticeRoles(id);
   showModal(`
     <h3>Edit Practice</h3>
     <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editPrName" value="${esc(name)}"></div>
     <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editPrDesc" value="${esc(desc)}"></div>
+    ${buildRolesSectionHtml(existingRoles)}
     <div class="form-group" style="margin-bottom:16px">
       <label>Default legacy day-rate</label>
       <input type="number" id="editPracticeRate" min="0" step="0.01" placeholder="optional" value="${rate != null ? esc(String(rate)) : ''}">
@@ -3405,6 +3488,7 @@ function editPractice(id, name, desc, rate) {
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
     </div>
   `);
+  wireRoleRowsEvents();
 }
 
 async function savePractice(id) {
@@ -3415,11 +3499,27 @@ async function savePractice(id) {
   const default_legacy_day_rate = parseOptionalNumber(rateRaw);
   try {
     await apiCall('PUT', `/practices/${id}`, { name, description: desc, default_legacy_day_rate });
-    hideModal();
-    showToast('Practice updated');
-    state.practices = [];
-    renderPracticesTab();
-  } catch (err) { showToast(err.message, 'error'); }
+  } catch (err) { showToast(err.message, 'error'); return; }
+
+  const rows = Array.from(document.querySelectorAll('#rolesTableBody .role-row'));
+  const roles = rows.map((row, idx) => ({
+    role_name: row.querySelector('.role-name').value.trim(),
+    day_rate: parseOptionalNumber(row.querySelector('.role-rate').value) ?? 0,
+    currency: row.querySelector('.role-currency').value,
+    display_order: idx,
+  })).filter(r => r.role_name);
+
+  try {
+    await apiCall('PUT', `/practices/${id}/roles`, { roles });
+  } catch (e) {
+    showToast('Practice fields saved but roles failed: ' + (e?.message || e));
+    return;
+  }
+
+  hideModal();
+  showToast('Practice updated');
+  state.practices = [];
+  renderPracticesTab();
 }
 
 async function deletePractice(id, code) {

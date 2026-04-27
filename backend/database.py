@@ -206,6 +206,7 @@ def init_db() -> None:
     migrate_v13()
     migrate_v14()
     migrate_v15()
+    migrate_v16()
 
     seed_data()
 
@@ -395,6 +396,36 @@ def migrate_v15() -> None:
         )
         conn.execute(
             "INSERT OR IGNORE INTO app_settings (id, default_currency) VALUES (1, 'EUR')"
+        )
+        conn.commit()
+
+
+def migrate_v16() -> None:
+    """v1.6: create practice_roles table for the per-practice rate catalog.
+
+    Each row is a (practice_id, role_name, day_rate, currency) tuple.
+    Multiple rows per (practice_id, role_name) are allowed if currency
+    differs — this supports practices that bill in multiple currencies.
+    Uniqueness is enforced on (practice_id, role_name, currency).
+    Idempotent.
+    """
+    with _db() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS practice_roles (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   practice_id INTEGER NOT NULL,
+                   role_name TEXT NOT NULL,
+                   day_rate REAL NOT NULL,
+                   currency TEXT NOT NULL,
+                   display_order INTEGER NOT NULL DEFAULT 0,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   FOREIGN KEY (practice_id) REFERENCES practices(id) ON DELETE CASCADE,
+                   UNIQUE (practice_id, role_name, currency)
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_practice_roles_practice
+                   ON practice_roles(practice_id, display_order)"""
         )
         conn.commit()
 
@@ -1034,6 +1065,44 @@ def practice_has_projects(practice_id: int) -> bool:
             "SELECT COUNT(*) FROM projects WHERE practice_id = ?", (practice_id,)
         ).fetchone()[0]
         return count > 0
+
+
+def list_practice_roles(practice_id: int) -> list[dict]:
+    """Return all role rows for a practice, ordered by display_order then id."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT id, practice_id, role_name, day_rate, currency,
+                      display_order, created_at
+                 FROM practice_roles
+                WHERE practice_id = ?
+             ORDER BY display_order ASC, id ASC""",
+            (practice_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def replace_practice_roles(practice_id: int, roles: list[dict]) -> None:
+    """Bulk-replace all roles for a practice in a single transaction.
+
+    Each entry in `roles` must be a dict with keys: role_name, day_rate,
+    currency, display_order.
+    """
+    with _db() as conn:
+        conn.execute("DELETE FROM practice_roles WHERE practice_id = ?", (practice_id,))
+        for r in roles:
+            conn.execute(
+                """INSERT INTO practice_roles
+                       (practice_id, role_name, day_rate, currency, display_order)
+                       VALUES (?, ?, ?, ?, ?)""",
+                (
+                    practice_id,
+                    r["role_name"],
+                    r["day_rate"],
+                    r["currency"],
+                    r.get("display_order", 0),
+                ),
+            )
+        conn.commit()
 
 
 # ── Projects ─────────────────────────────────────────────────────────────────

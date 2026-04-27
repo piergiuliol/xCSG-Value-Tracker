@@ -213,6 +213,15 @@ ECONOMICS_FIELDS = {
                                  "help": "Practice-level fallback for legacy cost computation."},
 }
 
+# ── Practice role catalog (Phase 2a) ─────────────────────────────────────────
+
+PRACTICE_ROLE_FIELDS = {
+    "role_name":     {"label": "Role name", "type": "text", "max_length": 80, "required": True},
+    "day_rate":      {"label": "Day rate", "type": "number", "min": 0, "required": True},
+    "currency":      {"label": "Currency", "type": "select", "options": CURRENCIES, "required": True},
+    "display_order": {"label": "Order", "type": "integer", "default": 0},
+}
+
 # ── Dashboard configuration (single source of truth for the frontend) ───────
 
 DASHBOARD_CONFIG = {
@@ -342,4 +351,5 @@ def build_schema_response() -> dict:
         "currencies": CURRENCIES,
         "pricing_models": PRICING_MODELS,
         "economics_fields": ECONOMICS_FIELDS,
+        "practice_role_fields": PRACTICE_ROLE_FIELDS,
     }

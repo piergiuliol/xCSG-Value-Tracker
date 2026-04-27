@@ -1277,6 +1277,128 @@ def test_migrate_v15_idempotent():
         assert rows["n"] == 1, "app_settings must remain a single row"
 
 
+def test_migrate_v16_idempotent():
+    """migrate_v16 creates practice_roles table + index, runs idempotently."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "practice_roles" in tables
+
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(practice_roles)"
+        ).fetchall()}
+        for col in ("id", "practice_id", "role_name", "day_rate", "currency",
+                    "display_order", "created_at"):
+            assert col in cols, f"practice_roles.{col} missing"
+
+        indexes = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='practice_roles'"
+        ).fetchall()}
+        assert "idx_practice_roles_practice" in indexes
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v16()
+    database.migrate_v16()
+
+    # FK CASCADE: deleting a practice removes its roles.
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO practices (code, name, description) VALUES (?, ?, ?)",
+            ("TST", "Test practice", "for migration test"),
+        )
+        practice_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO practice_roles (practice_id, role_name, day_rate, currency) "
+            "VALUES (?, ?, ?, ?)",
+            (practice_id, "Senior", 1500, "EUR"),
+        )
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM practices WHERE id = ?", (practice_id,))
+        remaining = conn.execute(
+            "SELECT COUNT(*) AS n FROM practice_roles WHERE practice_id = ?",
+            (practice_id,),
+        ).fetchone()
+        assert remaining["n"] == 0, "practice_roles should CASCADE-delete"
+
+
+def test_practice_roles_db_helpers():
+    """list_practice_roles and replace_practice_roles round-trip correctly."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO practices (code, name, description) VALUES (?, ?, ?)",
+            ("HLP", "Helper test", "for db helper test"),
+        )
+        practice_id = cur.lastrowid
+        conn.commit()
+
+    try:
+        # Empty list initially.
+        assert database.list_practice_roles(practice_id) == []
+
+        # Replace with a list.
+        database.replace_practice_roles(practice_id, [
+            {"role_name": "Senior", "day_rate": 1500, "currency": "EUR", "display_order": 0},
+            {"role_name": "Manager", "day_rate": 1000, "currency": "EUR", "display_order": 1},
+            {"role_name": "Senior", "day_rate": 1800, "currency": "USD", "display_order": 0},
+        ])
+
+        rows = database.list_practice_roles(practice_id)
+        assert len(rows) == 3
+        names = [(r["role_name"], r["currency"]) for r in rows]
+        assert ("Senior", "EUR") in names
+        assert ("Senior", "USD") in names
+        assert ("Manager", "EUR") in names
+
+        # Replace with a different list — old rows are gone.
+        database.replace_practice_roles(practice_id, [
+            {"role_name": "Analyst", "day_rate": 600, "currency": "EUR", "display_order": 0},
+        ])
+        rows = database.list_practice_roles(practice_id)
+        assert len(rows) == 1
+        assert rows[0]["role_name"] == "Analyst"
+
+        # Replace with empty list — clears the catalog.
+        database.replace_practice_roles(practice_id, [])
+        assert database.list_practice_roles(practice_id) == []
+    finally:
+        with database._db() as conn:
+            conn.execute("DELETE FROM practices WHERE id = ?", (practice_id,))
+            conn.commit()
+
+
+def test_practice_roles_schema():
+    """schema.py exposes PRACTICE_ROLE_FIELDS and surfaces it via build_schema_response."""
+    from backend.schema import PRACTICE_ROLE_FIELDS, build_schema_response
+
+    expected_fields = {"role_name", "day_rate", "currency", "display_order"}
+    assert expected_fields.issubset(set(PRACTICE_ROLE_FIELDS.keys()))
+
+    role_name = PRACTICE_ROLE_FIELDS["role_name"]
+    assert role_name["type"] == "text"
+    assert role_name.get("max_length") == 80
+
+    day_rate = PRACTICE_ROLE_FIELDS["day_rate"]
+    assert day_rate["type"] == "number"
+    assert day_rate["min"] == 0
+
+    currency = PRACTICE_ROLE_FIELDS["currency"]
+    assert currency["type"] == "select"
+    assert "options" in currency
+
+    response = build_schema_response()
+    assert "practice_role_fields" in response
+    assert response["practice_role_fields"]["role_name"]["max_length"] == 80
+
+
 def test_economics_models():
     """ProjectCreate, PioneerCreate, PracticeUpdate accept and validate economics fields."""
     import pytest
@@ -1634,6 +1756,176 @@ def test_app_settings_endpoints():
         requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": initial})
 
 
+def test_practice_role_models():
+    """PracticeRoleEntry and PracticeRolesUpdate validate correctly."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import PracticeRoleEntry, PracticeRolesUpdate
+
+    # Happy path.
+    e = PracticeRoleEntry(role_name="Senior Partner", day_rate=1500, currency="EUR", display_order=1)
+    assert e.role_name == "Senior Partner"
+    assert e.day_rate == 1500
+    assert e.currency == "EUR"
+    assert e.display_order == 1
+
+    # Default display_order.
+    e2 = PracticeRoleEntry(role_name="Manager", day_rate=1000, currency="EUR")
+    assert e2.display_order == 0
+
+    # Empty role_name rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="", day_rate=1000, currency="EUR")
+
+    # Whitespace-only role_name rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="   ", day_rate=1000, currency="EUR")
+
+    # role_name > 80 chars rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="x" * 81, day_rate=1000, currency="EUR")
+
+    # Negative day_rate rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="X", day_rate=-1, currency="EUR")
+
+    # Invalid currency rejected.
+    with pytest.raises(ValidationError):
+        PracticeRoleEntry(role_name="X", day_rate=100, currency="XYZ")
+
+    # PracticeRolesUpdate accepts a list.
+    u = PracticeRolesUpdate(roles=[
+        {"role_name": "Senior", "day_rate": 1500, "currency": "EUR"},
+        {"role_name": "Manager", "day_rate": 1000, "currency": "EUR"},
+    ])
+    assert len(u.roles) == 2
+
+    # Duplicate (role_name, currency) rejected.
+    with pytest.raises(ValidationError):
+        PracticeRolesUpdate(roles=[
+            {"role_name": "Senior", "day_rate": 1500, "currency": "EUR"},
+            {"role_name": "Senior", "day_rate": 1600, "currency": "EUR"},
+        ])
+
+    # Same role_name with different currencies is OK.
+    u2 = PracticeRolesUpdate(roles=[
+        {"role_name": "Senior", "day_rate": 1500, "currency": "EUR"},
+        {"role_name": "Senior", "day_rate": 1800, "currency": "USD"},
+    ])
+    assert len(u2.roles) == 2
+
+    # Empty list is OK (clears the catalog).
+    u3 = PracticeRolesUpdate(roles=[])
+    assert u3.roles == []
+
+
+def test_practice_roles_crud():
+    """GET returns rows; PUT replaces atomically."""
+    token = admin_token()
+    headers = auth_h(token)
+
+    practices = requests.get(f"{BASE}/api/practices", headers=headers).json()
+    assert practices, "must have at least one seeded practice"
+    pid = practices[0]["id"]
+
+    try:
+        # Initial GET — empty list (no roles defined yet for this practice).
+        r = requests.get(f"{BASE}/api/practices/{pid}/roles", headers=headers)
+        assert r.status_code == 200
+        initial = r.json()
+        assert isinstance(initial, list)
+
+        # PUT — bulk replace with two roles.
+        body = {"roles": [
+            {"role_name": "Senior", "day_rate": 1500, "currency": "EUR", "display_order": 0},
+            {"role_name": "Manager", "day_rate": 1000, "currency": "EUR", "display_order": 1},
+        ]}
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json=body)
+        assert r.status_code == 200, r.text
+
+        # GET — confirm replacement.
+        rows = requests.get(f"{BASE}/api/practices/{pid}/roles", headers=headers).json()
+        assert len(rows) == 2
+        names = sorted(r["role_name"] for r in rows)
+        assert names == ["Manager", "Senior"]
+
+        # PUT — replace with a different set; old rows go away.
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={
+            "roles": [{"role_name": "Analyst", "day_rate": 600, "currency": "EUR"}]
+        })
+        assert r.status_code == 200
+        rows = requests.get(f"{BASE}/api/practices/{pid}/roles", headers=headers).json()
+        assert len(rows) == 1
+        assert rows[0]["role_name"] == "Analyst"
+
+        # PUT — invalid currency rejected.
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={
+            "roles": [{"role_name": "X", "day_rate": 100, "currency": "XYZ"}]
+        })
+        assert r.status_code == 422
+
+        # PUT — duplicate (role_name, currency) rejected.
+        r = requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={
+            "roles": [
+                {"role_name": "Dup", "day_rate": 100, "currency": "EUR"},
+                {"role_name": "Dup", "day_rate": 200, "currency": "EUR"},
+            ]
+        })
+        assert r.status_code == 422
+    finally:
+        # Restore: empty list (clears whatever was added during the test).
+        requests.put(f"{BASE}/api/practices/{pid}/roles", headers=headers, json={"roles": []})
+
+
+def test_practice_roles_admin_only():
+    """GET is open to all roles; PUT requires admin."""
+    def login_token(username, password):
+        r = requests.post(f"{BASE}/api/auth/login", json={"username": username, "password": password})
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    admin = admin_token()
+    analyst = login_token("pmo", "AliraPMO2026!")
+    viewer = login_token("viewer", "AliraView2026!")
+    h_admin = auth_h(admin)
+    h_analyst = auth_h(analyst)
+    h_viewer = auth_h(viewer)
+
+    practices = requests.get(f"{BASE}/api/practices", headers=h_admin).json()
+    pid = practices[0]["id"]
+
+    try:
+        # GET allowed for all three roles.
+        assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_admin).status_code == 200
+        assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst).status_code == 200
+        assert requests.get(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer).status_code == 200
+
+        # PUT allowed for admin, blocked for analyst and viewer.
+        body = {"roles": [{"role_name": "X", "day_rate": 1, "currency": "EUR"}]}
+        assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json=body).status_code == 200
+        assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_analyst, json=body).status_code == 403
+        assert requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_viewer, json=body).status_code == 403
+    finally:
+        # Restore.
+        requests.put(f"{BASE}/api/practices/{pid}/roles", headers=h_admin, json={"roles": []})
+
+
+def test_practice_roles_404_for_unknown_practice():
+    """Routes return 404 for non-existent practice IDs."""
+    headers = auth_h(admin_token())
+    bad_id = 99999
+
+    r = requests.get(f"{BASE}/api/practices/{bad_id}/roles", headers=headers)
+    assert r.status_code == 404, f"GET expected 404, got {r.status_code}: {r.text}"
+
+    r = requests.put(
+        f"{BASE}/api/practices/{bad_id}/roles",
+        headers=headers,
+        json={"roles": [{"role_name": "X", "day_rate": 1, "currency": "EUR"}]},
+    )
+    assert r.status_code == 404, f"PUT expected 404, got {r.status_code}: {r.text}"
+
+
 def main():
     global passed, failed, failures
 
@@ -1670,10 +1962,17 @@ def main():
     test_dashboard_config()
     test_seed_field_coverage()
     test_economics_schema()
+    test_practice_roles_schema()
     test_migrate_v15_idempotent()
+    test_migrate_v16_idempotent()
+    test_practice_roles_db_helpers()
     test_economics_models()
+    test_practice_role_models()
     test_economics_metrics()
     test_app_settings_endpoints()
+    test_practice_roles_crud()
+    test_practice_roles_admin_only()
+    test_practice_roles_404_for_unknown_practice()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
     test_show_other_pioneers_flag()

@@ -444,3 +444,53 @@ class AppSettingsUpdate(BaseModel):
         if v not in CURRENCIES:
             raise ValueError(f"default_currency must be one of {CURRENCIES}")
         return v
+
+
+# ── Practice role catalog (Phase 2a) ──────────────────────────────────────────
+
+class PracticeRoleEntry(BaseModel):
+    role_name: str
+    day_rate: float
+    currency: str
+    display_order: int = 0
+
+    @field_validator("role_name")
+    @classmethod
+    def _role_name_non_empty(cls, v: str) -> str:
+        s = v.strip() if isinstance(v, str) else ""
+        if not s:
+            raise ValueError("role_name must not be empty")
+        if len(s) > 80:
+            raise ValueError("role_name must be at most 80 characters")
+        return s
+
+    @field_validator("day_rate")
+    @classmethod
+    def _day_rate_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("day_rate must be >= 0")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def _currency_valid(cls, v: str) -> str:
+        if v not in CURRENCIES:
+            raise ValueError(f"currency must be one of {CURRENCIES}")
+        return v
+
+
+class PracticeRolesUpdate(BaseModel):
+    roles: List[PracticeRoleEntry]
+
+    @field_validator("roles")
+    @classmethod
+    def _no_duplicate_role_currency(cls, v: list) -> list:
+        seen = set()
+        for entry in v:
+            key = (entry.role_name, entry.currency)
+            if key in seen:
+                raise ValueError(
+                    f"duplicate (role_name, currency) pair: {entry.role_name!r} / {entry.currency}"
+                )
+            seen.add(key)
+        return v
