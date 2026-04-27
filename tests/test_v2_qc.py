@@ -1969,6 +1969,26 @@ def test_practice_roles_404_for_unknown_practice():
     assert r.status_code == 404, f"PUT expected 404, got {r.status_code}: {r.text}"
 
 
+def test_pioneer_role_name_in_models():
+    """PioneerCreate and PioneerUpdate accept optional role_name."""
+    from backend.models import PioneerCreate, PioneerUpdate
+
+    # Happy path with role_name.
+    p = PioneerCreate(name="Pia", email="pia@example.com", day_rate=1500, role_name="Senior")
+    assert p.role_name == "Senior"
+    assert p.day_rate == 1500
+
+    # role_name optional — None is fine.
+    p2 = PioneerCreate(name="Bob", email="bob@example.com")
+    assert p2.role_name is None
+
+    # PioneerUpdate also accepts role_name.
+    u = PioneerUpdate(role_name="Manager")
+    assert u.role_name == "Manager"
+    u2 = PioneerUpdate()
+    assert u2.role_name is None
+
+
 def main():
     global passed, failed, failures
 
@@ -2012,6 +2032,7 @@ def main():
     test_practice_roles_db_helpers()
     test_economics_models()
     test_practice_role_models()
+    test_pioneer_role_name_in_models()
     test_economics_metrics()
     test_app_settings_endpoints()
     test_practice_roles_crud()
