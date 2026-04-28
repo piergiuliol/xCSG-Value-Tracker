@@ -348,7 +348,6 @@ def test_expert_assessment():
         "f2_productization": "Yes largely as-is",
         "g1_reuse_intent": "Yes without hesitation",
         "l1_legacy_working_days": 15,
-        "l2_legacy_team_size": "3",
         "l3_legacy_revision_depth": "Moderate rework",
         "l4_legacy_scope_expansion": "No",
         "l5_legacy_client_reaction": "Met expectations",
@@ -364,7 +363,7 @@ def test_expert_assessment():
         "l15_legacy_e1_decision": "Yes — referenced in internal discussions",
         "l16_legacy_b6_data": ">75% on data",
     }
-    
+
     r = requests.post(f"{BASE}/api/expert/{token}", json=expert_data)
     test("POST /api/expert/{{token}} returns 201", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:100]}")
     
@@ -803,7 +802,6 @@ _VALID_EXPERT_PAYLOAD = {
     "f2_productization": "Yes largely as-is",
     "g1_reuse_intent": "Yes without hesitation",
     "l1_legacy_working_days": 15,
-    "l2_legacy_team_size": "3",
     "l3_legacy_revision_depth": "Moderate rework",
     "l4_legacy_scope_expansion": "No",
     "l5_legacy_client_reaction": "Met expectations",
@@ -1778,7 +1776,7 @@ def test_create_project_persists_economics():
         "currency": "USD",
         "xcsg_pricing_model": "Fixed fee",
         "scope_expansion_revenue": 5000,
-        "legacy_day_rate_override": 750,
+        "legacy_team": [{"role_name": "Senior", "count": 1, "day_rate": 750}],
     }
     r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json=payload)
     test("POST /api/projects with economics returns 201", r.status_code == 201, f"got {r.status_code}: {r.text[:200]}")
@@ -1792,7 +1790,10 @@ def test_create_project_persists_economics():
         test("economics: currency stored", detail.get("currency") == "USD", f"got {detail.get('currency')}")
         test("economics: xcsg_pricing_model stored", detail.get("xcsg_pricing_model") == "Fixed fee", f"got {detail.get('xcsg_pricing_model')}")
         test("economics: scope_expansion_revenue stored", detail.get("scope_expansion_revenue") == 5000, f"got {detail.get('scope_expansion_revenue')}")
-        # legacy_day_rate_override dropped in migrate_v18; field ignored by server
+        test("economics: legacy_team stored", len(detail.get("legacy_team", [])) == 1, f"got {detail.get('legacy_team')}")
+        test("economics: legacy_team role_name stored", detail.get("legacy_team", [{}])[0].get("role_name") == "Senior", f"got {detail.get('legacy_team')}")
+        test("economics: legacy_team day_rate stored", detail.get("legacy_team", [{}])[0].get("day_rate") == 750, f"got {detail.get('legacy_team')}")
+        test("economics: legacy_team count stored", detail.get("legacy_team", [{}])[0].get("count") == 1, f"got {detail.get('legacy_team')}")
 
         pioneer_rates = sorted(p["day_rate"] for p in detail.get("pioneers", []))
         test("economics: pioneer day_rates stored", pioneer_rates == [1000, 1500], f"got {pioneer_rates}")
