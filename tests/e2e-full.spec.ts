@@ -58,9 +58,8 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     await page.fill('#fRevisions', '2');
     await page.selectOption('#fScopeExpansion', 'No');
 
-    // Legacy Baseline — fill required fields
+    // Legacy Baseline — fill required fields (team size is now the legacy team mix)
     await page.fill('#fLDays', '8');
-    await page.fill('#fLTeam', '4');
     await page.fill('#fLRevisions', '3');
 
     // Submit

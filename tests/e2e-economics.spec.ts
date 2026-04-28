@@ -30,9 +30,8 @@ async function fillRequiredFields(page: Page, projectName: string) {
   await page.fill('#fRevisions', '1');
   await page.selectOption('#fScopeExpansion', 'No');
 
-  // Legacy baseline
+  // Legacy baseline (team size is now the legacy team mix, not a single field)
   await page.fill('#fLDays', '8');
-  await page.fill('#fLTeam', '3');
   await page.fill('#fLRevisions', '2');
 }
 
@@ -87,8 +86,12 @@ async function submitExpertSurvey(page: Page, token: string) {
 }
 
 test.describe('Project economics', () => {
-  // ── TEST 1: Economics card visible when revenue + pioneer rate + legacy rate set ──
-  test('economics card renders when revenue + pioneer rate + legacy rate are set', async ({ page }) => {
+  // ── TEST 1: Economics card renders with revenue + xCSG metrics ───────────────
+  // NOTE: legacy_cost is now driven by the legacy team mix (role catalog × count),
+  // not a standalone rate field. Without a team mix, legacy_cost = None and chips
+  // like "Margin Gain" show "—". The card still renders; only xCSG-side metrics
+  // (xCSG cost, xCSG margin %) are numeric.
+  test('economics card renders with revenue + xCSG metrics', async ({ page }) => {
     await login(page);
     await fillRequiredFields(page, 'Econ E2E Happy Path');
 
@@ -102,7 +105,7 @@ test.describe('Project economics', () => {
 
     await page.fill('#fRevenue', '120000');
     await page.selectOption('#fPricingModel', { index: 1 }); // first non-placeholder option
-    await page.fill('#fLegacyRate', '900');
+    // No legacy rate field anymore — legacy cost comes from team mix (not set here)
 
     // Submit the project
     await page.click('#projectForm button[type="submit"]');
@@ -137,8 +140,9 @@ test.describe('Project economics', () => {
     await page.locator('.round-chip-clickable').first().click();
     await expect(page.locator('.modal-overlay.active')).toBeVisible({ timeout: 5000 });
 
+    // Card renders; xCSG cost chip is present and numeric.
+    // Margin Gain and Legacy cost may show "—" without a team mix — that is expected.
     await expect(page.locator('.economics-card')).toBeVisible({ timeout: 8000 });
-    await expect(page.locator('.economics-card')).toContainText('Margin Gain');
     await expect(page.locator('.economics-card')).toContainText('xCSG cost');
   });
 
