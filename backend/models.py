@@ -96,14 +96,6 @@ class PracticeCreate(BaseModel):
 class PracticeUpdate(BaseModel):
     name: str
     description: Optional[str] = None
-    default_legacy_day_rate: Optional[float] = None
-
-    @field_validator("default_legacy_day_rate")
-    @classmethod
-    def _non_negative(cls, v):
-        if v is not None and v < 0:
-            raise ValueError("default_legacy_day_rate must be >= 0")
-        return v
 
 
 # ── Projects ─────────────────────────────────────────────────────────────────
@@ -147,10 +139,10 @@ class ProjectCreate(BaseModel):
     currency: Optional[str] = None
     xcsg_pricing_model: Optional[str] = None
     scope_expansion_revenue: Optional[float] = None
-    legacy_day_rate_override: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
+    legacy_team: List["LegacyTeamRoleEntry"] = []
 
     @field_validator("pioneers")
     @classmethod
@@ -173,7 +165,7 @@ class ProjectCreate(BaseModel):
             raise ValueError(f"xcsg_pricing_model must be one of {PRICING_MODELS}")
         return v
 
-    @field_validator("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override")
+    @field_validator("engagement_revenue", "scope_expansion_revenue")
     @classmethod
     def _non_negative_econ(cls, v):
         if v is not None and v < 0:
@@ -217,10 +209,11 @@ class ProjectUpdate(BaseModel):
     currency: Optional[str] = None
     xcsg_pricing_model: Optional[str] = None
     scope_expansion_revenue: Optional[float] = None
-    legacy_day_rate_override: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
     legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
+    legacy_team: Optional[List["LegacyTeamRoleEntry"]] = None
+    # Semantics: None = leave unchanged; [] = clear team mix; non-empty = replace.
 
     @field_validator("currency")
     @classmethod
@@ -236,7 +229,7 @@ class ProjectUpdate(BaseModel):
             raise ValueError(f"xcsg_pricing_model must be one of {PRICING_MODELS}")
         return v
 
-    @field_validator("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override")
+    @field_validator("engagement_revenue", "scope_expansion_revenue")
     @classmethod
     def _non_negative_econ(cls, v):
         if v is not None and v < 0:
@@ -272,7 +265,6 @@ class ExpertResponseCreate(BaseModel):
     f2_productization: Optional[str] = None
     g1_reuse_intent: Optional[str] = None
     l1_legacy_working_days: Optional[int] = None
-    l2_legacy_team_size: Optional[str] = None
     l3_legacy_revision_depth: Optional[str] = None
     l4_legacy_scope_expansion: Optional[str] = None
     l5_legacy_client_reaction: Optional[str] = None
@@ -495,4 +487,34 @@ class PracticeRolesUpdate(BaseModel):
                     f"duplicate (role_name, currency) pair: {entry.role_name!r} / {entry.currency}"
                 )
             seen.add(key)
+        return v
+
+
+# ── Legacy team mix (Phase 2c) ────────────────────────────────────────────────
+
+class LegacyTeamRoleEntry(BaseModel):
+    role_name: str
+    count: int
+    day_rate: float
+
+    @field_validator("role_name")
+    @classmethod
+    def _role_name_non_empty(cls, v: str) -> str:
+        s = v.strip() if isinstance(v, str) else ""
+        if not s:
+            raise ValueError("role_name must not be empty")
+        return s
+
+    @field_validator("count")
+    @classmethod
+    def _count_at_least_one(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("count must be >= 1")
+        return v
+
+    @field_validator("day_rate")
+    @classmethod
+    def _day_rate_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("day_rate must be >= 0")
         return v

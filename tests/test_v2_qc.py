@@ -1499,7 +1499,6 @@ def test_economics_models():
         currency="EUR",
         xcsg_pricing_model="Fixed fee",
         scope_expansion_revenue=15000,
-        legacy_day_rate_override=900,
     )
     assert p.engagement_revenue == 120000
     assert p.currency == "EUR"
@@ -1507,7 +1506,7 @@ def test_economics_models():
     assert p.pioneers[0].day_rate == 1500
 
     # Negative numeric fields are rejected.
-    for bad_field in ("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override"):
+    for bad_field in ("engagement_revenue", "scope_expansion_revenue"):
         with pytest.raises(ValidationError):
             ProjectCreate(**{**base, bad_field: -1})
     with pytest.raises(ValidationError):
@@ -1518,12 +1517,6 @@ def test_economics_models():
         ProjectCreate(**base, currency="XYZ")
     with pytest.raises(ValidationError):
         ProjectCreate(**base, xcsg_pricing_model="Pay what you want")
-
-    # Practices accept default_legacy_day_rate.
-    pu = PracticeUpdate(name="P", default_legacy_day_rate=1000)
-    assert pu.default_legacy_day_rate == 1000
-    with pytest.raises(ValidationError):
-        PracticeUpdate(name="P", default_legacy_day_rate=-1)
 
     # AppSettings models.
     s = AppSettings(default_currency="USD")
@@ -1741,49 +1734,6 @@ def test_create_project_persists_economics():
         requests.delete(f"{BASE}/api/projects/{pid}", headers=auth_h(tk))
 
 
-def test_practice_default_legacy_day_rate():
-    """PUT /api/practices/{id} stores default_legacy_day_rate; GET surfaces it."""
-    print("\n── C3. Practice default_legacy_day_rate ──")
-    tk = admin_token()
-    headers = auth_h(tk)
-
-    list_r = requests.get(f"{BASE}/api/practices", headers=headers)
-    test("GET /api/practices reachable for rate test", list_r.status_code == 200, f"got {list_r.status_code}")
-    if list_r.status_code != 200:
-        return
-    practice = list_r.json()[0]
-    pid = practice["id"]
-    original_name = practice["name"]
-    original_rate = practice.get("default_legacy_day_rate")
-
-    try:
-        upd = requests.put(
-            f"{BASE}/api/practices/{pid}",
-            headers=headers,
-            json={"name": original_name, "default_legacy_day_rate": 950},
-        )
-        test("PUT practice with default_legacy_day_rate=950 returns 200", upd.status_code == 200, upd.text)
-
-        after = requests.get(f"{BASE}/api/practices", headers=headers).json()
-        target = next(p for p in after if p["id"] == pid)
-        test("default_legacy_day_rate persisted as 950", target["default_legacy_day_rate"] == 950,
-             f"got {target.get('default_legacy_day_rate')}")
-
-        bad = requests.put(
-            f"{BASE}/api/practices/{pid}",
-            headers=headers,
-            json={"name": original_name, "default_legacy_day_rate": -1},
-        )
-        test("PUT practice with negative rate returns 422", bad.status_code == 422,
-             f"got {bad.status_code}: {bad.text[:120]}")
-    finally:
-        # Restore original rate
-        requests.put(
-            f"{BASE}/api/practices/{pid}",
-            headers=headers,
-            json={"name": original_name, "default_legacy_day_rate": original_rate},
-        )
-
 
 def test_app_settings_endpoints():
     """GET /api/settings is open to all roles; PUT requires admin."""
@@ -1895,6 +1845,68 @@ def test_practice_role_models():
     # Empty list is OK (clears the catalog).
     u3 = PracticeRolesUpdate(roles=[])
     assert u3.roles == []
+
+
+def test_legacy_team_models():
+    """LegacyTeamRoleEntry validates correctly. ProjectCreate/Update accept legacy_team
+    with None / [] / non-empty semantics. Deprecated fields are gone."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        LegacyTeamRoleEntry, ProjectCreate, ProjectUpdate,
+        PracticeUpdate, ExpertResponseCreate,
+    )
+
+    # Happy path entry.
+    e = LegacyTeamRoleEntry(role_name="Senior", count=2, day_rate=1500)
+    assert e.role_name == "Senior"
+    assert e.count == 2
+    assert e.day_rate == 1500
+
+    # role_name non-empty.
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="", count=1, day_rate=100)
+
+    # count must be >= 1.
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="X", count=0, day_rate=100)
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="X", count=-1, day_rate=100)
+
+    # day_rate must be >= 0.
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="X", count=1, day_rate=-1)
+
+    # ProjectCreate accepts legacy_team list (default empty).
+    base = {
+        "project_name": "T", "category_id": 1,
+        "pioneers": [{"name": "Pia"}],
+        "xcsg_team_size": "1", "xcsg_revision_rounds": "1",
+    }
+    p = ProjectCreate(**base)
+    assert p.legacy_team == []  # default
+
+    p2 = ProjectCreate(**base, legacy_team=[
+        {"role_name": "Senior", "count": 1, "day_rate": 1500},
+        {"role_name": "Analyst", "count": 2, "day_rate": 600},
+    ])
+    assert len(p2.legacy_team) == 2
+
+    # ProjectUpdate.legacy_team semantics: None/[]/non-empty.
+    u_none = ProjectUpdate()  # no legacy_team → None default
+    assert u_none.legacy_team is None
+
+    u_empty = ProjectUpdate(legacy_team=[])
+    assert u_empty.legacy_team == []
+
+    u_set = ProjectUpdate(legacy_team=[{"role_name": "X", "count": 1, "day_rate": 100}])
+    assert len(u_set.legacy_team) == 1
+
+    # Deprecated fields dropped from the models.
+    assert "legacy_day_rate_override" not in ProjectCreate.model_fields
+    assert "legacy_day_rate_override" not in ProjectUpdate.model_fields
+    assert "default_legacy_day_rate" not in PracticeUpdate.model_fields
+    assert "l2_legacy_team_size" not in ExpertResponseCreate.model_fields
 
 
 def test_practice_roles_crud():
@@ -2153,7 +2165,6 @@ def main():
     test_expert_options()
     test_categories()
     test_practices()
-    test_practice_default_legacy_day_rate()
     test_create_deliverable()
     test_expert_assessment()
     test_metrics()
@@ -2177,6 +2188,7 @@ def main():
     test_practice_roles_db_helpers()
     test_economics_models()
     test_practice_role_models()
+    test_legacy_team_models()
     test_pioneer_role_name_in_models()
     test_economics_metrics()
     test_app_settings_endpoints()
