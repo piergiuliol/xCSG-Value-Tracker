@@ -936,7 +936,6 @@ function renderExpertAssessment(er, metrics, project) {
         .map(([key, f]) => ({ key, label: f.label }))
     : [
         { key: 'l1_legacy_working_days', label: 'Legacy Working Days' },
-        { key: 'l2_legacy_team_size', label: 'Legacy Team Size' },
         { key: 'l3_legacy_revision_depth', label: 'Legacy Revision Depth' },
         { key: 'l4_legacy_scope_expansion', label: 'Legacy Scope Expansion' },
         { key: 'l5_legacy_client_reaction', label: 'Legacy Client Reaction' },
@@ -994,7 +993,6 @@ function onCurrencyChange() {
   const hasValues = (
     document.getElementById('fRevenue')?.value ||
     document.getElementById('fScopeRev')?.value ||
-    document.getElementById('fLegacyRate')?.value ||
     Array.from(document.querySelectorAll('.pioneer-day-rate')).some(i => i.value)
   );
   if (hasValues) {
@@ -1152,18 +1150,11 @@ async function renderNewProject(existing) {
 
       <fieldset><legend>Legacy Comparables</legend>
         <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Estimated delivery metrics if this project had been done using traditional methods. Pre-filled from category norms when available. The expert survey (Section L) provides more detailed legacy estimates \u2014 expert data takes precedence over these values when computing metrics.</p>
-        <div class="form-row">
-          <div class="form-group">
+        <div class="form-group">
             <label>Calendar Days</label>
             <input type="number" id="fLDays" min="1" max="365" step="1" value="${esc(p.legacy_calendar_days || '')}" placeholder="e.g. 10">
             <span class="field-warn" id="warnLDays"></span>
           </div>
-          <div class="form-group">
-            <label>Team Size</label>
-            <input type="number" id="fLTeam" min="1" max="50" step="1" value="${esc(p.legacy_team_size || '')}" placeholder="e.g. 3">
-            <span class="field-warn" id="warnLTeam"></span>
-          </div>
-        </div>
         <div class="form-group">
           <label>Revision Rounds</label>
           <input type="number" id="fLRevisions" min="0" max="20" step="1" value="${esc(p.legacy_revision_rounds || '')}" placeholder="e.g. 3">
@@ -1208,17 +1199,6 @@ async function renderNewProject(existing) {
               </div>
               <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Revenue from scope expansions triggered by this engagement</span>
             </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Legacy Day-Rate Override</label>
-              <div style="display:flex;align-items:center;gap:6px">
-                <input type="number" id="fLegacyRate" min="0" step="0.01" value="${esc(p.legacy_day_rate_override ?? '')}" placeholder="e.g. 1200">
-                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}/day</span>
-              </div>
-              <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Override the category default blended day-rate for legacy cost estimates</span>
-            </div>
-            <div class="form-group"></div>
           </div>
         </div>
       </fieldset>
@@ -1356,7 +1336,6 @@ async function renderNewProject(existing) {
   validateNumField('fXTeam', 'warnXTeam', { min: 1, max: 50, intOnly: true, label: 'Team size' });
   validateNumField('fRevisions', 'warnRevisions', { min: 0, max: 20, intOnly: true, label: 'Revision rounds' });
   validateNumField('fLDays', 'warnLDays', { min: 1, max: 365, intOnly: true, label: 'Calendar days' });
-  validateNumField('fLTeam', 'warnLTeam', { min: 1, max: 50, intOnly: true, label: 'Team size' });
   validateNumField('fLRevisions', 'warnLRevisions', { min: 0, max: 20, intOnly: true, label: 'Revision rounds' });
 
   // Submit
@@ -1408,13 +1387,11 @@ async function renderNewProject(existing) {
       revision_depth: document.getElementById('fRevDepth').value || null,
       xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
       legacy_calendar_days: document.getElementById('fLDays').value || null,
-      legacy_team_size: document.getElementById('fLTeam').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
       currency: document.getElementById('fCurrency')?.value || null,
       engagement_revenue: parseOptionalNumber(document.getElementById('fRevenue').value),
       xcsg_pricing_model: document.getElementById('fPricingModel')?.value || null,
       scope_expansion_revenue: parseOptionalNumber(document.getElementById('fScopeRev').value),
-      legacy_day_rate_override: parseOptionalNumber(document.getElementById('fLegacyRate').value),
     };
     try {
       if (isEdit) {
@@ -3446,7 +3423,7 @@ async function renderPracticesTab() {
         <td>${esc(p.description || '—')}</td>
         <td>${count}</td>
         ${_isAdmin ? `<td class="actions-cell">
-          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}',${p.default_legacy_day_rate ?? 'null'})"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deletePractice(" + p.id + ",'" + esc(p.code) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
         </td>` : ''}
       </tr>`;
@@ -3544,18 +3521,13 @@ function wireRoleRowsEvents() {
   });
 }
 
-async function editPractice(id, name, desc, rate) {
+async function editPractice(id, name, desc) {
   const existingRoles = await loadPracticeRoles(id);
   showModal(`
     <h3>Edit Practice</h3>
     <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editPrName" value="${esc(name)}"></div>
     <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editPrDesc" value="${esc(desc)}"></div>
     ${buildRolesSectionHtml(existingRoles)}
-    <div class="form-group" style="margin-bottom:16px">
-      <label>Default legacy day-rate</label>
-      <input type="number" id="editPracticeRate" min="0" step="0.01" placeholder="optional" value="${rate != null ? esc(String(rate)) : ''}">
-      <small class="field-help" style="color:var(--gray-500)">Used as legacy-cost fallback when a project has no override.</small>
-    </div>
     <div class="form-actions">
       <button class="btn btn-primary" onclick="savePractice(${id})">Save</button>
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -3568,10 +3540,8 @@ async function savePractice(id) {
   const name = document.getElementById('editPrName')?.value.trim();
   const desc = document.getElementById('editPrDesc')?.value.trim() || null;
   if (!name) { showToast('Name is required', 'error'); return; }
-  const rateRaw = document.getElementById('editPracticeRate')?.value;
-  const default_legacy_day_rate = parseOptionalNumber(rateRaw);
   try {
-    await apiCall('PUT', `/practices/${id}`, { name, description: desc, default_legacy_day_rate });
+    await apiCall('PUT', `/practices/${id}`, { name, description: desc });
   } catch (err) { showToast(err.message, 'error'); return; }
 
   const rows = Array.from(document.querySelectorAll('#rolesTableBody .role-row'));
