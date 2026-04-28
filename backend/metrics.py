@@ -9,6 +9,9 @@ from typing import Optional
 
 from backend.schema import SCORES
 
+# Maps the xCSG team-size dropdown values ("1", "2", "3", "4+") to numeric
+# midpoints. Only used for xcsg_team_size — the legacy team-size flat string
+# was dropped in Phase 2c (replaced by the per-project legacy_team mix).
 TEAM_MIDPOINTS = {"1": 1.0, "2": 2.0, "3": 3.0, "4+": 5.0}
 
 REVISION_DEPTH_SCORES = SCORES["revision_depth"]
@@ -53,6 +56,9 @@ def coalesce(data: dict, *keys: str) -> object:
 
 
 
+# Note: only used for xcsg_team_size. Legacy team size now flows through
+# the project_legacy_team table — see compute_project_metrics for the
+# team-mix-derived legacy_person_days computation.
 def parse_team_size(value: Optional[object]) -> Optional[float]:
     if value is None:
         return None

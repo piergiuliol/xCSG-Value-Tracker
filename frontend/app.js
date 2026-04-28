@@ -159,12 +159,22 @@ function renderEconomicsCard(project, metrics) {
     ? `<div style="margin-top:10px;color:var(--gray-600);font-size:13px"><strong>Scope-expansion revenue:</strong> ${fc(project.scope_expansion_revenue)}</div>`
     : '';
 
+  // Phase 2c: contextual hint for missing legacy team mix.
+  const hasRevenue = project.engagement_revenue != null;
+  const hasLegacyTeam = (project.legacy_team || []).length > 0;
+  const legacyHint = (!hasLegacyTeam && hasRevenue && metrics?.legacy_cost == null)
+    ? `<div style="margin-top:10px;padding:8px;background:var(--amber-50,#fffbeb);border-left:3px solid var(--amber-400,#fbbf24);color:var(--gray-700);font-size:12px">
+         <strong>Legacy cost not computed.</strong> Add a Legacy team mix on the project edit form to enable Margin Gain, Delivery Speed, and Cost / Quality comparisons.
+       </div>`
+    : '';
+
   return `
     <div class="economics-card" style="margin-top:16px;padding:16px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
       <h3 style="margin:0 0 12px;color:var(--navy);font-size:15px">Economics</h3>
       ${header}
       ${grid}
       ${footer}
+      ${legacyHint}
     </div>`;
 }
 
@@ -1062,13 +1072,22 @@ async function refreshPioneerRoleSelects() {
 
 function renderLegacyTeamSection(existingTeam) {
   // existingTeam: [{role_name, count, day_rate}, ...]
+  const hasCatalog = (window._availableRoles || []).length > 0;
+
   let rowsHtml = '';
   (existingTeam || []).forEach((r, idx) => {
     rowsHtml += renderLegacyTeamRow(idx, r);
   });
   if (!existingTeam || existingTeam.length === 0) {
-    rowsHtml = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+    if (hasCatalog) {
+      rowsHtml = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+    } else {
+      const adminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. <a href="#settings" onclick="setTimeout(() => document.getElementById('tabPractices')?.click(), 50)" style="color:var(--brand-blue,#6EC1E4)">Configure the practice catalog →</a></div>`;
+      const nonAdminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. Ask an admin to configure the catalog before entering legacy cost.</div>`;
+      rowsHtml = isAdmin() ? adminMsg : nonAdminMsg;
+    }
   }
+
   return `
     <div class="form-group" style="margin-top:16px">
       <label style="font-weight:600;display:block;margin-bottom:6px">Legacy team mix</label>
@@ -1076,7 +1095,7 @@ function renderLegacyTeamSection(existingTeam) {
         <span>Role</span><span>Count</span><span>Rate</span><span></span>
       </div>
       <div id="legacyTeamBody">${rowsHtml}</div>
-      <button type="button" class="btn btn-secondary btn-sm" id="addLegacyTeamRowBtn" style="margin-top:8px">+ Add role</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="addLegacyTeamRowBtn" ${hasCatalog ? 'style="margin-top:8px"' : 'disabled style="margin-top:8px;opacity:0.5;cursor:not-allowed"'}>+ Add role</button>
     </div>`;
 }
 
@@ -1143,6 +1162,37 @@ function refreshLegacyTeamRolePickers() {
   // but preserve the user's existing selections.
   const body = document.getElementById('legacyTeamBody');
   if (!body) return;
+
+  // If the body contains only the empty-state placeholder, re-render
+  // the full section so the catalog-empty vs catalog-available message
+  // and the "+ Add role" button disabled state are updated correctly.
+  const hasOnlyEmptyState = body.querySelector('.legacy-team-empty') && body.querySelectorAll('.legacy-team-row').length === 0;
+  if (hasOnlyEmptyState) {
+    const addBtn = document.getElementById('addLegacyTeamRowBtn');
+    const hasCatalog = (window._availableRoles || []).length > 0;
+    // Update empty-state message.
+    if (hasCatalog) {
+      body.innerHTML = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+    } else {
+      const adminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. <a href="#settings" onclick="setTimeout(() => document.getElementById('tabPractices')?.click(), 50)" style="color:var(--brand-blue,#6EC1E4)">Configure the practice catalog →</a></div>`;
+      const nonAdminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. Ask an admin to configure the catalog before entering legacy cost.</div>`;
+      body.innerHTML = isAdmin() ? adminMsg : nonAdminMsg;
+    }
+    // Update the add button's disabled state.
+    if (addBtn) {
+      if (hasCatalog) {
+        addBtn.disabled = false;
+        addBtn.style.opacity = '';
+        addBtn.style.cursor = '';
+      } else {
+        addBtn.disabled = true;
+        addBtn.style.opacity = '0.5';
+        addBtn.style.cursor = 'not-allowed';
+      }
+    }
+    return;
+  }
+
   body.querySelectorAll('.legacy-team-row').forEach(row => {
     const sel = row.querySelector('.lt-role');
     if (!sel) return;
