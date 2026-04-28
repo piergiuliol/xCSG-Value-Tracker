@@ -1532,16 +1532,21 @@ def test_economics_models():
 
 
 def test_economics_metrics():
-    """_compute_economics_metrics covers all formulas + edge cases per spec."""
+    """_compute_economics_metrics covers all formulas + edge cases per spec.
+    Phase 2c: legacy_rate_effective replaced by legacy_team + l1_legacy_working_days.
+    Legacy cost = Σ(count × day_rate) × l1_days.
+    """
     from backend.metrics import _compute_economics_metrics
 
     # Happy path: all inputs populated, single pioneer.
+    # legacy_team=[{count:2, day_rate:900}], l1=40 → weighted=1800, cost=72000
     out = _compute_economics_metrics(
         engagement_revenue=120000,
         xcsg_person_days=20,
         legacy_person_days=80,
         pioneer_rates=[1500],
-        legacy_rate_effective=900,
+        legacy_team=[{"role_name": "X", "count": 2, "day_rate": 900}],
+        l1_legacy_working_days=40,
         quality_score=0.85,
         legacy_quality_score=0.5,
         scope_expansion_revenue=15000,
@@ -1549,8 +1554,7 @@ def test_economics_metrics():
     )
     assert out["xcsg_blended_rate"] == 1500
     assert out["xcsg_cost"] == 30000.0          # 1500 * 20
-    assert out["legacy_rate_effective"] == 900
-    assert out["legacy_cost"] == 72000.0        # 900 * 80
+    assert out["legacy_cost"] == 72000.0        # (2*900) * 40
     assert out["xcsg_margin"] == 90000.0        # 120000 - 30000
     assert out["legacy_margin"] == 48000.0      # 120000 - 72000
     assert round(out["xcsg_margin_pct"], 4) == 0.75
@@ -1560,12 +1564,14 @@ def test_economics_metrics():
     assert out["currency"] == "EUR"
 
     # Multi-pioneer averaging, mixed null/non-null rates.
+    # legacy_team=[{count:2, day_rate:800}], l1=20 → weighted=1600, cost=32000
     out = _compute_economics_metrics(
         engagement_revenue=100000,
         xcsg_person_days=10,
         legacy_person_days=40,
         pioneer_rates=[2000, None, 1000],   # null skipped
-        legacy_rate_effective=800,
+        legacy_team=[{"role_name": "X", "count": 2, "day_rate": 800}],
+        l1_legacy_working_days=20,
         quality_score=0.8,
         legacy_quality_score=0.4,
         scope_expansion_revenue=None,
@@ -1574,12 +1580,14 @@ def test_economics_metrics():
     assert out["xcsg_blended_rate"] == 1500   # mean of [2000, 1000]
 
     # Negative legacy margin → margin_gain is None.
+    # legacy_team=[{count:5, day_rate:200}], l1=40 → 5*200*40=40000 > 10000 revenue
     out = _compute_economics_metrics(
         engagement_revenue=10000,
         xcsg_person_days=5,
         legacy_person_days=200,
         pioneer_rates=[1000],
-        legacy_rate_effective=200,           # legacy_cost = 40000 > revenue
+        legacy_team=[{"role_name": "X", "count": 5, "day_rate": 200}],
+        l1_legacy_working_days=40,
         quality_score=0.7,
         legacy_quality_score=0.4,
         scope_expansion_revenue=None,
@@ -1588,10 +1596,13 @@ def test_economics_metrics():
     assert out["legacy_margin"] == -30000
     assert out["margin_gain"] is None
 
-    # No pioneer rates → cost / margin / gain all None, but revenue still surfaces.
+    # No pioneer rates → xcsg cost/margin None; legacy still computes.
+    # legacy_team=[{count:1, day_rate:900}], l1=40 → 900*40=36000
     out = _compute_economics_metrics(
         engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
-        pioneer_rates=[None, None], legacy_rate_effective=900,
+        pioneer_rates=[None, None],
+        legacy_team=[{"role_name": "X", "count": 1, "day_rate": 900}],
+        l1_legacy_working_days=40,
         quality_score=0.7, legacy_quality_score=0.4,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1602,10 +1613,12 @@ def test_economics_metrics():
     assert out["legacy_cost"] == 36000.0  # legacy still computes
     assert out["legacy_margin"] == 14000.0
 
-    # No legacy rate → legacy cost / margin / gain all None.
+    # No legacy team → legacy cost / margin / gain all None.
     out = _compute_economics_metrics(
         engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
-        pioneer_rates=[1500], legacy_rate_effective=None,
+        pioneer_rates=[1500],
+        legacy_team=[],
+        l1_legacy_working_days=40,
         quality_score=0.7, legacy_quality_score=0.4,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1614,9 +1627,12 @@ def test_economics_metrics():
     assert out["margin_gain"] is None
 
     # Cost-per-quality-point gain.
+    # legacy_team=[{count:2, day_rate:900}], l1=40 → 2*900*40=72000
     out = _compute_economics_metrics(
         engagement_revenue=120000, xcsg_person_days=20, legacy_person_days=80,
-        pioneer_rates=[1500], legacy_rate_effective=900,
+        pioneer_rates=[1500],
+        legacy_team=[{"role_name": "X", "count": 2, "day_rate": 900}],
+        l1_legacy_working_days=40,
         quality_score=0.85, legacy_quality_score=0.5,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1625,11 +1641,13 @@ def test_economics_metrics():
     expected_cppq_gain = (72000 / 0.5) / (30000 / 0.85)
     assert abs(out["cost_per_quality_point_gain"] - round(expected_cppq_gain, 2)) < 0.01
 
-    # margin_gain capped at 10x. Setup: xcsg_cost=10, legacy_cost=10000,
-    # so xcsg_margin=10990, legacy_margin=1000, raw ratio=10.99 → cap to 10.0.
+    # margin_gain capped at 10x. xcsg_cost=10, legacy_cost=10000.
+    # legacy_team=[{count:100, day_rate:100}], l1=1 → 100*100*1=10000
     out = _compute_economics_metrics(
         engagement_revenue=11000, xcsg_person_days=1, legacy_person_days=100,
-        pioneer_rates=[10], legacy_rate_effective=100,
+        pioneer_rates=[10],
+        legacy_team=[{"role_name": "X", "count": 100, "day_rate": 100}],
+        l1_legacy_working_days=1,
         quality_score=0.9, legacy_quality_score=0.5,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1637,7 +1655,10 @@ def test_economics_metrics():
 
 
 def test_compute_project_metrics_includes_economics():
-    """compute_project_metrics merges economics keys into its output."""
+    """compute_project_metrics merges economics keys into its output.
+    Phase 2c: legacy_cost = Σ(count × day_rate) × l1_legacy_working_days.
+    legacy_team=[{count:2, day_rate:800}], l1=40 → 2*800*40=64000. Same as Phase 1.
+    """
     from backend.metrics import compute_project_metrics
 
     data = {
@@ -1645,13 +1666,12 @@ def test_compute_project_metrics_includes_economics():
         "category_name": "Cat", "practice_code": "PC", "practice_name": "PName",
         "pioneer_name": "Pia", "client_name": "C",
         "xcsg_team_size": "2", "working_days": 10,
-        "l1_legacy_working_days": 40, "l2_legacy_team_size": "2",
+        "l1_legacy_working_days": 40,
+        "legacy_team": [{"role_name": "Engineer", "count": 2, "day_rate": 800}],
         "engagement_revenue": 100000,
         "currency": "EUR",
         "xcsg_pricing_model": "Fixed fee",
         "scope_expansion_revenue": 10000,
-        "legacy_day_rate_override": None,
-        "practice_default_legacy_day_rate": 800,
         "pioneer_day_rates": [1500],
         # quality inputs (minimum to make quality_score non-null)
         "c6_self_assessment": "Significantly better",
@@ -1674,19 +1694,75 @@ def test_compute_project_metrics_includes_economics():
         assert key in out, f"compute_project_metrics output missing {key}"
     assert out["currency"] == "EUR"
     assert out["xcsg_cost"] == 30000.0
-    assert out["legacy_cost"] == 64000.0  # 800 * (40 * 2)
+    assert out["legacy_cost"] == 64000.0  # 2 * 800 * 40
     assert out["xcsg_pricing_model"] == "Fixed fee"
 
     # No economics inputs → all econ keys present but None.
     bare = {k: v for k, v in data.items() if k not in (
         "engagement_revenue", "currency", "xcsg_pricing_model",
-        "scope_expansion_revenue", "legacy_day_rate_override",
-        "practice_default_legacy_day_rate", "pioneer_day_rates",
+        "scope_expansion_revenue", "pioneer_day_rates", "legacy_team",
     )}
     out2 = compute_project_metrics(bare)
     assert out2["xcsg_cost"] is None
     assert out2["legacy_cost"] is None
     assert out2["margin_gain"] is None
+
+
+def test_legacy_cost_from_team_mix():
+    """compute_project_metrics derives legacy_cost / legacy_person_days
+    from legacy_team x l1_legacy_working_days."""
+    from backend.metrics import compute_project_metrics
+
+    base = {
+        "id": 1, "project_name": "T",
+        "category_name": "Cat", "practice_code": "PC", "practice_name": "PName",
+        "pioneer_name": "Pia", "client_name": "C",
+        "xcsg_team_size": "2", "working_days": 10,
+        "l1_legacy_working_days": 40,
+        # Quality inputs (minimum to make scores non-null):
+        "c6_self_assessment": "Significantly better",
+        "c7_analytical_depth": "Strong",
+        "c8_decision_readiness": "Yes without caveats",
+        "l13_legacy_c7_depth": "Adequate",
+        "l14_legacy_c8_decision": "Yes with minor caveats",
+        "l5_legacy_client_reaction": "Met expectations",
+        "engagement_revenue": 100000,
+        "currency": "EUR",
+        "pioneer_day_rates": [1500],
+    }
+
+    # 1 Senior @ 1500 + 2 Analysts @ 600, project duration 40 days.
+    # legacy_person_days = (1+2) x 40 = 120
+    # legacy_cost = (1*1500 + 2*600) x 40 = (1500 + 1200) x 40 = 108000
+    out = compute_project_metrics({
+        **base,
+        "legacy_team": [
+            {"role_name": "Senior", "count": 1, "day_rate": 1500},
+            {"role_name": "Analyst", "count": 2, "day_rate": 600},
+        ],
+    })
+    assert out["legacy_person_days"] == 120
+    assert out["legacy_cost"] == 108000.0
+    assert out["legacy_margin"] == -8000.0  # 100000 - 108000
+
+    # No team -> cost None
+    out2 = compute_project_metrics({**base, "legacy_team": []})
+    assert out2["legacy_cost"] is None
+    assert out2["legacy_person_days"] is None
+    assert out2["legacy_margin"] is None
+    assert out2["margin_gain"] is None
+
+    # Missing legacy_team key -> same as empty
+    out3 = compute_project_metrics(base)
+    assert out3["legacy_cost"] is None
+
+    # No l1_legacy_working_days -> cost None even if team present
+    out4 = compute_project_metrics({
+        **{k: v for k, v in base.items() if k != "l1_legacy_working_days"},
+        "legacy_team": [{"role_name": "Senior", "count": 1, "day_rate": 1500}],
+    })
+    assert out4["legacy_cost"] is None
+    assert out4["legacy_person_days"] is None
 
 
 def test_create_project_persists_economics():
@@ -2343,6 +2419,7 @@ def main():
     test_legacy_team_models()
     test_pioneer_role_name_in_models()
     test_economics_metrics()
+    test_legacy_cost_from_team_mix()
     test_app_settings_endpoints()
     test_practice_roles_crud()
     test_practice_roles_admin_only()

@@ -229,7 +229,16 @@ def _compute_effort_metrics(data: dict) -> dict:
     calendar_days = compute_calendar_days(data.get("date_started"), data.get("date_delivered"))
     schedule_delta_days = compute_schedule_delta(data.get("date_expected_delivered"), data.get("date_delivered"))
     xcsg_person_days = compute_person_days(coalesce(data, "xcsg_working_days", "working_days"), data.get("xcsg_team_size"))
-    legacy_person_days = compute_person_days(coalesce(data, "l1_legacy_working_days", "legacy_working_days"), coalesce(data, "l2_legacy_team_size", "legacy_team_size"))
+
+    # Phase 2c: legacy_person_days derived from legacy_team + l1_legacy_working_days.
+    legacy_team = data.get("legacy_team") or []
+    l1_days = parse_number(data.get("l1_legacy_working_days") or data.get("legacy_working_days"))
+    if legacy_team and l1_days:
+        total_count = sum(int(r.get("count") or 0) for r in legacy_team)
+        legacy_person_days = total_count * l1_days if total_count > 0 else None
+    else:
+        legacy_person_days = None
+
     delivery_speed = compute_ratio(legacy_person_days, xcsg_person_days)
     engagement_revenue = parse_number(data.get("engagement_revenue"))
     revenue_productivity_xcsg = round2(engagement_revenue / xcsg_person_days) if engagement_revenue is not None and xcsg_person_days else None
@@ -306,13 +315,14 @@ def _compute_economics_metrics(
     xcsg_person_days: Optional[float],
     legacy_person_days: Optional[float],
     pioneer_rates: list,
-    legacy_rate_effective: Optional[float],
+    legacy_team: list,
+    l1_legacy_working_days: Optional[float],
     quality_score: Optional[float],
     legacy_quality_score: Optional[float],
     scope_expansion_revenue: Optional[float],
     currency: Optional[str],
 ) -> dict:
-    """Compute optional economics metrics.
+    """Phase 2c rewrite: legacy_cost derived from legacy_team + l1_legacy_working_days.
 
     Every metric returns None when its inputs are missing — this is what
     makes the section truly optional. Frontend renders '—' for None values.
@@ -321,7 +331,16 @@ def _compute_economics_metrics(
     xcsg_blended_rate = round2(sum(rates_present) / len(rates_present)) if rates_present else None
 
     xcsg_cost = round2(xcsg_blended_rate * xcsg_person_days) if xcsg_blended_rate is not None and xcsg_person_days else None
-    legacy_cost = round2(legacy_rate_effective * legacy_person_days) if legacy_rate_effective is not None and legacy_person_days else None
+
+    # Legacy cost from team mix.
+    if legacy_team and l1_legacy_working_days:
+        weighted = sum(int(r.get("count") or 0) * float(r.get("day_rate") or 0) for r in legacy_team)
+        if weighted > 0:
+            legacy_cost = round2(weighted * l1_legacy_working_days)
+        else:
+            legacy_cost = None
+    else:
+        legacy_cost = None
 
     xcsg_margin = round2(engagement_revenue - xcsg_cost) if engagement_revenue is not None and xcsg_cost is not None else None
     legacy_margin = round2(engagement_revenue - legacy_cost) if engagement_revenue is not None and legacy_cost is not None else None
@@ -354,7 +373,7 @@ def _compute_economics_metrics(
         "scope_expansion_revenue": scope_expansion_revenue,
         "xcsg_blended_rate": xcsg_blended_rate,
         "xcsg_cost": xcsg_cost,
-        "legacy_rate_effective": legacy_rate_effective,
+        # Phase 2c: legacy_rate_effective dropped — there's no single legacy rate.
         "legacy_cost": legacy_cost,
         "xcsg_margin": xcsg_margin,
         "legacy_margin": legacy_margin,
@@ -377,17 +396,17 @@ def compute_project_metrics(data: dict) -> dict:
     flywheel = _compute_flywheel_metrics(data)
     signals = _compute_signal_metrics(data)
 
-    # Economics (optional — every key may be None)
-    legacy_rate_effective = parse_number(data.get("legacy_day_rate_override"))
-    if legacy_rate_effective is None:
-        legacy_rate_effective = parse_number(data.get("practice_default_legacy_day_rate"))
+    # Economics (Phase 2c — legacy from team mix)
+    legacy_team = data.get("legacy_team") or []
+    l1_days = parse_number(data.get("l1_legacy_working_days") or data.get("legacy_working_days"))
     pioneer_day_rates = data.get("pioneer_day_rates") or []
     economics = _compute_economics_metrics(
         engagement_revenue=parse_number(data.get("engagement_revenue")),
         xcsg_person_days=effort["xcsg_person_days"],
         legacy_person_days=effort["legacy_person_days"],
         pioneer_rates=[parse_number(r) for r in pioneer_day_rates],
-        legacy_rate_effective=legacy_rate_effective,
+        legacy_team=legacy_team,
+        l1_legacy_working_days=l1_days,
         quality_score=quality["quality_score"],
         legacy_quality_score=quality["legacy_quality"],
         scope_expansion_revenue=parse_number(data.get("scope_expansion_revenue")),
