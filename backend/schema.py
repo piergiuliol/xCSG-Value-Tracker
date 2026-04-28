@@ -132,7 +132,6 @@ EXPERT_FIELDS = {
     "g1_reuse_intent":        {"label": "For this type of deliverable, would you choose the xCSG approach again?", "section": "G", "options": ["Yes without hesitation", "Yes with reservations", "No \u2014 legacy would have been better"]},
     # Section L — Legacy Estimates
     "l1_legacy_working_days":      {"label": "How many working days would this deliverable have taken using traditional methods?", "section": "L", "type": "integer"},
-    "l2_legacy_team_size":         {"label": "What team size would traditional delivery have required?", "section": "L", "options": ["1", "2", "3", "4+"]},
     "l3_legacy_revision_depth":    {"label": "What level of rework would traditional delivery have needed?", "section": "L", "options": ["No revisions needed", "Cosmetic only", "Moderate rework", "Major rework"]},
     "l4_legacy_scope_expansion":   {"label": "Would the scope have expanded under traditional delivery?", "section": "L", "options": ["Yes", "No"]},
     "l5_legacy_client_reaction":   {"label": "How would the client have reacted to traditional delivery?", "section": "L", "options": ["Exceeded expectations", "Met expectations", "Below expectations"]},
@@ -203,14 +202,11 @@ ECONOMICS_FIELDS = {
     "xcsg_pricing_model":       {"label": "Pricing model", "type": "select", "options": PRICING_MODELS, "optional": True},
     "scope_expansion_revenue":  {"label": "Scope-expansion revenue", "type": "number", "min": 0, "optional": True,
                                  "help": "Only meaningful when scope expanded — Yes."},
-    "legacy_day_rate_override": {"label": "Legacy day-rate override", "type": "number", "min": 0, "optional": True,
-                                 "help": "Defaults to practice norm if blank."},
+    # legacy_day_rate_override REMOVED — replaced by per-project legacy_team mix in Phase 2c.
     "pioneer_day_rate":         {"label": "Pioneer day rate", "type": "number", "min": 0, "optional": True,
                                  "scope": "pioneer",
                                  "help": "Effective day rate for this pioneer's contribution to this engagement."},
-    "default_legacy_day_rate":  {"label": "Default legacy day rate", "type": "number", "min": 0, "optional": True,
-                                 "scope": "practice",
-                                 "help": "Practice-level fallback for legacy cost computation."},
+    # default_legacy_day_rate REMOVED — practice rate now lives entirely in the role catalog.
 }
 
 # ── Practice role catalog (Phase 2a) ─────────────────────────────────────────
@@ -220,6 +216,14 @@ PRACTICE_ROLE_FIELDS = {
     "day_rate":      {"label": "Day rate", "type": "number", "min": 0, "required": True},
     "currency":      {"label": "Currency", "type": "select", "options": CURRENCIES, "required": True},
     "display_order": {"label": "Order", "type": "integer", "default": 0},
+}
+
+# ── Legacy team mix (Phase 2c) ───────────────────────────────────────────────
+
+LEGACY_TEAM_FIELDS = {
+    "role_name": {"label": "Role", "type": "text", "max_length": 80, "required": True},
+    "count":     {"label": "Count", "type": "integer", "min": 1, "required": True},
+    "day_rate":  {"label": "Day rate", "type": "number", "min": 0, "required": True},
 }
 
 # ── Dashboard configuration (single source of truth for the frontend) ───────
@@ -352,4 +356,5 @@ def build_schema_response() -> dict:
         "pricing_models": PRICING_MODELS,
         "economics_fields": ECONOMICS_FIELDS,
         "practice_role_fields": PRACTICE_ROLE_FIELDS,
+        "legacy_team_fields": LEGACY_TEAM_FIELDS,
     }

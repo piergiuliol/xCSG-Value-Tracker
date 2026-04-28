@@ -1230,7 +1230,7 @@ def test_economics_schema():
 
     expected_econ = {
         "engagement_revenue", "currency", "xcsg_pricing_model",
-        "scope_expansion_revenue", "legacy_day_rate_override",
+        "scope_expansion_revenue",
     }
     assert expected_econ.issubset(set(ECONOMICS_FIELDS.keys()))
 
@@ -1440,6 +1440,41 @@ def test_practice_roles_schema():
     response = build_schema_response()
     assert "practice_role_fields" in response
     assert response["practice_role_fields"]["role_name"]["max_length"] == 80
+
+
+def test_legacy_team_schema():
+    """schema.py exposes LEGACY_TEAM_FIELDS via build_schema_response.
+    Deprecated fields are removed from ECONOMICS_FIELDS and EXPERT_FIELDS."""
+    from backend.schema import (
+        LEGACY_TEAM_FIELDS, ECONOMICS_FIELDS, EXPERT_FIELDS,
+        REQUIRED_EXPERT_FIELDS, build_schema_response,
+    )
+
+    expected = {"role_name", "count", "day_rate"}
+    assert expected.issubset(set(LEGACY_TEAM_FIELDS.keys()))
+
+    role_name = LEGACY_TEAM_FIELDS["role_name"]
+    assert role_name["type"] == "text"
+
+    count = LEGACY_TEAM_FIELDS["count"]
+    assert count["type"] == "integer"
+    assert count["min"] == 1
+
+    day_rate = LEGACY_TEAM_FIELDS["day_rate"]
+    assert day_rate["type"] == "number"
+    assert day_rate["min"] == 0
+
+    # Deprecated fields removed from ECONOMICS_FIELDS.
+    assert "legacy_day_rate_override" not in ECONOMICS_FIELDS
+    assert "default_legacy_day_rate" not in ECONOMICS_FIELDS
+
+    # Deprecated field removed from EXPERT_FIELDS and REQUIRED_EXPERT_FIELDS.
+    assert "l2_legacy_team_size" not in EXPERT_FIELDS
+    assert "l2_legacy_team_size" not in REQUIRED_EXPERT_FIELDS
+
+    response = build_schema_response()
+    assert "legacy_team_fields" in response
+    assert response["legacy_team_fields"]["count"]["min"] == 1
 
 
 def test_economics_models():
@@ -2135,6 +2170,7 @@ def main():
     test_seed_field_coverage()
     test_economics_schema()
     test_practice_roles_schema()
+    test_legacy_team_schema()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
