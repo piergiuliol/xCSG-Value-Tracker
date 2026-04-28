@@ -534,7 +534,10 @@ async def update_project(
         details=f"Updated project #{project_id}",
     )
     updated = db.get_project(project_id)
-    return dict(updated)
+    result = dict(updated)
+    result["pioneers"] = db.list_pioneers(project_id)
+    result["legacy_team"] = db.list_legacy_team(project_id)
+    return result
 
 
 @app.delete("/api/projects/{project_id}", status_code=204)

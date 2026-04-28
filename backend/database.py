@@ -1206,18 +1206,16 @@ def create_project(data: dict) -> int:
     - ``pioneer_name`` string (v1.0 compat): creates a single pioneer from it
     """
     category_id = data["category_id"]
-    for field in ("legacy_calendar_days", "legacy_team_size", "legacy_revision_rounds"):
+    for field in ("legacy_calendar_days", "legacy_revision_rounds"):
         if not data.get(field):
             norm = get_norm_by_category(category_id)
             if norm:
                 if field == "legacy_calendar_days":
                     data[field] = norm["typical_calendar_days"]
-                elif field == "legacy_team_size":
-                    data[field] = norm["typical_team_size"]
                 elif field == "legacy_revision_rounds":
                     data[field] = norm["typical_revision_rounds"]
             else:
-                data[field] = "6-10" if "days" in field else ("2" if "team" in field else "1")
+                data[field] = "6-10" if "days" in field else "1"
 
     # Determine pioneers list
     pioneers_input = data.get("pioneers")

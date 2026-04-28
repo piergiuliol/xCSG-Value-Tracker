@@ -1986,6 +1986,22 @@ def test_legacy_team_models():
     assert "legacy_day_rate_override" not in ProjectUpdate.model_fields
     assert "default_legacy_day_rate" not in PracticeUpdate.model_fields
     assert "l2_legacy_team_size" not in ExpertResponseCreate.model_fields
+    assert "legacy_team_size" not in ProjectCreate.model_fields
+    assert "legacy_team_size" not in ProjectUpdate.model_fields
+
+
+def test_legacy_team_role_name_max_length():
+    """LegacyTeamRoleEntry rejects role_name > 80 chars."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import LegacyTeamRoleEntry
+
+    # 80 chars OK
+    LegacyTeamRoleEntry(role_name="x" * 80, count=1, day_rate=100)
+
+    # 81 chars rejected
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="x" * 81, count=1, day_rate=100)
 
 
 def test_practice_roles_crud():
@@ -2418,6 +2434,7 @@ def main():
     test_economics_models()
     test_practice_role_models()
     test_legacy_team_models()
+    test_legacy_team_role_name_max_length()
     test_pioneer_role_name_in_models()
     test_economics_metrics()
     test_legacy_cost_from_team_mix()

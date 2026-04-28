@@ -140,7 +140,6 @@ class ProjectCreate(BaseModel):
     xcsg_pricing_model: Optional[str] = None
     scope_expansion_revenue: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
-    legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
     legacy_team: List["LegacyTeamRoleEntry"] = []
 
@@ -210,7 +209,6 @@ class ProjectUpdate(BaseModel):
     xcsg_pricing_model: Optional[str] = None
     scope_expansion_revenue: Optional[float] = None
     legacy_calendar_days: Optional[str] = None
-    legacy_team_size: Optional[str] = None
     legacy_revision_rounds: Optional[str] = None
     legacy_team: Optional[List["LegacyTeamRoleEntry"]] = None
     # Semantics: None = leave unchanged; [] = clear team mix; non-empty = replace.
@@ -503,6 +501,8 @@ class LegacyTeamRoleEntry(BaseModel):
         s = v.strip() if isinstance(v, str) else ""
         if not s:
             raise ValueError("role_name must not be empty")
+        if len(s) > 80:
+            raise ValueError("role_name must be at most 80 characters")
         return s
 
     @field_validator("count")
