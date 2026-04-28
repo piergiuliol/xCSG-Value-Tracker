@@ -3486,7 +3486,7 @@ function buildRolesSectionHtml(existingRoles) {
   return `
     <div class="form-group" style="margin-bottom:16px">
       <label style="font-weight:600;display:block;margin-bottom:6px">Roles &amp; rates</label>
-      <div id="rolesTableHeader" style="display:grid;grid-template-columns:24px 24px 1fr 110px 90px 32px;gap:6px;font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;padding:0 4px">
+      <div id="rolesTableHeader" style="display:grid;grid-template-columns:24px 24px minmax(0, 1fr) 110px 90px 32px;gap:6px;font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;padding:0 4px">
         <span></span><span></span><span>Role</span><span>Day rate</span><span>Currency</span><span></span>
       </div>
       <div id="rolesTableBody">${rowsHtml}</div>
@@ -3499,7 +3499,7 @@ function renderRoleRow(idx, r) {
   const optsWithSel = (schema?.currencies || ['EUR', 'USD'])
     .map(c => `<option value="${esc(c)}" ${c === currentCurrency ? 'selected' : ''}>${esc(c)}</option>`).join('');
   return `
-    <div class="role-row" data-row-idx="${idx}" style="display:grid;grid-template-columns:24px 24px 1fr 110px 90px 32px;gap:6px;align-items:center;padding:4px;border-bottom:1px solid var(--gray-100)">
+    <div class="role-row" data-row-idx="${idx}" style="display:grid;grid-template-columns:24px 24px minmax(0, 1fr) 110px 90px 32px;gap:6px;align-items:center;padding:4px;border-bottom:1px solid var(--gray-100)">
       <button type="button" class="btn-icon role-up" title="Move up" style="background:none;border:0;cursor:pointer">▲</button>
       <button type="button" class="btn-icon role-down" title="Move down" style="background:none;border:0;cursor:pointer">▼</button>
       <input type="text" class="role-name" maxlength="80" value="${esc(r.role_name || '')}" placeholder="Role name">
