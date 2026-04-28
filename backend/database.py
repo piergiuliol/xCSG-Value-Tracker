@@ -208,6 +208,7 @@ def init_db() -> None:
     migrate_v15()
     migrate_v16()
     migrate_v17()
+    migrate_v18()
 
     seed_data()
 
@@ -445,6 +446,53 @@ def migrate_v17() -> None:
         ).fetchall()}
         if "role_name" not in cols:
             conn.execute("ALTER TABLE project_pioneers ADD COLUMN role_name TEXT")
+        conn.commit()
+
+
+def migrate_v18() -> None:
+    """v1.8: Phase 2c — replace flat-rate legacy with team-mix model.
+
+    Creates project_legacy_team table, then drops 4 deprecated columns:
+    - projects.legacy_day_rate_override
+    - practices.default_legacy_day_rate
+    - projects.legacy_team_size
+    - expert_responses.l2_legacy_team_size
+
+    SQLite supports DROP COLUMN since 3.35 (2021). Idempotent via
+    PRAGMA checks before each DROP.
+    """
+    with _db() as conn:
+        # Create the new table first.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_legacy_team (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   project_id INTEGER NOT NULL,
+                   role_name TEXT NOT NULL,
+                   count INTEGER NOT NULL CHECK (count > 0),
+                   day_rate REAL NOT NULL,
+                   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_project_legacy_team_project
+                   ON project_legacy_team(project_id)"""
+        )
+
+        # Drop deprecated columns idempotently.
+        proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "legacy_day_rate_override" in proj_cols:
+            conn.execute("ALTER TABLE projects DROP COLUMN legacy_day_rate_override")
+        if "legacy_team_size" in proj_cols:
+            conn.execute("ALTER TABLE projects DROP COLUMN legacy_team_size")
+
+        prac_cols = {row[1] for row in conn.execute("PRAGMA table_info(practices)").fetchall()}
+        if "default_legacy_day_rate" in prac_cols:
+            conn.execute("ALTER TABLE practices DROP COLUMN default_legacy_day_rate")
+
+        expert_cols = {row[1] for row in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
+        if "l2_legacy_team_size" in expert_cols:
+            conn.execute("ALTER TABLE expert_responses DROP COLUMN l2_legacy_team_size")
+
         conn.commit()
 
 
@@ -1052,13 +1100,12 @@ def update_practice(
     practice_id: int,
     name: str,
     description: Optional[str] = None,
-    default_legacy_day_rate: Optional[float] = None,
 ) -> bool:
-    """Update name, description, and default_legacy_day_rate. `code` is immutable once seeded."""
+    """Update name and description. `code` is immutable once seeded."""
     with _db() as conn:
         conn.execute(
-            "UPDATE practices SET name = ?, description = ?, default_legacy_day_rate = ? WHERE id = ?",
-            (name, description, default_legacy_day_rate, practice_id),
+            "UPDATE practices SET name = ?, description = ? WHERE id = ?",
+            (name, description, practice_id),
         )
         conn.commit()
         return True
@@ -1099,6 +1146,32 @@ def list_practice_roles(practice_id: int) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def list_legacy_team(project_id: int) -> list[dict]:
+    """Return all legacy team-mix rows for a project, ordered by id."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT id, project_id, role_name, count, day_rate
+                 FROM project_legacy_team
+                WHERE project_id = ?
+             ORDER BY id ASC""",
+            (project_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def replace_legacy_team(project_id: int, team: list[dict]) -> None:
+    """Bulk-replace the project's legacy team mix in a single transaction."""
+    with _db() as conn:
+        conn.execute("DELETE FROM project_legacy_team WHERE project_id = ?", (project_id,))
+        for r in team:
+            conn.execute(
+                """INSERT INTO project_legacy_team (project_id, role_name, count, day_rate)
+                   VALUES (?, ?, ?, ?)""",
+                (project_id, r["role_name"], r["count"], r["day_rate"]),
+            )
+        conn.commit()
+
+
 def replace_practice_roles(practice_id: int, roles: list[dict]) -> None:
     """Bulk-replace all roles for a practice in a single transaction.
 
@@ -1133,18 +1206,16 @@ def create_project(data: dict) -> int:
     - ``pioneer_name`` string (v1.0 compat): creates a single pioneer from it
     """
     category_id = data["category_id"]
-    for field in ("legacy_calendar_days", "legacy_team_size", "legacy_revision_rounds"):
+    for field in ("legacy_calendar_days", "legacy_revision_rounds"):
         if not data.get(field):
             norm = get_norm_by_category(category_id)
             if norm:
                 if field == "legacy_calendar_days":
                     data[field] = norm["typical_calendar_days"]
-                elif field == "legacy_team_size":
-                    data[field] = norm["typical_team_size"]
                 elif field == "legacy_revision_rounds":
                     data[field] = norm["typical_revision_rounds"]
             else:
-                data[field] = "6-10" if "days" in field else ("2" if "team" in field else "1")
+                data[field] = "6-10" if "days" in field else "1"
 
     # Determine pioneers list
     pioneers_input = data.get("pioneers")
@@ -1169,11 +1240,11 @@ def create_project(data: dict) -> int:
                 pioneer_name, pioneer_email, description,
                 date_started, date_expected_delivered, date_delivered,
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
-                legacy_calendar_days, legacy_team_size, legacy_revision_rounds,
+                legacy_calendar_days, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
                 default_rounds, show_previous_answers, show_other_pioneers_answers, status,
-                currency, xcsg_pricing_model, scope_expansion_revenue, legacy_day_rate_override)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                currency, xcsg_pricing_model, scope_expansion_revenue)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -1194,7 +1265,6 @@ def create_project(data: dict) -> int:
                 data.get("xcsg_scope_expansion"),
                 data.get("engagement_revenue"),
                 data["legacy_calendar_days"],
-                data["legacy_team_size"],
                 data["legacy_revision_rounds"],
                 1 if legacy_overridden else 0,
                 data.get("engagement_stage"),
@@ -1208,7 +1278,6 @@ def create_project(data: dict) -> int:
                 data.get("currency"),
                 data.get("xcsg_pricing_model"),
                 data.get("scope_expansion_revenue"),
-                data.get("legacy_day_rate_override"),
             ),
         )
         project_id = cur.lastrowid
@@ -1230,6 +1299,15 @@ def create_project(data: dict) -> int:
                     (cur_pp.lastrowid, token, data.get("created_by")),
                 )
 
+        # Persist legacy_team mix (Phase 2c).
+        legacy_team = data.get("legacy_team") or []
+        for r in legacy_team:
+            conn.execute(
+                """INSERT INTO project_legacy_team (project_id, role_name, count, day_rate)
+                   VALUES (?, ?, ?, ?)""",
+                (project_id, r["role_name"], r["count"], r["day_rate"]),
+            )
+
         conn.commit()
         return project_id
 
@@ -1238,8 +1316,7 @@ def get_project(project_id: int) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name AS category_name,
-                      pr.code AS practice_code, pr.name AS practice_name,
-                      pr.default_legacy_day_rate AS practice_default_legacy_day_rate
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                LEFT JOIN practices pr ON p.practice_id = pr.id
@@ -1286,20 +1363,34 @@ def list_projects(
 
 
 def update_project(project_id: int, data: dict) -> bool:
+    # Phase 2c: pull legacy_team out before the generic field update.
+    # None = leave unchanged; [] = clear; non-empty list = replace.
+    legacy_team = data.pop("legacy_team", None)
+
     with _db() as conn:
         fields = {k: v for k, v in data.items() if v is not None}
-        if not fields:
-            return False
-        # Coerce booleans to SQLite-friendly ints for known boolean columns.
-        for bool_col in ("show_previous_answers", "show_other_pioneers_answers", "legacy_overridden"):
-            if bool_col in fields and isinstance(fields[bool_col], bool):
-                fields[bool_col] = 1 if fields[bool_col] else 0
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        set_clause += ", updated_at = CURRENT_TIMESTAMP"
-        values = list(fields.values()) + [project_id]
-        conn.execute(
-            f"UPDATE projects SET {set_clause} WHERE id = ?", values
-        )
+        if fields:
+            # Coerce booleans to SQLite-friendly ints for known boolean columns.
+            for bool_col in ("show_previous_answers", "show_other_pioneers_answers", "legacy_overridden"):
+                if bool_col in fields and isinstance(fields[bool_col], bool):
+                    fields[bool_col] = 1 if fields[bool_col] else 0
+            set_clause = ", ".join(f"{k} = ?" for k in fields)
+            set_clause += ", updated_at = CURRENT_TIMESTAMP"
+            values = list(fields.values()) + [project_id]
+            conn.execute(
+                f"UPDATE projects SET {set_clause} WHERE id = ?", values
+            )
+
+        # Apply legacy_team if explicitly provided (None means unchanged).
+        if legacy_team is not None:
+            conn.execute("DELETE FROM project_legacy_team WHERE project_id = ?", (project_id,))
+            for r in legacy_team:
+                conn.execute(
+                    """INSERT INTO project_legacy_team (project_id, role_name, count, day_rate)
+                       VALUES (?, ?, ?, ?)""",
+                    (project_id, r["role_name"], r["count"], r["day_rate"]),
+                )
+
         conn.commit()
         return True
 
@@ -1327,8 +1418,7 @@ def get_project_by_token(token: str) -> Optional[sqlite3.Row]:
     with _db() as conn:
         return conn.execute(
             """SELECT p.*, pc.name AS category_name,
-                      pr.code AS practice_code, pr.name AS practice_name,
-                      pr.default_legacy_day_rate AS practice_default_legacy_day_rate
+                      pr.code AS practice_code, pr.name AS practice_name
                FROM projects p
                JOIN project_categories pc ON p.category_id = pc.id
                LEFT JOIN practices pr ON p.practice_id = pr.id
@@ -1476,7 +1566,7 @@ def get_round_token(token: str) -> Optional[dict]:
                       p.description, p.date_started, p.date_delivered,
                       p.xcsg_calendar_days, p.working_days, p.xcsg_team_size,
                       p.xcsg_revision_rounds, p.revision_depth, p.xcsg_scope_expansion,
-                      p.engagement_revenue, p.legacy_calendar_days, p.legacy_team_size,
+                      p.engagement_revenue, p.legacy_calendar_days,
                       p.legacy_revision_rounds, p.legacy_overridden, p.engagement_stage,
                       p.default_rounds, p.show_previous_answers,
                       p.show_other_pioneers_answers, p.status,
@@ -1623,12 +1713,12 @@ def create_expert_response(pioneer_id: int, project_id: int, round_number: int, 
                 c1_specialization, c2_directness, c3_judgment_pct, c6_self_assessment, c7_analytical_depth, c8_decision_readiness,
                 d1_proprietary_data, d2_knowledge_reuse, d3_moat_test, e1_client_decision,
                 f1_feasibility, f2_productization, g1_reuse_intent,
-                l1_legacy_working_days, l2_legacy_team_size, l3_legacy_revision_depth, l4_legacy_scope_expansion,
+                l1_legacy_working_days, l3_legacy_revision_depth, l4_legacy_scope_expansion,
                 l5_legacy_client_reaction, l6_legacy_b2_sources, l7_legacy_c1_specialization, l8_legacy_c2_directness,
                 l9_legacy_c3_judgment, l10_legacy_d1_proprietary, l11_legacy_d2_reuse, l12_legacy_d3_moat,
                 l13_legacy_c7_depth, l14_legacy_c8_decision, l15_legacy_e1_decision, l16_legacy_b6_data,
                 notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project_id, pioneer_id, round_number,
                 data.get("b1_starting_point"),
@@ -1651,7 +1741,6 @@ def create_expert_response(pioneer_id: int, project_id: int, round_number: int, 
                 data.get("f2_productization"),
                 data.get("g1_reuse_intent"),
                 data.get("l1_legacy_working_days"),
-                data.get("l2_legacy_team_size"),
                 data.get("l3_legacy_revision_depth"),
                 data.get("l4_legacy_scope_expansion"),
                 data.get("l5_legacy_client_reaction"),

@@ -349,7 +349,7 @@ async def update_practice_endpoint(
     practice = db.get_practice(practice_id)
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
-    db.update_practice(practice_id, body.name, body.description, body.default_legacy_day_rate)
+    db.update_practice(practice_id, body.name, body.description)
     db.log_activity(
         current_user["sub"],
         "practice_updated",
@@ -427,6 +427,7 @@ async def list_projects(
         if responses:
             project_dict = dict(project)
             project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project["id"])
+            project_dict["legacy_team"] = db.list_legacy_team(project["id"])
             result["metrics"] = mtx.compute_averaged_project_metrics(project_dict, responses)
             result["response_count"] = len(responses)
         else:
@@ -473,7 +474,6 @@ async def create_project(
     if norm:
         data["legacy_overridden"] = (
             data.get("legacy_calendar_days") != norm["typical_calendar_days"]
-            or data.get("legacy_team_size") != norm["typical_team_size"]
             or data.get("legacy_revision_rounds") != norm["typical_revision_rounds"]
         )
     else:
@@ -502,10 +502,12 @@ async def get_project(
         raise HTTPException(status_code=404, detail="Project not found")
     result = dict(row)
     result["pioneers"] = db.list_pioneers(project_id)
+    result["legacy_team"] = db.list_legacy_team(project_id)
     responses = db.get_all_project_responses(project_id)
     if responses:
         project_dict = dict(row)
         project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+        project_dict["legacy_team"] = result["legacy_team"]
         result["metrics"] = mtx.compute_averaged_project_metrics(project_dict, responses)
         result["response_count"] = len(responses)
     else:
@@ -532,7 +534,10 @@ async def update_project(
         details=f"Updated project #{project_id}",
     )
     updated = db.get_project(project_id)
-    return dict(updated)
+    result = dict(updated)
+    result["pioneers"] = db.list_pioneers(project_id)
+    result["legacy_team"] = db.list_legacy_team(project_id)
+    return result
 
 
 @app.delete("/api/projects/{project_id}", status_code=204)
@@ -712,6 +717,7 @@ async def get_pioneer_round(
     merged = dict(project_dict)
     merged.update(dict(response))
     merged["pioneer_day_rates"] = db.get_pioneer_day_rates(pp["project_id"])
+    merged["legacy_team"] = db.list_legacy_team(pp["project_id"])
     metrics = mtx.compute_project_metrics(merged)
     # Include project-level economics fields so the frontend can render the
     # economics card (renderEconomicsCard needs project.engagement_revenue etc.)
@@ -730,7 +736,6 @@ async def get_pioneer_round(
             "scope_expansion_revenue": project_dict.get("scope_expansion_revenue"),
             "xcsg_pricing_model": project_dict.get("xcsg_pricing_model"),
             "currency": project_dict.get("currency"),
-            "legacy_day_rate_override": project_dict.get("legacy_day_rate_override"),
             "pioneers": pioneers,
         },
     }
@@ -817,6 +822,7 @@ async def get_expert_metrics(token: str):
 
     project_dict = dict(project_row)
     project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+    project_dict["legacy_team"] = db.list_legacy_team(project_id)
     metrics = mtx.compute_averaged_project_metrics(project_dict, responses)
     return ExpertAssessmentMetrics(
         machine_first_score=metrics.get("machine_first_score"),
@@ -873,6 +879,7 @@ async def submit_expert_response(token: str, body: ExpertResponseCreate):
     responses = db.get_all_project_responses(project_id)
     project_dict = dict(project_row)
     project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+    project_dict["legacy_team"] = db.list_legacy_team(project_id)
     metrics = mtx.compute_averaged_project_metrics(project_dict, responses)
 
     # Auto-issue the next round token if the pioneer has more rounds remaining
@@ -963,6 +970,7 @@ async def project_metrics(
     responses = db.get_all_project_responses(project_id)
     project_dict = dict(row)
     project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(project_id)
+    project_dict["legacy_team"] = db.list_legacy_team(project_id)
     return mtx.compute_averaged_project_metrics(project_dict, responses)
 
 
@@ -975,6 +983,7 @@ def _build_averaged_complete_projects() -> list:
         if responses:
             project_dict = dict(p)
             project_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(p["id"])
+            project_dict["legacy_team"] = db.list_legacy_team(p["id"])
             avg = mtx.compute_averaged_project_metrics(project_dict, responses)
             avg["id"] = p["id"]
             avg["project_name"] = p["project_name"]
@@ -1125,7 +1134,7 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
                 pioneer_names_str, p.get("client_name", ""),
                 p.get("date_started", ""), p.get("date_delivered", ""),
                 p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
-                p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                p.get("legacy_calendar_days", ""), "",
                 p.get("legacy_revision_rounds", ""),
                 p["status"], p["created_at"],
                 "", "", "", "", "", "", "", "",
@@ -1141,7 +1150,7 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
                     pioneer_name, p.get("client_name", ""),
                     p.get("date_started", ""), p.get("date_delivered", ""),
                     p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
-                    p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                    p.get("legacy_calendar_days", ""), "",
                     p.get("legacy_revision_rounds", ""),
                     p["status"], p["created_at"],
                     # B
@@ -1190,6 +1199,7 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
         if responses:
             export_dict = dict(p)
             export_dict["pioneer_day_rates"] = db.get_pioneer_day_rates(p["id"])
+            export_dict["legacy_team"] = db.list_legacy_team(p["id"])
             m = mtx.compute_averaged_project_metrics(export_dict, responses)
             # Get pioneer names for this project
             comp_pioneers = db.list_pioneers(p["id"])

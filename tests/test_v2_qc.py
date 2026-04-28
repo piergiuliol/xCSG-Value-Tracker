@@ -121,7 +121,7 @@ def test_expert_options():
         return
     
     opts = r.json()
-    test("Exactly 35 fields", len(opts) == 35, f"got {len(opts)}")
+    test("Exactly 34 fields (l2_legacy_team_size dropped in Phase 2c)", len(opts) == 34, f"got {len(opts)}")
     
     expected = {
         "b1_starting_point": ["From AI draft", "Mixed", "From blank page"],
@@ -152,10 +152,11 @@ def test_expert_options():
         l1 = opts["l1_legacy_working_days"]
         test("L1 has type='integer'", l1.get("type") == "integer" or "options" not in l1, f"type={l1.get('type')}, has_options={'options' in l1}")
     
-    # L2-L12 present
-    for i in range(2, 13):
-        key = f"l{i}_legacy_{'team_size' if i == 2 else 'revision_depth' if i == 3 else 'scope_expansion' if i == 4 else 'client_reaction' if i == 5 else 'b2_sources' if i == 6 else 'c1_specialization' if i == 7 else 'c2_directness' if i == 8 else 'c3_judgment' if i == 9 else 'd1_proprietary' if i == 10 else 'd2_reuse' if i == 11 else 'd3_moat'}"
+    # L3-L12 present (L2/l2_legacy_team_size dropped by Phase 2c)
+    for i in range(3, 13):
+        key = f"l{i}_legacy_{'revision_depth' if i == 3 else 'scope_expansion' if i == 4 else 'client_reaction' if i == 5 else 'b2_sources' if i == 6 else 'c1_specialization' if i == 7 else 'c2_directness' if i == 8 else 'c3_judgment' if i == 9 else 'd1_proprietary' if i == 10 else 'd2_reuse' if i == 11 else 'd3_moat'}"
         test(f"L{i} present ({key})", key in opts, f"missing from options")
+    test("L2 (l2_legacy_team_size) absent from options (dropped in v18)", "l2_legacy_team_size" not in opts)
     
     # Em dash check
     em_dash_fields = ["d3_moat_test", "g1_reuse_intent"]
@@ -347,7 +348,6 @@ def test_expert_assessment():
         "f2_productization": "Yes largely as-is",
         "g1_reuse_intent": "Yes without hesitation",
         "l1_legacy_working_days": 15,
-        "l2_legacy_team_size": "3",
         "l3_legacy_revision_depth": "Moderate rework",
         "l4_legacy_scope_expansion": "No",
         "l5_legacy_client_reaction": "Met expectations",
@@ -363,7 +363,7 @@ def test_expert_assessment():
         "l15_legacy_e1_decision": "Yes — referenced in internal discussions",
         "l16_legacy_b6_data": ">75% on data",
     }
-    
+
     r = requests.post(f"{BASE}/api/expert/{token}", json=expert_data)
     test("POST /api/expert/{{token}} returns 201", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:100]}")
     
@@ -686,10 +686,11 @@ def test_schema():
     test("expert_responses has c8_decision_readiness", "c8_decision_readiness" in exp_cols)
     test("expert_responses has e1_client_decision", "e1_client_decision" in exp_cols)
     
-    # Legacy columns
-    legacy_cols = ["l1_legacy_working_days", "l2_legacy_team_size", "l3_legacy_revision_depth", "l13_legacy_c7_depth", "l14_legacy_c8_decision", "l15_legacy_e1_decision", "l16_legacy_b6_data"]
+    # Legacy columns (l2_legacy_team_size dropped by migrate_v18)
+    legacy_cols = ["l1_legacy_working_days", "l3_legacy_revision_depth", "l13_legacy_c7_depth", "l14_legacy_c8_decision", "l15_legacy_e1_decision", "l16_legacy_b6_data"]
     for col in legacy_cols:
         test(f"expert_responses has {col}", col in exp_cols)
+    test("expert_responses l2_legacy_team_size dropped (v18)", "l2_legacy_team_size" not in exp_cols)
 
     conn.close()
 
@@ -801,7 +802,6 @@ _VALID_EXPERT_PAYLOAD = {
     "f2_productization": "Yes largely as-is",
     "g1_reuse_intent": "Yes without hesitation",
     "l1_legacy_working_days": 15,
-    "l2_legacy_team_size": "3",
     "l3_legacy_revision_depth": "Moderate rework",
     "l4_legacy_scope_expansion": "No",
     "l5_legacy_client_reaction": "Met expectations",
@@ -1230,7 +1230,7 @@ def test_economics_schema():
 
     expected_econ = {
         "engagement_revenue", "currency", "xcsg_pricing_model",
-        "scope_expansion_revenue", "legacy_day_rate_override",
+        "scope_expansion_revenue",
     }
     assert expected_econ.issubset(set(ECONOMICS_FIELDS.keys()))
 
@@ -1252,14 +1252,14 @@ def test_migrate_v15_idempotent():
     # init_db just ran above; verify the post-state.
     with database._db() as conn:
         proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
-        for col in ("currency", "xcsg_pricing_model", "scope_expansion_revenue", "legacy_day_rate_override"):
+        # legacy_day_rate_override was added by v15 but dropped by v18
+        for col in ("currency", "xcsg_pricing_model", "scope_expansion_revenue"):
             assert col in proj_cols, f"projects.{col} missing"
 
         pp_cols = {r[1] for r in conn.execute("PRAGMA table_info(project_pioneers)").fetchall()}
         assert "day_rate" in pp_cols, "project_pioneers.day_rate missing"
 
-        prac_cols = {r[1] for r in conn.execute("PRAGMA table_info(practices)").fetchall()}
-        assert "default_legacy_day_rate" in prac_cols, "practices.default_legacy_day_rate missing"
+        # default_legacy_day_rate was added by v15 but dropped by v18
 
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "app_settings" in tables
@@ -1348,9 +1348,9 @@ def test_migrate_v17_idempotent():
         cur = conn.execute(
             "INSERT INTO projects (created_by, project_name, category_id, "
             "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
-            "legacy_calendar_days, legacy_team_size, legacy_revision_rounds, "
+            "legacy_calendar_days, legacy_revision_rounds, "
             "expert_token, status) "
-            "VALUES (1, 'mig17 test', 1, 'P', 'p@x.io', '2', '1', '10', '2', '1', 'tok-mig17', 'pending')"
+            "VALUES (1, 'mig17 test', 1, 'P', 'p@x.io', '2', '1', '10', '1', 'tok-mig17', 'pending')"
         )
         project_id = cur.lastrowid
         cur = conn.execute(
@@ -1442,6 +1442,41 @@ def test_practice_roles_schema():
     assert response["practice_role_fields"]["role_name"]["max_length"] == 80
 
 
+def test_legacy_team_schema():
+    """schema.py exposes LEGACY_TEAM_FIELDS via build_schema_response.
+    Deprecated fields are removed from ECONOMICS_FIELDS and EXPERT_FIELDS."""
+    from backend.schema import (
+        LEGACY_TEAM_FIELDS, ECONOMICS_FIELDS, EXPERT_FIELDS,
+        REQUIRED_EXPERT_FIELDS, build_schema_response,
+    )
+
+    expected = {"role_name", "count", "day_rate"}
+    assert expected.issubset(set(LEGACY_TEAM_FIELDS.keys()))
+
+    role_name = LEGACY_TEAM_FIELDS["role_name"]
+    assert role_name["type"] == "text"
+
+    count = LEGACY_TEAM_FIELDS["count"]
+    assert count["type"] == "integer"
+    assert count["min"] == 1
+
+    day_rate = LEGACY_TEAM_FIELDS["day_rate"]
+    assert day_rate["type"] == "number"
+    assert day_rate["min"] == 0
+
+    # Deprecated fields removed from ECONOMICS_FIELDS.
+    assert "legacy_day_rate_override" not in ECONOMICS_FIELDS
+    assert "default_legacy_day_rate" not in ECONOMICS_FIELDS
+
+    # Deprecated field removed from EXPERT_FIELDS and REQUIRED_EXPERT_FIELDS.
+    assert "l2_legacy_team_size" not in EXPERT_FIELDS
+    assert "l2_legacy_team_size" not in REQUIRED_EXPERT_FIELDS
+
+    response = build_schema_response()
+    assert "legacy_team_fields" in response
+    assert response["legacy_team_fields"]["count"]["min"] == 1
+
+
 def test_economics_models():
     """ProjectCreate, PioneerCreate, PracticeUpdate accept and validate economics fields."""
     import pytest
@@ -1464,7 +1499,6 @@ def test_economics_models():
         currency="EUR",
         xcsg_pricing_model="Fixed fee",
         scope_expansion_revenue=15000,
-        legacy_day_rate_override=900,
     )
     assert p.engagement_revenue == 120000
     assert p.currency == "EUR"
@@ -1472,7 +1506,7 @@ def test_economics_models():
     assert p.pioneers[0].day_rate == 1500
 
     # Negative numeric fields are rejected.
-    for bad_field in ("engagement_revenue", "scope_expansion_revenue", "legacy_day_rate_override"):
+    for bad_field in ("engagement_revenue", "scope_expansion_revenue"):
         with pytest.raises(ValidationError):
             ProjectCreate(**{**base, bad_field: -1})
     with pytest.raises(ValidationError):
@@ -1483,12 +1517,6 @@ def test_economics_models():
         ProjectCreate(**base, currency="XYZ")
     with pytest.raises(ValidationError):
         ProjectCreate(**base, xcsg_pricing_model="Pay what you want")
-
-    # Practices accept default_legacy_day_rate.
-    pu = PracticeUpdate(name="P", default_legacy_day_rate=1000)
-    assert pu.default_legacy_day_rate == 1000
-    with pytest.raises(ValidationError):
-        PracticeUpdate(name="P", default_legacy_day_rate=-1)
 
     # AppSettings models.
     s = AppSettings(default_currency="USD")
@@ -1502,16 +1530,21 @@ def test_economics_models():
 
 
 def test_economics_metrics():
-    """_compute_economics_metrics covers all formulas + edge cases per spec."""
+    """_compute_economics_metrics covers all formulas + edge cases per spec.
+    Phase 2c: legacy_rate_effective replaced by legacy_team + l1_legacy_working_days.
+    Legacy cost = Σ(count × day_rate) × l1_days.
+    """
     from backend.metrics import _compute_economics_metrics
 
     # Happy path: all inputs populated, single pioneer.
+    # legacy_team=[{count:2, day_rate:900}], l1=40 → weighted=1800, cost=72000
     out = _compute_economics_metrics(
         engagement_revenue=120000,
         xcsg_person_days=20,
         legacy_person_days=80,
         pioneer_rates=[1500],
-        legacy_rate_effective=900,
+        legacy_team=[{"role_name": "X", "count": 2, "day_rate": 900}],
+        l1_legacy_working_days=40,
         quality_score=0.85,
         legacy_quality_score=0.5,
         scope_expansion_revenue=15000,
@@ -1519,8 +1552,7 @@ def test_economics_metrics():
     )
     assert out["xcsg_blended_rate"] == 1500
     assert out["xcsg_cost"] == 30000.0          # 1500 * 20
-    assert out["legacy_rate_effective"] == 900
-    assert out["legacy_cost"] == 72000.0        # 900 * 80
+    assert out["legacy_cost"] == 72000.0        # (2*900) * 40
     assert out["xcsg_margin"] == 90000.0        # 120000 - 30000
     assert out["legacy_margin"] == 48000.0      # 120000 - 72000
     assert round(out["xcsg_margin_pct"], 4) == 0.75
@@ -1530,12 +1562,14 @@ def test_economics_metrics():
     assert out["currency"] == "EUR"
 
     # Multi-pioneer averaging, mixed null/non-null rates.
+    # legacy_team=[{count:2, day_rate:800}], l1=20 → weighted=1600, cost=32000
     out = _compute_economics_metrics(
         engagement_revenue=100000,
         xcsg_person_days=10,
         legacy_person_days=40,
         pioneer_rates=[2000, None, 1000],   # null skipped
-        legacy_rate_effective=800,
+        legacy_team=[{"role_name": "X", "count": 2, "day_rate": 800}],
+        l1_legacy_working_days=20,
         quality_score=0.8,
         legacy_quality_score=0.4,
         scope_expansion_revenue=None,
@@ -1544,12 +1578,14 @@ def test_economics_metrics():
     assert out["xcsg_blended_rate"] == 1500   # mean of [2000, 1000]
 
     # Negative legacy margin → margin_gain is None.
+    # legacy_team=[{count:5, day_rate:200}], l1=40 → 5*200*40=40000 > 10000 revenue
     out = _compute_economics_metrics(
         engagement_revenue=10000,
         xcsg_person_days=5,
         legacy_person_days=200,
         pioneer_rates=[1000],
-        legacy_rate_effective=200,           # legacy_cost = 40000 > revenue
+        legacy_team=[{"role_name": "X", "count": 5, "day_rate": 200}],
+        l1_legacy_working_days=40,
         quality_score=0.7,
         legacy_quality_score=0.4,
         scope_expansion_revenue=None,
@@ -1558,10 +1594,13 @@ def test_economics_metrics():
     assert out["legacy_margin"] == -30000
     assert out["margin_gain"] is None
 
-    # No pioneer rates → cost / margin / gain all None, but revenue still surfaces.
+    # No pioneer rates → xcsg cost/margin None; legacy still computes.
+    # legacy_team=[{count:1, day_rate:900}], l1=40 → 900*40=36000
     out = _compute_economics_metrics(
         engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
-        pioneer_rates=[None, None], legacy_rate_effective=900,
+        pioneer_rates=[None, None],
+        legacy_team=[{"role_name": "X", "count": 1, "day_rate": 900}],
+        l1_legacy_working_days=40,
         quality_score=0.7, legacy_quality_score=0.4,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1572,10 +1611,12 @@ def test_economics_metrics():
     assert out["legacy_cost"] == 36000.0  # legacy still computes
     assert out["legacy_margin"] == 14000.0
 
-    # No legacy rate → legacy cost / margin / gain all None.
+    # No legacy team → legacy cost / margin / gain all None.
     out = _compute_economics_metrics(
         engagement_revenue=50000, xcsg_person_days=10, legacy_person_days=40,
-        pioneer_rates=[1500], legacy_rate_effective=None,
+        pioneer_rates=[1500],
+        legacy_team=[],
+        l1_legacy_working_days=40,
         quality_score=0.7, legacy_quality_score=0.4,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1584,9 +1625,12 @@ def test_economics_metrics():
     assert out["margin_gain"] is None
 
     # Cost-per-quality-point gain.
+    # legacy_team=[{count:2, day_rate:900}], l1=40 → 2*900*40=72000
     out = _compute_economics_metrics(
         engagement_revenue=120000, xcsg_person_days=20, legacy_person_days=80,
-        pioneer_rates=[1500], legacy_rate_effective=900,
+        pioneer_rates=[1500],
+        legacy_team=[{"role_name": "X", "count": 2, "day_rate": 900}],
+        l1_legacy_working_days=40,
         quality_score=0.85, legacy_quality_score=0.5,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1595,11 +1639,13 @@ def test_economics_metrics():
     expected_cppq_gain = (72000 / 0.5) / (30000 / 0.85)
     assert abs(out["cost_per_quality_point_gain"] - round(expected_cppq_gain, 2)) < 0.01
 
-    # margin_gain capped at 10x. Setup: xcsg_cost=10, legacy_cost=10000,
-    # so xcsg_margin=10990, legacy_margin=1000, raw ratio=10.99 → cap to 10.0.
+    # margin_gain capped at 10x. xcsg_cost=10, legacy_cost=10000.
+    # legacy_team=[{count:100, day_rate:100}], l1=1 → 100*100*1=10000
     out = _compute_economics_metrics(
         engagement_revenue=11000, xcsg_person_days=1, legacy_person_days=100,
-        pioneer_rates=[10], legacy_rate_effective=100,
+        pioneer_rates=[10],
+        legacy_team=[{"role_name": "X", "count": 100, "day_rate": 100}],
+        l1_legacy_working_days=1,
         quality_score=0.9, legacy_quality_score=0.5,
         scope_expansion_revenue=None, currency="EUR",
     )
@@ -1607,7 +1653,10 @@ def test_economics_metrics():
 
 
 def test_compute_project_metrics_includes_economics():
-    """compute_project_metrics merges economics keys into its output."""
+    """compute_project_metrics merges economics keys into its output.
+    Phase 2c: legacy_cost = Σ(count × day_rate) × l1_legacy_working_days.
+    legacy_team=[{count:2, day_rate:800}], l1=40 → 2*800*40=64000. Same as Phase 1.
+    """
     from backend.metrics import compute_project_metrics
 
     data = {
@@ -1615,13 +1664,12 @@ def test_compute_project_metrics_includes_economics():
         "category_name": "Cat", "practice_code": "PC", "practice_name": "PName",
         "pioneer_name": "Pia", "client_name": "C",
         "xcsg_team_size": "2", "working_days": 10,
-        "l1_legacy_working_days": 40, "l2_legacy_team_size": "2",
+        "l1_legacy_working_days": 40,
+        "legacy_team": [{"role_name": "Engineer", "count": 2, "day_rate": 800}],
         "engagement_revenue": 100000,
         "currency": "EUR",
         "xcsg_pricing_model": "Fixed fee",
         "scope_expansion_revenue": 10000,
-        "legacy_day_rate_override": None,
-        "practice_default_legacy_day_rate": 800,
         "pioneer_day_rates": [1500],
         # quality inputs (minimum to make quality_score non-null)
         "c6_self_assessment": "Significantly better",
@@ -1644,19 +1692,75 @@ def test_compute_project_metrics_includes_economics():
         assert key in out, f"compute_project_metrics output missing {key}"
     assert out["currency"] == "EUR"
     assert out["xcsg_cost"] == 30000.0
-    assert out["legacy_cost"] == 64000.0  # 800 * (40 * 2)
+    assert out["legacy_cost"] == 64000.0  # 2 * 800 * 40
     assert out["xcsg_pricing_model"] == "Fixed fee"
 
     # No economics inputs → all econ keys present but None.
     bare = {k: v for k, v in data.items() if k not in (
         "engagement_revenue", "currency", "xcsg_pricing_model",
-        "scope_expansion_revenue", "legacy_day_rate_override",
-        "practice_default_legacy_day_rate", "pioneer_day_rates",
+        "scope_expansion_revenue", "pioneer_day_rates", "legacy_team",
     )}
     out2 = compute_project_metrics(bare)
     assert out2["xcsg_cost"] is None
     assert out2["legacy_cost"] is None
     assert out2["margin_gain"] is None
+
+
+def test_legacy_cost_from_team_mix():
+    """compute_project_metrics derives legacy_cost / legacy_person_days
+    from legacy_team x l1_legacy_working_days."""
+    from backend.metrics import compute_project_metrics
+
+    base = {
+        "id": 1, "project_name": "T",
+        "category_name": "Cat", "practice_code": "PC", "practice_name": "PName",
+        "pioneer_name": "Pia", "client_name": "C",
+        "xcsg_team_size": "2", "working_days": 10,
+        "l1_legacy_working_days": 40,
+        # Quality inputs (minimum to make scores non-null):
+        "c6_self_assessment": "Significantly better",
+        "c7_analytical_depth": "Strong",
+        "c8_decision_readiness": "Yes without caveats",
+        "l13_legacy_c7_depth": "Adequate",
+        "l14_legacy_c8_decision": "Yes with minor caveats",
+        "l5_legacy_client_reaction": "Met expectations",
+        "engagement_revenue": 100000,
+        "currency": "EUR",
+        "pioneer_day_rates": [1500],
+    }
+
+    # 1 Senior @ 1500 + 2 Analysts @ 600, project duration 40 days.
+    # legacy_person_days = (1+2) x 40 = 120
+    # legacy_cost = (1*1500 + 2*600) x 40 = (1500 + 1200) x 40 = 108000
+    out = compute_project_metrics({
+        **base,
+        "legacy_team": [
+            {"role_name": "Senior", "count": 1, "day_rate": 1500},
+            {"role_name": "Analyst", "count": 2, "day_rate": 600},
+        ],
+    })
+    assert out["legacy_person_days"] == 120
+    assert out["legacy_cost"] == 108000.0
+    assert out["legacy_margin"] == -8000.0  # 100000 - 108000
+
+    # No team -> cost None
+    out2 = compute_project_metrics({**base, "legacy_team": []})
+    assert out2["legacy_cost"] is None
+    assert out2["legacy_person_days"] is None
+    assert out2["legacy_margin"] is None
+    assert out2["margin_gain"] is None
+
+    # Missing legacy_team key -> same as empty
+    out3 = compute_project_metrics(base)
+    assert out3["legacy_cost"] is None
+
+    # No l1_legacy_working_days -> cost None even if team present
+    out4 = compute_project_metrics({
+        **{k: v for k, v in base.items() if k != "l1_legacy_working_days"},
+        "legacy_team": [{"role_name": "Senior", "count": 1, "day_rate": 1500}],
+    })
+    assert out4["legacy_cost"] is None
+    assert out4["legacy_person_days"] is None
 
 
 def test_create_project_persists_economics():
@@ -1672,7 +1776,7 @@ def test_create_project_persists_economics():
         "currency": "USD",
         "xcsg_pricing_model": "Fixed fee",
         "scope_expansion_revenue": 5000,
-        "legacy_day_rate_override": 750,
+        "legacy_team": [{"role_name": "Senior", "count": 1, "day_rate": 750}],
     }
     r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json=payload)
     test("POST /api/projects with economics returns 201", r.status_code == 201, f"got {r.status_code}: {r.text[:200]}")
@@ -1686,7 +1790,10 @@ def test_create_project_persists_economics():
         test("economics: currency stored", detail.get("currency") == "USD", f"got {detail.get('currency')}")
         test("economics: xcsg_pricing_model stored", detail.get("xcsg_pricing_model") == "Fixed fee", f"got {detail.get('xcsg_pricing_model')}")
         test("economics: scope_expansion_revenue stored", detail.get("scope_expansion_revenue") == 5000, f"got {detail.get('scope_expansion_revenue')}")
-        test("economics: legacy_day_rate_override stored", detail.get("legacy_day_rate_override") == 750, f"got {detail.get('legacy_day_rate_override')}")
+        test("economics: legacy_team stored", len(detail.get("legacy_team", [])) == 1, f"got {detail.get('legacy_team')}")
+        test("economics: legacy_team role_name stored", detail.get("legacy_team", [{}])[0].get("role_name") == "Senior", f"got {detail.get('legacy_team')}")
+        test("economics: legacy_team day_rate stored", detail.get("legacy_team", [{}])[0].get("day_rate") == 750, f"got {detail.get('legacy_team')}")
+        test("economics: legacy_team count stored", detail.get("legacy_team", [{}])[0].get("count") == 1, f"got {detail.get('legacy_team')}")
 
         pioneer_rates = sorted(p["day_rate"] for p in detail.get("pioneers", []))
         test("economics: pioneer day_rates stored", pioneer_rates == [1000, 1500], f"got {pioneer_rates}")
@@ -1705,49 +1812,6 @@ def test_create_project_persists_economics():
     finally:
         requests.delete(f"{BASE}/api/projects/{pid}", headers=auth_h(tk))
 
-
-def test_practice_default_legacy_day_rate():
-    """PUT /api/practices/{id} stores default_legacy_day_rate; GET surfaces it."""
-    print("\n── C3. Practice default_legacy_day_rate ──")
-    tk = admin_token()
-    headers = auth_h(tk)
-
-    list_r = requests.get(f"{BASE}/api/practices", headers=headers)
-    test("GET /api/practices reachable for rate test", list_r.status_code == 200, f"got {list_r.status_code}")
-    if list_r.status_code != 200:
-        return
-    practice = list_r.json()[0]
-    pid = practice["id"]
-    original_name = practice["name"]
-    original_rate = practice.get("default_legacy_day_rate")
-
-    try:
-        upd = requests.put(
-            f"{BASE}/api/practices/{pid}",
-            headers=headers,
-            json={"name": original_name, "default_legacy_day_rate": 950},
-        )
-        test("PUT practice with default_legacy_day_rate=950 returns 200", upd.status_code == 200, upd.text)
-
-        after = requests.get(f"{BASE}/api/practices", headers=headers).json()
-        target = next(p for p in after if p["id"] == pid)
-        test("default_legacy_day_rate persisted as 950", target["default_legacy_day_rate"] == 950,
-             f"got {target.get('default_legacy_day_rate')}")
-
-        bad = requests.put(
-            f"{BASE}/api/practices/{pid}",
-            headers=headers,
-            json={"name": original_name, "default_legacy_day_rate": -1},
-        )
-        test("PUT practice with negative rate returns 422", bad.status_code == 422,
-             f"got {bad.status_code}: {bad.text[:120]}")
-    finally:
-        # Restore original rate
-        requests.put(
-            f"{BASE}/api/practices/{pid}",
-            headers=headers,
-            json={"name": original_name, "default_legacy_day_rate": original_rate},
-        )
 
 
 def test_app_settings_endpoints():
@@ -1862,6 +1926,84 @@ def test_practice_role_models():
     assert u3.roles == []
 
 
+def test_legacy_team_models():
+    """LegacyTeamRoleEntry validates correctly. ProjectCreate/Update accept legacy_team
+    with None / [] / non-empty semantics. Deprecated fields are gone."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        LegacyTeamRoleEntry, ProjectCreate, ProjectUpdate,
+        PracticeUpdate, ExpertResponseCreate,
+    )
+
+    # Happy path entry.
+    e = LegacyTeamRoleEntry(role_name="Senior", count=2, day_rate=1500)
+    assert e.role_name == "Senior"
+    assert e.count == 2
+    assert e.day_rate == 1500
+
+    # role_name non-empty.
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="", count=1, day_rate=100)
+
+    # count must be >= 1.
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="X", count=0, day_rate=100)
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="X", count=-1, day_rate=100)
+
+    # day_rate must be >= 0.
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="X", count=1, day_rate=-1)
+
+    # ProjectCreate accepts legacy_team list (default empty).
+    base = {
+        "project_name": "T", "category_id": 1,
+        "pioneers": [{"name": "Pia"}],
+        "xcsg_team_size": "1", "xcsg_revision_rounds": "1",
+    }
+    p = ProjectCreate(**base)
+    assert p.legacy_team == []  # default
+
+    p2 = ProjectCreate(**base, legacy_team=[
+        {"role_name": "Senior", "count": 1, "day_rate": 1500},
+        {"role_name": "Analyst", "count": 2, "day_rate": 600},
+    ])
+    assert len(p2.legacy_team) == 2
+
+    # ProjectUpdate.legacy_team semantics: None/[]/non-empty.
+    u_none = ProjectUpdate()  # no legacy_team → None default
+    assert u_none.legacy_team is None
+
+    u_empty = ProjectUpdate(legacy_team=[])
+    assert u_empty.legacy_team == []
+
+    u_set = ProjectUpdate(legacy_team=[{"role_name": "X", "count": 1, "day_rate": 100}])
+    assert len(u_set.legacy_team) == 1
+
+    # Deprecated fields dropped from the models.
+    assert "legacy_day_rate_override" not in ProjectCreate.model_fields
+    assert "legacy_day_rate_override" not in ProjectUpdate.model_fields
+    assert "default_legacy_day_rate" not in PracticeUpdate.model_fields
+    assert "l2_legacy_team_size" not in ExpertResponseCreate.model_fields
+    assert "legacy_team_size" not in ProjectCreate.model_fields
+    assert "legacy_team_size" not in ProjectUpdate.model_fields
+
+
+def test_legacy_team_role_name_max_length():
+    """LegacyTeamRoleEntry rejects role_name > 80 chars."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import LegacyTeamRoleEntry
+
+    # 80 chars OK
+    LegacyTeamRoleEntry(role_name="x" * 80, count=1, day_rate=100)
+
+    # 81 chars rejected
+    with pytest.raises(ValidationError):
+        LegacyTeamRoleEntry(role_name="x" * 81, count=1, day_rate=100)
+
+
 def test_practice_roles_crud():
     """GET returns rows; PUT replaces atomically."""
     token = admin_token()
@@ -1967,6 +2109,154 @@ def test_practice_roles_404_for_unknown_practice():
         json={"roles": [{"role_name": "X", "day_rate": 1, "currency": "EUR"}]},
     )
     assert r.status_code == 404, f"PUT expected 404, got {r.status_code}: {r.text}"
+
+
+def test_migrate_v18_drops_columns_creates_table():
+    """migrate_v18 drops 4 deprecated columns and creates project_legacy_team."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        # New table exists with expected columns.
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "project_legacy_team" in tables
+
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(project_legacy_team)"
+        ).fetchall()}
+        for col in ("id", "project_id", "role_name", "count", "day_rate"):
+            assert col in cols, f"project_legacy_team.{col} missing"
+
+        # Index exists.
+        indexes = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='project_legacy_team'"
+        ).fetchall()}
+        assert "idx_project_legacy_team_project" in indexes
+
+        # Dropped columns are gone.
+        proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        assert "legacy_day_rate_override" not in proj_cols
+        assert "legacy_team_size" not in proj_cols
+
+        prac_cols = {r[1] for r in conn.execute("PRAGMA table_info(practices)").fetchall()}
+        assert "default_legacy_day_rate" not in prac_cols
+
+        expert_cols = {r[1] for r in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
+        assert "l2_legacy_team_size" not in expert_cols
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v18()
+    database.migrate_v18()
+
+
+def test_legacy_team_db_helpers():
+    """list_legacy_team and replace_legacy_team round-trip correctly."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO projects (created_by, project_name, category_id, "
+            "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
+            "legacy_calendar_days, legacy_revision_rounds, expert_token, status) "
+            "VALUES (1, 'lt test', 1, 'P', 'p@x.io', '1', '1', '10', '1', 'tok-lt', 'pending')"
+        )
+        project_id = cur.lastrowid
+        conn.commit()
+
+    try:
+        assert database.list_legacy_team(project_id) == []
+
+        database.replace_legacy_team(project_id, [
+            {"role_name": "Senior", "count": 1, "day_rate": 1500},
+            {"role_name": "Analyst", "count": 2, "day_rate": 600},
+        ])
+
+        rows = database.list_legacy_team(project_id)
+        assert len(rows) == 2
+        names = sorted(r["role_name"] for r in rows)
+        assert names == ["Analyst", "Senior"]
+
+        # Replace clears the previous set.
+        database.replace_legacy_team(project_id, [
+            {"role_name": "Manager", "count": 1, "day_rate": 1000},
+        ])
+        rows = database.list_legacy_team(project_id)
+        assert len(rows) == 1
+        assert rows[0]["role_name"] == "Manager"
+
+        # Empty list clears.
+        database.replace_legacy_team(project_id, [])
+        assert database.list_legacy_team(project_id) == []
+    finally:
+        with database._db() as conn:
+            conn.execute("DELETE FROM project_pioneers WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            conn.commit()
+
+
+def test_legacy_team_persistence():
+    """legacy_team round-trips through POST /api/projects + GET, including
+    None/[]/non-empty semantics for ProjectUpdate."""
+    headers = auth_h(admin_token())
+
+    payload = {
+        "project_name": "lt persist",
+        "category_id": 1,
+        "pioneers": [{"name": "P", "email": "p@x.io"}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+        "legacy_team": [
+            {"role_name": "Senior", "count": 1, "day_rate": 1500},
+            {"role_name": "Analyst", "count": 2, "day_rate": 600},
+        ],
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert "legacy_team" in detail
+        team = sorted(detail["legacy_team"], key=lambda r: r["role_name"])
+        assert team[0]["role_name"] == "Analyst"
+        assert team[0]["count"] == 2
+        assert team[0]["day_rate"] == 600
+        assert team[1]["role_name"] == "Senior"
+
+        # PUT with legacy_team=None → unchanged.
+        upd = requests.put(
+            f"{BASE}/api/projects/{pid}", headers=headers,
+            json={"project_name": "lt persist v2"},
+        )
+        assert upd.status_code == 200, upd.text
+        detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert len(detail2["legacy_team"]) == 2
+
+        # PUT with legacy_team=[] → cleared.
+        upd2 = requests.put(
+            f"{BASE}/api/projects/{pid}", headers=headers,
+            json={"legacy_team": []},
+        )
+        assert upd2.status_code == 200
+        detail3 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert detail3["legacy_team"] == []
+
+        # PUT with legacy_team=non-empty → replaced.
+        upd3 = requests.put(
+            f"{BASE}/api/projects/{pid}", headers=headers,
+            json={"legacy_team": [{"role_name": "Manager", "count": 1, "day_rate": 1000}]},
+        )
+        assert upd3.status_code == 200
+        detail4 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert len(detail4["legacy_team"]) == 1
+        assert detail4["legacy_team"][0]["role_name"] == "Manager"
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
 
 
 def test_pioneer_role_name_in_models():
@@ -2118,7 +2408,6 @@ def main():
     test_expert_options()
     test_categories()
     test_practices()
-    test_practice_default_legacy_day_rate()
     test_create_deliverable()
     test_expert_assessment()
     test_metrics()
@@ -2135,20 +2424,27 @@ def main():
     test_seed_field_coverage()
     test_economics_schema()
     test_practice_roles_schema()
+    test_legacy_team_schema()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
+    test_migrate_v18_drops_columns_creates_table()
+    test_legacy_team_db_helpers()
     test_practice_roles_db_helpers()
     test_economics_models()
     test_practice_role_models()
+    test_legacy_team_models()
+    test_legacy_team_role_name_max_length()
     test_pioneer_role_name_in_models()
     test_economics_metrics()
+    test_legacy_cost_from_team_mix()
     test_app_settings_endpoints()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
     test_practice_roles_404_for_unknown_practice()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
+    test_legacy_team_persistence()
     test_pioneer_role_name_persistence()
     test_pioneer_day_rate_independent_of_role_name()
     test_update_pioneer_clears_role_name()

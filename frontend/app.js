@@ -159,12 +159,22 @@ function renderEconomicsCard(project, metrics) {
     ? `<div style="margin-top:10px;color:var(--gray-600);font-size:13px"><strong>Scope-expansion revenue:</strong> ${fc(project.scope_expansion_revenue)}</div>`
     : '';
 
+  // Phase 2c: contextual hint for missing legacy team mix.
+  const hasRevenue = project.engagement_revenue != null;
+  const hasLegacyTeam = (project.legacy_team || []).length > 0;
+  const legacyHint = (!hasLegacyTeam && hasRevenue && metrics?.legacy_cost == null)
+    ? `<div style="margin-top:10px;padding:8px;background:var(--amber-50,#fffbeb);border-left:3px solid var(--amber-400,#fbbf24);color:var(--gray-700);font-size:12px">
+         <strong>Legacy cost not computed.</strong> Add a Legacy team mix on the project edit form to enable Margin Gain, Delivery Speed, and Cost / Quality comparisons.
+       </div>`
+    : '';
+
   return `
     <div class="economics-card" style="margin-top:16px;padding:16px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
       <h3 style="margin:0 0 12px;color:var(--navy);font-size:15px">Economics</h3>
       ${header}
       ${grid}
       ${footer}
+      ${legacyHint}
     </div>`;
 }
 
@@ -936,7 +946,6 @@ function renderExpertAssessment(er, metrics, project) {
         .map(([key, f]) => ({ key, label: f.label }))
     : [
         { key: 'l1_legacy_working_days', label: 'Legacy Working Days' },
-        { key: 'l2_legacy_team_size', label: 'Legacy Team Size' },
         { key: 'l3_legacy_revision_depth', label: 'Legacy Revision Depth' },
         { key: 'l4_legacy_scope_expansion', label: 'Legacy Scope Expansion' },
         { key: 'l5_legacy_client_reaction', label: 'Legacy Client Reaction' },
@@ -994,7 +1003,6 @@ function onCurrencyChange() {
   const hasValues = (
     document.getElementById('fRevenue')?.value ||
     document.getElementById('fScopeRev')?.value ||
-    document.getElementById('fLegacyRate')?.value ||
     Array.from(document.querySelectorAll('.pioneer-day-rate')).some(i => i.value)
   );
   if (hasValues) {
@@ -1010,6 +1018,7 @@ function onCurrencyChange() {
     el.textContent = txt.includes('/day') ? `${newCur}/day` : newCur;
   });
   refreshPioneerRoleSelects();
+  refreshLegacyTeamRolePickers();
 }
 
 function renderPioneerRoleSelect(currentRoleName, availableRoles) {
@@ -1058,6 +1067,150 @@ async function refreshPioneerRoleSelects() {
     oldSel.replaceWith(wrapper.firstChild);
   });
   document.querySelectorAll('.pioneer-row').forEach(wirePioneerRoleSelectEvents);
+  refreshLegacyTeamRolePickers();
+}
+
+function renderLegacyTeamSection(existingTeam) {
+  // existingTeam: [{role_name, count, day_rate}, ...]
+  const hasCatalog = (window._availableRoles || []).length > 0;
+
+  let rowsHtml = '';
+  (existingTeam || []).forEach((r, idx) => {
+    rowsHtml += renderLegacyTeamRow(idx, r);
+  });
+  if (!existingTeam || existingTeam.length === 0) {
+    if (hasCatalog) {
+      rowsHtml = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+    } else {
+      const adminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. <a href="#settings" onclick="setTimeout(() => document.getElementById('tabPractices')?.click(), 50)" style="color:var(--brand-blue,#6EC1E4)">Configure the practice catalog →</a></div>`;
+      const nonAdminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. Ask an admin to configure the catalog before entering legacy cost.</div>`;
+      rowsHtml = isAdmin() ? adminMsg : nonAdminMsg;
+    }
+  }
+
+  return `
+    <div class="form-group" style="margin-top:16px">
+      <label style="font-weight:600;display:block;margin-bottom:6px">Legacy team mix</label>
+      <div id="legacyTeamHeader" style="display:grid;grid-template-columns:minmax(0, 1fr) 70px 110px 32px;gap:6px;font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;padding:0 4px">
+        <span>Role</span><span>Count</span><span>Rate</span><span></span>
+      </div>
+      <div id="legacyTeamBody">${rowsHtml}</div>
+      <button type="button" class="btn btn-secondary btn-sm" id="addLegacyTeamRowBtn" ${hasCatalog ? 'style="margin-top:8px"' : 'disabled style="margin-top:8px;opacity:0.5;cursor:not-allowed"'}>+ Add role</button>
+    </div>`;
+}
+
+function renderLegacyTeamRow(idx, r) {
+  const roleName = r?.role_name || '';
+  const count = r?.count ?? '';
+  const rate = r?.day_rate ?? '';
+  const roleOptions = (window._availableRoles || [])
+    .map(role => {
+      const sel = role.role_name === roleName ? 'selected' : '';
+      return `<option value="${esc(role.role_name)}" data-rate="${role.day_rate}" ${sel}>${esc(role.role_name)} — ${esc(String(role.day_rate))}</option>`;
+    }).join('');
+  const orphanOpt = (roleName && !(window._availableRoles || []).some(r2 => r2.role_name === roleName))
+    ? `<option value="${esc(roleName)}" data-rate="${rate}" selected>${esc(roleName)} (not in catalog)</option>`
+    : '';
+  return `
+    <div class="legacy-team-row" data-row-idx="${idx}" style="display:grid;grid-template-columns:minmax(0, 1fr) 70px 110px 32px;gap:6px;align-items:center;padding:4px;border-bottom:1px solid var(--gray-100)">
+      <select class="lt-role"><option value="">—</option>${roleOptions}${orphanOpt}</select>
+      <input type="number" class="lt-count" min="1" step="1" value="${esc(String(count))}" placeholder="1">
+      <span class="lt-rate" style="color:var(--gray-600);font-size:13px">${rate !== '' ? esc(String(rate)) : '—'}</span>
+      <button type="button" class="btn-icon lt-remove" title="Remove" style="background:none;border:0;cursor:pointer;color:var(--danger)">×</button>
+    </div>`;
+}
+
+function wireLegacyTeamEvents() {
+  const body = document.getElementById('legacyTeamBody');
+  const addBtn = document.getElementById('addLegacyTeamRowBtn');
+  if (!body || !addBtn) return;
+
+  addBtn.addEventListener('click', () => {
+    const empty = body.querySelector('.legacy-team-empty');
+    if (empty) empty.remove();
+    const idx = body.querySelectorAll('.legacy-team-row').length;
+    body.insertAdjacentHTML('beforeend', renderLegacyTeamRow(idx, {}));
+    wireLegacyTeamRoleChange(body.lastElementChild);
+  });
+
+  body.addEventListener('click', (ev) => {
+    if (ev.target.classList.contains('lt-remove')) {
+      ev.target.closest('.legacy-team-row').remove();
+      if (body.querySelectorAll('.legacy-team-row').length === 0) {
+        body.innerHTML = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+      }
+    }
+  });
+
+  // Wire role-change handlers on existing rows.
+  body.querySelectorAll('.legacy-team-row').forEach(wireLegacyTeamRoleChange);
+}
+
+function wireLegacyTeamRoleChange(rowEl) {
+  const sel = rowEl.querySelector('.lt-role');
+  const rateSpan = rowEl.querySelector('.lt-rate');
+  if (!sel || !rateSpan) return;
+  sel.addEventListener('change', () => {
+    const opt = sel.options[sel.selectedIndex];
+    const rate = opt?.dataset?.rate;
+    rateSpan.textContent = (rate != null && rate !== '' && rate !== 'undefined') ? rate : '—';
+  });
+}
+
+function refreshLegacyTeamRolePickers() {
+  // Called when practice/currency changes — re-render role options
+  // but preserve the user's existing selections.
+  const body = document.getElementById('legacyTeamBody');
+  if (!body) return;
+
+  // If the body contains only the empty-state placeholder, re-render
+  // the full section so the catalog-empty vs catalog-available message
+  // and the "+ Add role" button disabled state are updated correctly.
+  const hasOnlyEmptyState = body.querySelector('.legacy-team-empty') && body.querySelectorAll('.legacy-team-row').length === 0;
+  if (hasOnlyEmptyState) {
+    const addBtn = document.getElementById('addLegacyTeamRowBtn');
+    const hasCatalog = (window._availableRoles || []).length > 0;
+    // Update empty-state message.
+    if (hasCatalog) {
+      body.innerHTML = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+    } else {
+      const adminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. <a href="#settings" onclick="setTimeout(() => document.getElementById('tabPractices')?.click(), 50)" style="color:var(--brand-blue,#6EC1E4)">Configure the practice catalog →</a></div>`;
+      const nonAdminMsg = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No roles available for this practice + currency. Ask an admin to configure the catalog before entering legacy cost.</div>`;
+      body.innerHTML = isAdmin() ? adminMsg : nonAdminMsg;
+    }
+    // Update the add button's disabled state.
+    if (addBtn) {
+      if (hasCatalog) {
+        addBtn.disabled = false;
+        addBtn.style.opacity = '';
+        addBtn.style.cursor = '';
+      } else {
+        addBtn.disabled = true;
+        addBtn.style.opacity = '0.5';
+        addBtn.style.cursor = 'not-allowed';
+      }
+    }
+    return;
+  }
+
+  body.querySelectorAll('.legacy-team-row').forEach(row => {
+    const sel = row.querySelector('.lt-role');
+    if (!sel) return;
+    const currentRoleName = sel.value;
+    const currentCount = row.querySelector('.lt-count')?.value || '';
+    const currentRate = row.querySelector('.lt-rate')?.textContent || '';
+    const idx = row.dataset.rowIdx;
+    // Re-render the row with current values.
+    const newHtml = renderLegacyTeamRow(idx, {
+      role_name: currentRoleName,
+      count: currentCount,
+      day_rate: currentRate === '—' ? '' : currentRate,
+    });
+    const wrapper = document.createElement('span');
+    wrapper.innerHTML = newHtml;
+    row.replaceWith(wrapper.firstElementChild);
+  });
+  body.querySelectorAll('.legacy-team-row').forEach(wireLegacyTeamRoleChange);
 }
 
 async function renderNewProject(existing) {
@@ -1152,23 +1305,17 @@ async function renderNewProject(existing) {
 
       <fieldset><legend>Legacy Comparables</legend>
         <p class="field-help" style="color:var(--gray-500);font-size:13px;margin:0 0 12px">Estimated delivery metrics if this project had been done using traditional methods. Pre-filled from category norms when available. The expert survey (Section L) provides more detailed legacy estimates \u2014 expert data takes precedence over these values when computing metrics.</p>
-        <div class="form-row">
-          <div class="form-group">
+        <div class="form-group">
             <label>Calendar Days</label>
             <input type="number" id="fLDays" min="1" max="365" step="1" value="${esc(p.legacy_calendar_days || '')}" placeholder="e.g. 10">
             <span class="field-warn" id="warnLDays"></span>
           </div>
-          <div class="form-group">
-            <label>Team Size</label>
-            <input type="number" id="fLTeam" min="1" max="50" step="1" value="${esc(p.legacy_team_size || '')}" placeholder="e.g. 3">
-            <span class="field-warn" id="warnLTeam"></span>
-          </div>
-        </div>
         <div class="form-group">
           <label>Revision Rounds</label>
           <input type="number" id="fLRevisions" min="0" max="20" step="1" value="${esc(p.legacy_revision_rounds || '')}" placeholder="e.g. 3">
           <span class="field-warn" id="warnLRevisions"></span>
         </div>
+        ${renderLegacyTeamSection(p?.legacy_team || [])}
       </fieldset>
 
       <fieldset class="economics-section">
@@ -1209,17 +1356,6 @@ async function renderNewProject(existing) {
               <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Revenue from scope expansions triggered by this engagement</span>
             </div>
           </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Legacy Day-Rate Override</label>
-              <div style="display:flex;align-items:center;gap:6px">
-                <input type="number" id="fLegacyRate" min="0" step="0.01" value="${esc(p.legacy_day_rate_override ?? '')}" placeholder="e.g. 1200">
-                <span class="field-help" data-suffix style="white-space:nowrap">${esc(p.currency || window._defaultCurrency || 'EUR')}/day</span>
-              </div>
-              <span class="field-help" style="color:var(--gray-500);font-size:12px;display:block;margin-top:4px">Override the category default blended day-rate for legacy cost estimates</span>
-            </div>
-            <div class="form-group"></div>
-          </div>
         </div>
       </fieldset>
 
@@ -1234,6 +1370,12 @@ async function renderNewProject(existing) {
   const _practiceIdForRoles = p.practice_id || null;
   const _currencyForRoles = p.currency || window._defaultCurrency || 'EUR';
   window._availableRoles = await loadProjectPracticeRoles(_practiceIdForRoles, _currencyForRoles);
+
+  // Wire legacy team mix (re-populates role pickers now that _availableRoles is loaded)
+  wireLegacyTeamEvents();
+  if (window._availableRoles && window._availableRoles.length > 0) {
+    refreshLegacyTeamRolePickers();
+  }
 
   // Pioneer row management
   let pioneerIndex = 0;
@@ -1280,6 +1422,7 @@ async function renderNewProject(existing) {
   // Re-populate role pickers when practice changes
   document.getElementById('fPractice').addEventListener('change', function() {
     refreshPioneerRoleSelects();
+    refreshLegacyTeamRolePickers();
   });
 
   // Pioneer table for edit mode
@@ -1326,6 +1469,7 @@ async function renderNewProject(existing) {
     const pracSel = document.getElementById('fPractice');
     if (pracSel) pracSel.innerHTML = practiceOptionsHTML(null, this.value);
     refreshPioneerRoleSelects();
+    refreshLegacyTeamRolePickers();
   });
 
   document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);
@@ -1356,7 +1500,6 @@ async function renderNewProject(existing) {
   validateNumField('fXTeam', 'warnXTeam', { min: 1, max: 50, intOnly: true, label: 'Team size' });
   validateNumField('fRevisions', 'warnRevisions', { min: 0, max: 20, intOnly: true, label: 'Revision rounds' });
   validateNumField('fLDays', 'warnLDays', { min: 1, max: 365, intOnly: true, label: 'Calendar days' });
-  validateNumField('fLTeam', 'warnLTeam', { min: 1, max: 50, intOnly: true, label: 'Team size' });
   validateNumField('fLRevisions', 'warnLRevisions', { min: 0, max: 20, intOnly: true, label: 'Revision rounds' });
 
   // Submit
@@ -1383,6 +1526,15 @@ async function renderNewProject(existing) {
       return;
     }
 
+    const legacyTeamRows = Array.from(document.querySelectorAll('#legacyTeamBody .legacy-team-row'));
+    const legacy_team = legacyTeamRows.map(row => {
+      const role_name = row.querySelector('.lt-role')?.value || '';
+      const count = parseInt(row.querySelector('.lt-count')?.value) || 0;
+      const rateText = row.querySelector('.lt-rate')?.textContent || '';
+      const day_rate = rateText === '—' ? 0 : (parseFloat(rateText) || 0);
+      return { role_name, count, day_rate };
+    }).filter(r => r.role_name && r.count > 0);
+
     const practiceVal = document.getElementById('fPractice').value;
     const payload = {
       project_name: document.getElementById('fName').value,
@@ -1408,13 +1560,12 @@ async function renderNewProject(existing) {
       revision_depth: document.getElementById('fRevDepth').value || null,
       xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
       legacy_calendar_days: document.getElementById('fLDays').value || null,
-      legacy_team_size: document.getElementById('fLTeam').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
+      legacy_team: legacy_team,
       currency: document.getElementById('fCurrency')?.value || null,
       engagement_revenue: parseOptionalNumber(document.getElementById('fRevenue').value),
       xcsg_pricing_model: document.getElementById('fPricingModel')?.value || null,
       scope_expansion_revenue: parseOptionalNumber(document.getElementById('fScopeRev').value),
-      legacy_day_rate_override: parseOptionalNumber(document.getElementById('fLegacyRate').value),
     };
     try {
       if (isEdit) {
@@ -3446,7 +3597,7 @@ async function renderPracticesTab() {
         <td>${esc(p.description || '—')}</td>
         <td>${count}</td>
         ${_isAdmin ? `<td class="actions-cell">
-          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}',${p.default_legacy_day_rate ?? 'null'})"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon" title="Edit" onclick="editPractice(${p.id},'${esc(p.name)}','${esc(p.description || '')}')"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn-icon btn-danger-icon" title="${deleteDisabled ? 'Cannot delete' : 'Delete'}" ${deleteDisabled ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} onclick="${deleteDisabled ? '' : "deletePractice(" + p.id + ",'" + esc(p.code) + "')"}"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
         </td>` : ''}
       </tr>`;
@@ -3544,18 +3695,13 @@ function wireRoleRowsEvents() {
   });
 }
 
-async function editPractice(id, name, desc, rate) {
+async function editPractice(id, name, desc) {
   const existingRoles = await loadPracticeRoles(id);
   showModal(`
     <h3>Edit Practice</h3>
     <div class="form-group" style="margin-bottom:16px"><label>Name</label><input type="text" id="editPrName" value="${esc(name)}"></div>
     <div class="form-group" style="margin-bottom:16px"><label>Description</label><input type="text" id="editPrDesc" value="${esc(desc)}"></div>
     ${buildRolesSectionHtml(existingRoles)}
-    <div class="form-group" style="margin-bottom:16px">
-      <label>Default legacy day-rate</label>
-      <input type="number" id="editPracticeRate" min="0" step="0.01" placeholder="optional" value="${rate != null ? esc(String(rate)) : ''}">
-      <small class="field-help" style="color:var(--gray-500)">Used as legacy-cost fallback when a project has no override.</small>
-    </div>
     <div class="form-actions">
       <button class="btn btn-primary" onclick="savePractice(${id})">Save</button>
       <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
@@ -3568,10 +3714,8 @@ async function savePractice(id) {
   const name = document.getElementById('editPrName')?.value.trim();
   const desc = document.getElementById('editPrDesc')?.value.trim() || null;
   if (!name) { showToast('Name is required', 'error'); return; }
-  const rateRaw = document.getElementById('editPracticeRate')?.value;
-  const default_legacy_day_rate = parseOptionalNumber(rateRaw);
   try {
-    await apiCall('PUT', `/practices/${id}`, { name, description: desc, default_legacy_day_rate });
+    await apiCall('PUT', `/practices/${id}`, { name, description: desc });
   } catch (err) { showToast(err.message, 'error'); return; }
 
   const rows = Array.from(document.querySelectorAll('#rolesTableBody .role-row'));
