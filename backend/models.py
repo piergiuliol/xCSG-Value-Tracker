@@ -47,6 +47,7 @@ class PioneerCreate(BaseModel):
     email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
     day_rate: Optional[float] = None
+    role_name: Optional[str] = None
 
     @field_validator("day_rate")
     @classmethod
@@ -62,6 +63,7 @@ class PioneerUpdate(BaseModel):
     total_rounds: Optional[int] = None
     show_previous: Optional[bool] = None
     day_rate: Optional[float] = None
+    role_name: Optional[str] = None
 
     @field_validator("day_rate")
     @classmethod

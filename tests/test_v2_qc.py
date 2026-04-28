@@ -1326,6 +1326,49 @@ def test_migrate_v16_idempotent():
         assert remaining["n"] == 0, "practice_roles should CASCADE-delete"
 
 
+def test_migrate_v17_idempotent():
+    """migrate_v17 adds project_pioneers.role_name (nullable), runs idempotently."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(project_pioneers)"
+        ).fetchall()}
+        assert "role_name" in cols, "project_pioneers.role_name missing"
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v17()
+    database.migrate_v17()
+
+    # Existing rows should have NULL role_name.
+    with database._db() as conn:
+        # Insert a quick test fixture: a project + pioneer.
+        cur = conn.execute(
+            "INSERT INTO projects (created_by, project_name, category_id, "
+            "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
+            "legacy_calendar_days, legacy_team_size, legacy_revision_rounds, "
+            "expert_token, status) "
+            "VALUES (1, 'mig17 test', 1, 'P', 'p@x.io', '2', '1', '10', '2', '1', 'tok-mig17', 'pending')"
+        )
+        project_id = cur.lastrowid
+        cur = conn.execute(
+            "INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, expert_token) "
+            "VALUES (?, 'P', 'p@x.io', 'tok-mig17-pp')",
+            (project_id,),
+        )
+        pid = cur.lastrowid
+        row = conn.execute(
+            "SELECT role_name FROM project_pioneers WHERE id = ?", (pid,)
+        ).fetchone()
+        assert row["role_name"] is None
+        # Cleanup — delete pioneer before project to satisfy FK constraint.
+        conn.execute("DELETE FROM project_pioneers WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        conn.commit()
+
+
 def test_practice_roles_db_helpers():
     """list_practice_roles and replace_practice_roles round-trip correctly."""
     from backend import database
@@ -1926,6 +1969,135 @@ def test_practice_roles_404_for_unknown_practice():
     assert r.status_code == 404, f"PUT expected 404, got {r.status_code}: {r.text}"
 
 
+def test_pioneer_role_name_in_models():
+    """PioneerCreate and PioneerUpdate accept optional role_name."""
+    from backend.models import PioneerCreate, PioneerUpdate
+
+    # Happy path with role_name.
+    p = PioneerCreate(name="Pia", email="pia@example.com", day_rate=1500, role_name="Senior")
+    assert p.role_name == "Senior"
+    assert p.day_rate == 1500
+
+    # role_name optional — None is fine.
+    p2 = PioneerCreate(name="Bob", email="bob@example.com")
+    assert p2.role_name is None
+
+    # PioneerUpdate also accepts role_name.
+    u = PioneerUpdate(role_name="Manager")
+    assert u.role_name == "Manager"
+    u2 = PioneerUpdate()
+    assert u2.role_name is None
+
+
+def test_pioneer_role_name_persistence():
+    """role_name round-trips through POST /api/projects (with pioneers list)
+    and POST /api/projects/{id}/pioneers (post-creation add)."""
+    headers = auth_h(admin_token())
+
+    # Build a project with one pioneer that has role_name.
+    payload = {
+        "project_name": "Phase 2b round-trip",
+        "category_id": 1,
+        "pioneers": [
+            {"name": "P-with-role", "email": "p1@x.io", "day_rate": 1500, "role_name": "Senior"},
+            {"name": "P-no-role", "email": "p2@x.io", "day_rate": 1000},
+        ],
+        "xcsg_team_size": "2",
+        "xcsg_revision_rounds": "1",
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        by_name = {p["pioneer_name"]: p for p in detail["pioneers"]}
+        assert by_name["P-with-role"]["role_name"] == "Senior"
+        assert by_name["P-no-role"]["role_name"] is None
+
+        # POST a new pioneer with role_name (post-creation add path).
+        add_r = requests.post(
+            f"{BASE}/api/projects/{pid}/pioneers",
+            headers=headers,
+            json={"name": "P3-added", "email": "p3@x.io", "day_rate": 2000, "role_name": "Manager"},
+        )
+        assert add_r.status_code == 201, add_r.text
+
+        detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        by_name2 = {p["pioneer_name"]: p for p in detail2["pioneers"]}
+        assert by_name2["P3-added"]["role_name"] == "Manager"
+        assert by_name2["P3-added"]["day_rate"] == 2000
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
+
+
+def test_pioneer_day_rate_independent_of_role_name():
+    """Server does NOT auto-fill day_rate from role_name — it stores
+    exactly what the request includes. The catalog lookup is the
+    frontend's job."""
+    headers = auth_h(admin_token())
+
+    payload = {
+        "project_name": "Phase 2b independence",
+        "category_id": 1,
+        "pioneers": [
+            # role_name set but day_rate explicitly different from any catalog rate
+            {"name": "P", "email": "p@x.io", "day_rate": 999, "role_name": "Senior"},
+        ],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        p = detail["pioneers"][0]
+        assert p["role_name"] == "Senior"
+        assert p["day_rate"] == 999  # stored as submitted, NOT looked up from any catalog
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
+
+
+def test_update_pioneer_clears_role_name():
+    """PUT /api/projects/{id}/pioneers/{pid} with role_name=null clears the role."""
+    headers = auth_h(admin_token())
+
+    payload = {
+        "project_name": "clear role test",
+        "category_id": 1,
+        "pioneers": [{"name": "P", "email": "p@x.io", "day_rate": 1000, "role_name": "Senior"}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        pioneer = detail["pioneers"][0]
+        pioneer_id = pioneer["id"]
+        assert pioneer["role_name"] == "Senior"
+
+        # PUT with role_name=null should clear it.
+        upd = requests.put(
+            f"{BASE}/api/projects/{pid}/pioneers/{pioneer_id}",
+            headers=headers,
+            json={"role_name": None},
+        )
+        assert upd.status_code == 200, upd.text
+
+        detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert detail2["pioneers"][0]["role_name"] is None
+        # day_rate should be untouched (stayed at 1000) — null on day_rate
+        # was NOT sent so the existing value stays.
+        assert detail2["pioneers"][0]["day_rate"] == 1000
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
+
+
 def main():
     global passed, failed, failures
 
@@ -1965,9 +2137,11 @@ def main():
     test_practice_roles_schema()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
+    test_migrate_v17_idempotent()
     test_practice_roles_db_helpers()
     test_economics_models()
     test_practice_role_models()
+    test_pioneer_role_name_in_models()
     test_economics_metrics()
     test_app_settings_endpoints()
     test_practice_roles_crud()
@@ -1975,6 +2149,9 @@ def main():
     test_practice_roles_404_for_unknown_practice()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
+    test_pioneer_role_name_persistence()
+    test_pioneer_day_rate_independent_of_role_name()
+    test_update_pioneer_clears_role_name()
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()

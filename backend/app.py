@@ -467,7 +467,7 @@ async def create_project(
 
     data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
-    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds, "day_rate": p.day_rate} for p in body.pioneers]
+    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds, "day_rate": p.day_rate, "role_name": p.role_name} for p in body.pioneers]
 
     norm = db.get_norm_by_category(body.category_id)
     if norm:
@@ -591,7 +591,7 @@ async def add_project_pioneer(
     current_count = len(db.list_pioneers(project_id))
     if current_count >= MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
-    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds, day_rate=body.day_rate)
+    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds, day_rate=body.day_rate, role_name=body.role_name)
     pioneers = db.list_pioneers(project_id)
     new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
     db.log_activity(
@@ -613,7 +613,11 @@ async def update_project_pioneer(
     row = db.get_project(project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset so omitted fields don't appear at all; role_name=null is a
+    # legitimate intentional clear, so we keep it even when None.
+    data = body.model_dump(exclude_unset=True)
+    # Strip None from fields where None means "leave unchanged" (all except role_name).
+    data = {k: v for k, v in data.items() if v is not None or k == "role_name"}
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
     try:
