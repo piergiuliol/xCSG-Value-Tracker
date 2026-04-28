@@ -1008,6 +1008,7 @@ function onCurrencyChange() {
     el.textContent = txt.includes('/day') ? `${newCur}/day` : newCur;
   });
   refreshPioneerRoleSelects();
+  refreshLegacyTeamRolePickers();
 }
 
 function renderPioneerRoleSelect(currentRoleName, availableRoles) {
@@ -1056,6 +1057,110 @@ async function refreshPioneerRoleSelects() {
     oldSel.replaceWith(wrapper.firstChild);
   });
   document.querySelectorAll('.pioneer-row').forEach(wirePioneerRoleSelectEvents);
+  refreshLegacyTeamRolePickers();
+}
+
+function renderLegacyTeamSection(existingTeam) {
+  // existingTeam: [{role_name, count, day_rate}, ...]
+  let rowsHtml = '';
+  (existingTeam || []).forEach((r, idx) => {
+    rowsHtml += renderLegacyTeamRow(idx, r);
+  });
+  if (!existingTeam || existingTeam.length === 0) {
+    rowsHtml = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+  }
+  return `
+    <div class="form-group" style="margin-top:16px">
+      <label style="font-weight:600;display:block;margin-bottom:6px">Legacy team mix</label>
+      <div id="legacyTeamHeader" style="display:grid;grid-template-columns:minmax(0, 1fr) 70px 110px 32px;gap:6px;font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;padding:0 4px">
+        <span>Role</span><span>Count</span><span>Rate</span><span></span>
+      </div>
+      <div id="legacyTeamBody">${rowsHtml}</div>
+      <button type="button" class="btn btn-secondary btn-sm" id="addLegacyTeamRowBtn" style="margin-top:8px">+ Add role</button>
+    </div>`;
+}
+
+function renderLegacyTeamRow(idx, r) {
+  const roleName = r?.role_name || '';
+  const count = r?.count ?? '';
+  const rate = r?.day_rate ?? '';
+  const roleOptions = (window._availableRoles || [])
+    .map(role => {
+      const sel = role.role_name === roleName ? 'selected' : '';
+      return `<option value="${esc(role.role_name)}" data-rate="${role.day_rate}" ${sel}>${esc(role.role_name)} — ${esc(String(role.day_rate))}</option>`;
+    }).join('');
+  const orphanOpt = (roleName && !(window._availableRoles || []).some(r2 => r2.role_name === roleName))
+    ? `<option value="${esc(roleName)}" data-rate="${rate}" selected>${esc(roleName)} (not in catalog)</option>`
+    : '';
+  return `
+    <div class="legacy-team-row" data-row-idx="${idx}" style="display:grid;grid-template-columns:minmax(0, 1fr) 70px 110px 32px;gap:6px;align-items:center;padding:4px;border-bottom:1px solid var(--gray-100)">
+      <select class="lt-role"><option value="">—</option>${roleOptions}${orphanOpt}</select>
+      <input type="number" class="lt-count" min="1" step="1" value="${esc(String(count))}" placeholder="1">
+      <span class="lt-rate" style="color:var(--gray-600);font-size:13px">${rate !== '' ? esc(String(rate)) : '—'}</span>
+      <button type="button" class="btn-icon lt-remove" title="Remove" style="background:none;border:0;cursor:pointer;color:var(--danger)">×</button>
+    </div>`;
+}
+
+function wireLegacyTeamEvents() {
+  const body = document.getElementById('legacyTeamBody');
+  const addBtn = document.getElementById('addLegacyTeamRowBtn');
+  if (!body || !addBtn) return;
+
+  addBtn.addEventListener('click', () => {
+    const empty = body.querySelector('.legacy-team-empty');
+    if (empty) empty.remove();
+    const idx = body.querySelectorAll('.legacy-team-row').length;
+    body.insertAdjacentHTML('beforeend', renderLegacyTeamRow(idx, {}));
+    wireLegacyTeamRoleChange(body.lastElementChild);
+  });
+
+  body.addEventListener('click', (ev) => {
+    if (ev.target.classList.contains('lt-remove')) {
+      ev.target.closest('.legacy-team-row').remove();
+      if (body.querySelectorAll('.legacy-team-row').length === 0) {
+        body.innerHTML = `<div class="legacy-team-empty" style="color:var(--gray-500);font-size:13px;padding:8px">No legacy team mix entered yet.</div>`;
+      }
+    }
+  });
+
+  // Wire role-change handlers on existing rows.
+  body.querySelectorAll('.legacy-team-row').forEach(wireLegacyTeamRoleChange);
+}
+
+function wireLegacyTeamRoleChange(rowEl) {
+  const sel = rowEl.querySelector('.lt-role');
+  const rateSpan = rowEl.querySelector('.lt-rate');
+  if (!sel || !rateSpan) return;
+  sel.addEventListener('change', () => {
+    const opt = sel.options[sel.selectedIndex];
+    const rate = opt?.dataset?.rate;
+    rateSpan.textContent = (rate != null && rate !== '' && rate !== 'undefined') ? rate : '—';
+  });
+}
+
+function refreshLegacyTeamRolePickers() {
+  // Called when practice/currency changes — re-render role options
+  // but preserve the user's existing selections.
+  const body = document.getElementById('legacyTeamBody');
+  if (!body) return;
+  body.querySelectorAll('.legacy-team-row').forEach(row => {
+    const sel = row.querySelector('.lt-role');
+    if (!sel) return;
+    const currentRoleName = sel.value;
+    const currentCount = row.querySelector('.lt-count')?.value || '';
+    const currentRate = row.querySelector('.lt-rate')?.textContent || '';
+    const idx = row.dataset.rowIdx;
+    // Re-render the row with current values.
+    const newHtml = renderLegacyTeamRow(idx, {
+      role_name: currentRoleName,
+      count: currentCount,
+      day_rate: currentRate === '—' ? '' : currentRate,
+    });
+    const wrapper = document.createElement('span');
+    wrapper.innerHTML = newHtml;
+    row.replaceWith(wrapper.firstElementChild);
+  });
+  body.querySelectorAll('.legacy-team-row').forEach(wireLegacyTeamRoleChange);
 }
 
 async function renderNewProject(existing) {
@@ -1160,6 +1265,7 @@ async function renderNewProject(existing) {
           <input type="number" id="fLRevisions" min="0" max="20" step="1" value="${esc(p.legacy_revision_rounds || '')}" placeholder="e.g. 3">
           <span class="field-warn" id="warnLRevisions"></span>
         </div>
+        ${renderLegacyTeamSection(p?.legacy_team || [])}
       </fieldset>
 
       <fieldset class="economics-section">
@@ -1215,6 +1321,12 @@ async function renderNewProject(existing) {
   const _currencyForRoles = p.currency || window._defaultCurrency || 'EUR';
   window._availableRoles = await loadProjectPracticeRoles(_practiceIdForRoles, _currencyForRoles);
 
+  // Wire legacy team mix (re-populates role pickers now that _availableRoles is loaded)
+  wireLegacyTeamEvents();
+  if (window._availableRoles && window._availableRoles.length > 0) {
+    refreshLegacyTeamRolePickers();
+  }
+
   // Pioneer row management
   let pioneerIndex = 0;
   function addPioneerRow(name, email, rounds, dayRate, roleName) {
@@ -1260,6 +1372,7 @@ async function renderNewProject(existing) {
   // Re-populate role pickers when practice changes
   document.getElementById('fPractice').addEventListener('change', function() {
     refreshPioneerRoleSelects();
+    refreshLegacyTeamRolePickers();
   });
 
   // Pioneer table for edit mode
@@ -1306,6 +1419,7 @@ async function renderNewProject(existing) {
     const pracSel = document.getElementById('fPractice');
     if (pracSel) pracSel.innerHTML = practiceOptionsHTML(null, this.value);
     refreshPioneerRoleSelects();
+    refreshLegacyTeamRolePickers();
   });
 
   document.getElementById('fDateStart').addEventListener('change', updateCalendarDays);
@@ -1362,6 +1476,15 @@ async function renderNewProject(existing) {
       return;
     }
 
+    const legacyTeamRows = Array.from(document.querySelectorAll('#legacyTeamBody .legacy-team-row'));
+    const legacy_team = legacyTeamRows.map(row => {
+      const role_name = row.querySelector('.lt-role')?.value || '';
+      const count = parseInt(row.querySelector('.lt-count')?.value) || 0;
+      const rateText = row.querySelector('.lt-rate')?.textContent || '';
+      const day_rate = rateText === '—' ? 0 : (parseFloat(rateText) || 0);
+      return { role_name, count, day_rate };
+    }).filter(r => r.role_name && r.count > 0);
+
     const practiceVal = document.getElementById('fPractice').value;
     const payload = {
       project_name: document.getElementById('fName').value,
@@ -1388,6 +1511,7 @@ async function renderNewProject(existing) {
       xcsg_scope_expansion: document.getElementById('fScopeExpansion').value || null,
       legacy_calendar_days: document.getElementById('fLDays').value || null,
       legacy_revision_rounds: document.getElementById('fLRevisions').value || null,
+      legacy_team: legacy_team,
       currency: document.getElementById('fCurrency')?.value || null,
       engagement_revenue: parseOptionalNumber(document.getElementById('fRevenue').value),
       xcsg_pricing_model: document.getElementById('fPricingModel')?.value || null,
