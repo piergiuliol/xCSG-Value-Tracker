@@ -349,7 +349,7 @@ async def update_practice_endpoint(
     practice = db.get_practice(practice_id)
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
-    db.update_practice(practice_id, body.name, body.description, body.default_legacy_day_rate)
+    db.update_practice(practice_id, body.name, body.description)
     db.log_activity(
         current_user["sub"],
         "practice_updated",
@@ -473,7 +473,6 @@ async def create_project(
     if norm:
         data["legacy_overridden"] = (
             data.get("legacy_calendar_days") != norm["typical_calendar_days"]
-            or data.get("legacy_team_size") != norm["typical_team_size"]
             or data.get("legacy_revision_rounds") != norm["typical_revision_rounds"]
         )
     else:
@@ -502,6 +501,7 @@ async def get_project(
         raise HTTPException(status_code=404, detail="Project not found")
     result = dict(row)
     result["pioneers"] = db.list_pioneers(project_id)
+    result["legacy_team"] = db.list_legacy_team(project_id)
     responses = db.get_all_project_responses(project_id)
     if responses:
         project_dict = dict(row)
@@ -730,7 +730,6 @@ async def get_pioneer_round(
             "scope_expansion_revenue": project_dict.get("scope_expansion_revenue"),
             "xcsg_pricing_model": project_dict.get("xcsg_pricing_model"),
             "currency": project_dict.get("currency"),
-            "legacy_day_rate_override": project_dict.get("legacy_day_rate_override"),
             "pioneers": pioneers,
         },
     }
@@ -1125,7 +1124,7 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
                 pioneer_names_str, p.get("client_name", ""),
                 p.get("date_started", ""), p.get("date_delivered", ""),
                 p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
-                p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                p.get("legacy_calendar_days", ""), "",
                 p.get("legacy_revision_rounds", ""),
                 p["status"], p["created_at"],
                 "", "", "", "", "", "", "", "",
@@ -1141,7 +1140,7 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
                     pioneer_name, p.get("client_name", ""),
                     p.get("date_started", ""), p.get("date_delivered", ""),
                     p["xcsg_calendar_days"], p["xcsg_team_size"], p["xcsg_revision_rounds"],
-                    p.get("legacy_calendar_days", ""), p.get("legacy_team_size", ""),
+                    p.get("legacy_calendar_days", ""), "",
                     p.get("legacy_revision_rounds", ""),
                     p["status"], p["created_at"],
                     # B

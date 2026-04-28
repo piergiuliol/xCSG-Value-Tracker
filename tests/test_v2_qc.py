@@ -121,7 +121,7 @@ def test_expert_options():
         return
     
     opts = r.json()
-    test("Exactly 35 fields", len(opts) == 35, f"got {len(opts)}")
+    test("Exactly 34 fields (l2_legacy_team_size dropped in Phase 2c)", len(opts) == 34, f"got {len(opts)}")
     
     expected = {
         "b1_starting_point": ["From AI draft", "Mixed", "From blank page"],
@@ -152,10 +152,11 @@ def test_expert_options():
         l1 = opts["l1_legacy_working_days"]
         test("L1 has type='integer'", l1.get("type") == "integer" or "options" not in l1, f"type={l1.get('type')}, has_options={'options' in l1}")
     
-    # L2-L12 present
-    for i in range(2, 13):
-        key = f"l{i}_legacy_{'team_size' if i == 2 else 'revision_depth' if i == 3 else 'scope_expansion' if i == 4 else 'client_reaction' if i == 5 else 'b2_sources' if i == 6 else 'c1_specialization' if i == 7 else 'c2_directness' if i == 8 else 'c3_judgment' if i == 9 else 'd1_proprietary' if i == 10 else 'd2_reuse' if i == 11 else 'd3_moat'}"
+    # L3-L12 present (L2/l2_legacy_team_size dropped by Phase 2c)
+    for i in range(3, 13):
+        key = f"l{i}_legacy_{'revision_depth' if i == 3 else 'scope_expansion' if i == 4 else 'client_reaction' if i == 5 else 'b2_sources' if i == 6 else 'c1_specialization' if i == 7 else 'c2_directness' if i == 8 else 'c3_judgment' if i == 9 else 'd1_proprietary' if i == 10 else 'd2_reuse' if i == 11 else 'd3_moat'}"
         test(f"L{i} present ({key})", key in opts, f"missing from options")
+    test("L2 (l2_legacy_team_size) absent from options (dropped in v18)", "l2_legacy_team_size" not in opts)
     
     # Em dash check
     em_dash_fields = ["d3_moat_test", "g1_reuse_intent"]
@@ -686,10 +687,11 @@ def test_schema():
     test("expert_responses has c8_decision_readiness", "c8_decision_readiness" in exp_cols)
     test("expert_responses has e1_client_decision", "e1_client_decision" in exp_cols)
     
-    # Legacy columns
-    legacy_cols = ["l1_legacy_working_days", "l2_legacy_team_size", "l3_legacy_revision_depth", "l13_legacy_c7_depth", "l14_legacy_c8_decision", "l15_legacy_e1_decision", "l16_legacy_b6_data"]
+    # Legacy columns (l2_legacy_team_size dropped by migrate_v18)
+    legacy_cols = ["l1_legacy_working_days", "l3_legacy_revision_depth", "l13_legacy_c7_depth", "l14_legacy_c8_decision", "l15_legacy_e1_decision", "l16_legacy_b6_data"]
     for col in legacy_cols:
         test(f"expert_responses has {col}", col in exp_cols)
+    test("expert_responses l2_legacy_team_size dropped (v18)", "l2_legacy_team_size" not in exp_cols)
 
     conn.close()
 
@@ -1252,14 +1254,14 @@ def test_migrate_v15_idempotent():
     # init_db just ran above; verify the post-state.
     with database._db() as conn:
         proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
-        for col in ("currency", "xcsg_pricing_model", "scope_expansion_revenue", "legacy_day_rate_override"):
+        # legacy_day_rate_override was added by v15 but dropped by v18
+        for col in ("currency", "xcsg_pricing_model", "scope_expansion_revenue"):
             assert col in proj_cols, f"projects.{col} missing"
 
         pp_cols = {r[1] for r in conn.execute("PRAGMA table_info(project_pioneers)").fetchall()}
         assert "day_rate" in pp_cols, "project_pioneers.day_rate missing"
 
-        prac_cols = {r[1] for r in conn.execute("PRAGMA table_info(practices)").fetchall()}
-        assert "default_legacy_day_rate" in prac_cols, "practices.default_legacy_day_rate missing"
+        # default_legacy_day_rate was added by v15 but dropped by v18
 
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "app_settings" in tables
@@ -1348,9 +1350,9 @@ def test_migrate_v17_idempotent():
         cur = conn.execute(
             "INSERT INTO projects (created_by, project_name, category_id, "
             "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
-            "legacy_calendar_days, legacy_team_size, legacy_revision_rounds, "
+            "legacy_calendar_days, legacy_revision_rounds, "
             "expert_token, status) "
-            "VALUES (1, 'mig17 test', 1, 'P', 'p@x.io', '2', '1', '10', '2', '1', 'tok-mig17', 'pending')"
+            "VALUES (1, 'mig17 test', 1, 'P', 'p@x.io', '2', '1', '10', '1', 'tok-mig17', 'pending')"
         )
         project_id = cur.lastrowid
         cur = conn.execute(
@@ -1714,7 +1716,7 @@ def test_create_project_persists_economics():
         test("economics: currency stored", detail.get("currency") == "USD", f"got {detail.get('currency')}")
         test("economics: xcsg_pricing_model stored", detail.get("xcsg_pricing_model") == "Fixed fee", f"got {detail.get('xcsg_pricing_model')}")
         test("economics: scope_expansion_revenue stored", detail.get("scope_expansion_revenue") == 5000, f"got {detail.get('scope_expansion_revenue')}")
-        test("economics: legacy_day_rate_override stored", detail.get("legacy_day_rate_override") == 750, f"got {detail.get('legacy_day_rate_override')}")
+        # legacy_day_rate_override dropped in migrate_v18; field ignored by server
 
         pioneer_rates = sorted(p["day_rate"] for p in detail.get("pioneers", []))
         test("economics: pioneer day_rates stored", pioneer_rates == [1000, 1500], f"got {pioneer_rates}")
@@ -2016,6 +2018,154 @@ def test_practice_roles_404_for_unknown_practice():
     assert r.status_code == 404, f"PUT expected 404, got {r.status_code}: {r.text}"
 
 
+def test_migrate_v18_drops_columns_creates_table():
+    """migrate_v18 drops 4 deprecated columns and creates project_legacy_team."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        # New table exists with expected columns.
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "project_legacy_team" in tables
+
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(project_legacy_team)"
+        ).fetchall()}
+        for col in ("id", "project_id", "role_name", "count", "day_rate"):
+            assert col in cols, f"project_legacy_team.{col} missing"
+
+        # Index exists.
+        indexes = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='project_legacy_team'"
+        ).fetchall()}
+        assert "idx_project_legacy_team_project" in indexes
+
+        # Dropped columns are gone.
+        proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        assert "legacy_day_rate_override" not in proj_cols
+        assert "legacy_team_size" not in proj_cols
+
+        prac_cols = {r[1] for r in conn.execute("PRAGMA table_info(practices)").fetchall()}
+        assert "default_legacy_day_rate" not in prac_cols
+
+        expert_cols = {r[1] for r in conn.execute("PRAGMA table_info(expert_responses)").fetchall()}
+        assert "l2_legacy_team_size" not in expert_cols
+
+    # Re-run migration — must be idempotent.
+    database.migrate_v18()
+    database.migrate_v18()
+
+
+def test_legacy_team_db_helpers():
+    """list_legacy_team and replace_legacy_team round-trip correctly."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO projects (created_by, project_name, category_id, "
+            "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
+            "legacy_calendar_days, legacy_revision_rounds, expert_token, status) "
+            "VALUES (1, 'lt test', 1, 'P', 'p@x.io', '1', '1', '10', '1', 'tok-lt', 'pending')"
+        )
+        project_id = cur.lastrowid
+        conn.commit()
+
+    try:
+        assert database.list_legacy_team(project_id) == []
+
+        database.replace_legacy_team(project_id, [
+            {"role_name": "Senior", "count": 1, "day_rate": 1500},
+            {"role_name": "Analyst", "count": 2, "day_rate": 600},
+        ])
+
+        rows = database.list_legacy_team(project_id)
+        assert len(rows) == 2
+        names = sorted(r["role_name"] for r in rows)
+        assert names == ["Analyst", "Senior"]
+
+        # Replace clears the previous set.
+        database.replace_legacy_team(project_id, [
+            {"role_name": "Manager", "count": 1, "day_rate": 1000},
+        ])
+        rows = database.list_legacy_team(project_id)
+        assert len(rows) == 1
+        assert rows[0]["role_name"] == "Manager"
+
+        # Empty list clears.
+        database.replace_legacy_team(project_id, [])
+        assert database.list_legacy_team(project_id) == []
+    finally:
+        with database._db() as conn:
+            conn.execute("DELETE FROM project_pioneers WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            conn.commit()
+
+
+def test_legacy_team_persistence():
+    """legacy_team round-trips through POST /api/projects + GET, including
+    None/[]/non-empty semantics for ProjectUpdate."""
+    headers = auth_h(admin_token())
+
+    payload = {
+        "project_name": "lt persist",
+        "category_id": 1,
+        "pioneers": [{"name": "P", "email": "p@x.io"}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+        "legacy_team": [
+            {"role_name": "Senior", "count": 1, "day_rate": 1500},
+            {"role_name": "Analyst", "count": 2, "day_rate": 600},
+        ],
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=headers, json=payload)
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    try:
+        detail = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert "legacy_team" in detail
+        team = sorted(detail["legacy_team"], key=lambda r: r["role_name"])
+        assert team[0]["role_name"] == "Analyst"
+        assert team[0]["count"] == 2
+        assert team[0]["day_rate"] == 600
+        assert team[1]["role_name"] == "Senior"
+
+        # PUT with legacy_team=None → unchanged.
+        upd = requests.put(
+            f"{BASE}/api/projects/{pid}", headers=headers,
+            json={"project_name": "lt persist v2"},
+        )
+        assert upd.status_code == 200, upd.text
+        detail2 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert len(detail2["legacy_team"]) == 2
+
+        # PUT with legacy_team=[] → cleared.
+        upd2 = requests.put(
+            f"{BASE}/api/projects/{pid}", headers=headers,
+            json={"legacy_team": []},
+        )
+        assert upd2.status_code == 200
+        detail3 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert detail3["legacy_team"] == []
+
+        # PUT with legacy_team=non-empty → replaced.
+        upd3 = requests.put(
+            f"{BASE}/api/projects/{pid}", headers=headers,
+            json={"legacy_team": [{"role_name": "Manager", "count": 1, "day_rate": 1000}]},
+        )
+        assert upd3.status_code == 200
+        detail4 = requests.get(f"{BASE}/api/projects/{pid}", headers=headers).json()
+        assert len(detail4["legacy_team"]) == 1
+        assert detail4["legacy_team"][0]["role_name"] == "Manager"
+    finally:
+        requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
+
+
 def test_pioneer_role_name_in_models():
     """PioneerCreate and PioneerUpdate accept optional role_name."""
     from backend.models import PioneerCreate, PioneerUpdate
@@ -2185,6 +2335,8 @@ def main():
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
+    test_migrate_v18_drops_columns_creates_table()
+    test_legacy_team_db_helpers()
     test_practice_roles_db_helpers()
     test_economics_models()
     test_practice_role_models()
@@ -2197,6 +2349,7 @@ def main():
     test_practice_roles_404_for_unknown_practice()
     test_compute_project_metrics_includes_economics()
     test_create_project_persists_economics()
+    test_legacy_team_persistence()
     test_pioneer_role_name_persistence()
     test_pioneer_day_rate_independent_of_role_name()
     test_update_pioneer_clears_role_name()
