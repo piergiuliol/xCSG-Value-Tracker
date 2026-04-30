@@ -1398,6 +1398,27 @@ async def download_export_file(
     return FileResponse(path, media_type="application/octet-stream", filename=name)
 
 
+PIONEERS_CSV_FIELDS = [
+    "id",
+    "name",
+    "email",
+    "notes",
+    "project_count",
+    "rounds_completed",
+    "rounds_expected",
+    "completion_rate",
+    "last_activity_at",
+    "status",
+    "avg_quality_score",
+    "avg_value_gain",
+    "avg_machine_first",
+    "avg_senior_led",
+    "avg_knowledge",
+    "practices",
+    "roles",
+]
+
+
 @app.get("/api/export/pioneers.csv")
 def export_pioneers_csv(
     practice: Optional[List[str]] = Query(None),
@@ -1423,18 +1444,22 @@ def export_pioneers_csv(
         flat.pop("portfolio", None)  # detail-only field, not in list export
         flattened.append(flat)
 
-    if not flattened:
-        return Response(content="", media_type="text/csv")
-
-    # Build CSV.
+    # Always emit the header row (even when filter matches nothing) so consumers
+    # can rely on the columns. Fieldnames come from a fixed list — not derived
+    # from the first row — so an empty result still has a parseable header.
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=list(flattened[0].keys()))
+    writer = csv.DictWriter(
+        output, fieldnames=PIONEERS_CSV_FIELDS, extrasaction="ignore"
+    )
     writer.writeheader()
     writer.writerows(flattened)
 
+    # Prepend UTF-8 BOM so Excel on Windows opens accented characters correctly.
+    body = "﻿" + output.getvalue()
+
     return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
+        content=body,
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=pioneers.csv"},
     )
 

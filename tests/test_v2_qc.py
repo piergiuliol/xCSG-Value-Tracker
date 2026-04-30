@@ -2413,13 +2413,18 @@ def test_export_pioneers_csv():
         "name": "CSV Test", "email": "csv-test@example.com",
     }).json()
 
+    # `csv.DictReader` doesn't strip a leading BOM on its own — decoding the
+    # response bytes with utf-8-sig drops it before parsing.
+    def _csv_text(resp):
+        return resp.content.decode("utf-8-sig")
+
     try:
         r = requests.get(f"{BASE}/api/export/pioneers.csv", headers=headers)
         assert r.status_code == 200
         assert "text/csv" in r.headers.get("content-type", "")
 
-        # Parse the CSV.
-        reader = csv.DictReader(io.StringIO(r.text))
+        # Parse the CSV (after stripping the BOM).
+        reader = csv.DictReader(io.StringIO(_csv_text(r)))
         rows = list(reader)
         assert len(rows) >= 1
         # Required columns.
@@ -2434,7 +2439,7 @@ def test_export_pioneers_csv():
         # Status filter — single value.
         r2 = requests.get(f"{BASE}/api/export/pioneers.csv?status=never", headers=headers)
         assert r2.status_code == 200
-        rows2 = list(csv.DictReader(io.StringIO(r2.text)))
+        rows2 = list(csv.DictReader(io.StringIO(_csv_text(r2))))
         # Test pioneer is `never` (no project assignments).
         assert any(row["name"] == "CSV Test" and row["status"] == "never" for row in rows2)
 
@@ -2445,17 +2450,48 @@ def test_export_pioneers_csv():
         )
         assert r3.status_code == 200
         # CSV should still parse cleanly.
-        list(csv.DictReader(io.StringIO(r3.text)))
+        list(csv.DictReader(io.StringIO(_csv_text(r3))))
 
         # Search filter.
         r4 = requests.get(
             f"{BASE}/api/export/pioneers.csv?search=csv-test",
             headers=headers,
         )
-        rows4 = list(csv.DictReader(io.StringIO(r4.text)))
+        rows4 = list(csv.DictReader(io.StringIO(_csv_text(r4))))
         assert any(row["name"] == "CSV Test" for row in rows4)
+
+        # UTF-8 BOM is prepended so Excel on Windows reads it correctly.
+        # Inspect the raw bytes so the assertion is unambiguous.
+        assert r.content.startswith(b"\xef\xbb\xbf"), "CSV should start with UTF-8 BOM"
     finally:
         requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+
+def test_export_pioneers_csv_empty_filter():
+    """When the filter matches no pioneers, the CSV must still emit a header
+    row (consumers crash on empty bodies). BOM stays in place."""
+    import csv
+    import io
+
+    headers = auth_h(admin_token())
+    # Use a search string that cannot possibly match any name/email.
+    r = requests.get(
+        f"{BASE}/api/export/pioneers.csv?search=__definitely_no_match_zzz_xxx_999__",
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert "text/csv" in r.headers.get("content-type", "")
+    # Body starts with BOM (raw bytes — most reliable check).
+    assert r.content.startswith(b"\xef\xbb\xbf"), "empty CSV should still start with BOM"
+    # Header row is present and parseable; row list is empty.
+    text = r.content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    assert rows == [], f"expected no rows, got {len(rows)}"
+    # Header includes the canonical fixed columns.
+    for col in ("id", "name", "email", "project_count", "status",
+                "completion_rate", "avg_value_gain", "practices", "roles"):
+        assert col in (reader.fieldnames or []), f"missing header column {col}"
 
 
 def main():
@@ -2541,6 +2577,7 @@ def main():
     test_notes_excel_sheet()
     test_dashboard_export_sheets()
     test_export_pioneers_csv()
+    test_export_pioneers_csv_empty_filter()
     test_export_pioneer_xlsx()
     test_export_pioneer_xlsx_404_for_unknown()
 
