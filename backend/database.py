@@ -209,6 +209,7 @@ def init_db() -> None:
     migrate_v16()
     migrate_v17()
     migrate_v18()
+    migrate_v19()
 
     seed_data()
 
@@ -496,6 +497,79 @@ def migrate_v18() -> None:
         conn.commit()
 
 
+def migrate_v19() -> None:
+    """v1.9: Phase 3a — first-class pioneers.
+
+    Destructive migration:
+    1. Creates `pioneers` table + case-insensitive partial unique email index.
+    2. Truncates project_pioneers (cascades to pioneer_round_tokens and
+       expert_responses via existing FK CASCADE).
+    3. Table-rebuilds project_pioneers: replaces pioneer_name/pioneer_email
+       columns with a NOT NULL pioneer_id FK to pioneers.
+    4. Drops vestigial v1.0 projects.pioneer_name and projects.pioneer_email.
+
+    Idempotent via PRAGMA checks. Existing pioneer assignments are wiped;
+    admins must re-add via the new picker.
+    """
+    with _db() as conn:
+        # 1. Create pioneers table + index.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS pioneers (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   name TEXT NOT NULL,
+                   email TEXT,
+                   notes TEXT,
+                   created_by INTEGER,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+               )"""
+        )
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_pioneers_email_lower
+                   ON pioneers(lower(trim(email))) WHERE email IS NOT NULL"""
+        )
+
+        # 2. Table-rebuild project_pioneers if pioneer_id column missing.
+        pp_cols = {row[1] for row in conn.execute(
+            "PRAGMA table_info(project_pioneers)"
+        ).fetchall()}
+        if "pioneer_id" not in pp_cols:
+            # Truncate first (cascades).
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("DELETE FROM project_pioneers")
+            # Old project_pioneers had: id, project_id, pioneer_name, pioneer_email,
+            # total_rounds, expert_token, day_rate, role_name (after Phase 1, 2b).
+            # New schema: id, project_id, pioneer_id NOT NULL FK, total_rounds,
+            # expert_token, day_rate, role_name.
+            conn.execute(
+                """CREATE TABLE project_pioneers_new (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       project_id INTEGER NOT NULL,
+                       pioneer_id INTEGER NOT NULL,
+                       total_rounds INTEGER,
+                       expert_token TEXT UNIQUE NOT NULL,
+                       day_rate REAL,
+                       role_name TEXT,
+                       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                       FOREIGN KEY (pioneer_id) REFERENCES pioneers(id) ON DELETE RESTRICT
+                   )"""
+            )
+            # Old table is empty (just truncated), so no INSERT needed.
+            conn.execute("DROP TABLE project_pioneers")
+            conn.execute("ALTER TABLE project_pioneers_new RENAME TO project_pioneers")
+
+        # 3. Drop vestigial v1.0 columns from projects.
+        proj_cols = {row[1] for row in conn.execute(
+            "PRAGMA table_info(projects)"
+        ).fetchall()}
+        if "pioneer_name" in proj_cols:
+            conn.execute("ALTER TABLE projects DROP COLUMN pioneer_name")
+        if "pioneer_email" in proj_cols:
+            conn.execute("ALTER TABLE projects DROP COLUMN pioneer_email")
+
+        conn.commit()
+
+
 def migrate_v2() -> None:
     with _db() as conn:
         project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
@@ -665,7 +739,13 @@ def _migrate_v11_schema(conn) -> None:
 
 def _migrate_v11_data(conn) -> None:
     """Migrate existing v1.0 data to v1.1 structure."""
-    # Create pioneer rows from existing project pioneer_name/email/token
+    # Create pioneer rows from existing project pioneer_name/email/token.
+    # Skip if migrate_v19 already dropped the vestigial columns.
+    proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    if "pioneer_name" not in proj_cols:
+        # Columns already gone — v19 migration ran first; nothing to migrate.
+        conn.execute("UPDATE projects SET status = 'pending' WHERE status = 'expert_pending'")
+        return
     rows = conn.execute(
         "SELECT id, pioneer_name, pioneer_email, expert_token FROM projects WHERE pioneer_name IS NOT NULL AND pioneer_name != ''"
     ).fetchall()
@@ -739,6 +819,12 @@ def migrate_round_tokens() -> None:
         """)
 
         # Seed round 1 for every existing pioneer that doesn't already have one.
+        # Guard against migrate_v19's table-rebuild which drops created_at.
+        pp_cols = {row[1] for row in conn.execute("PRAGMA table_info(project_pioneers)").fetchall()}
+        if "created_at" not in pp_cols:
+            # project_pioneers was rebuilt by migrate_v19 — no legacy rows to seed.
+            conn.commit()
+            return
         pioneers = conn.execute(
             "SELECT id, expert_token, created_at FROM project_pioneers"
         ).fetchall()

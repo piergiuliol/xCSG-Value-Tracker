@@ -2426,6 +2426,8 @@ def main():
     test_practice_roles_schema()
     test_legacy_team_schema()
     test_pioneer_schema()
+    test_migrate_v19_destructive_creates_pioneers_table()
+    test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -2497,6 +2499,98 @@ def test_pioneer_schema():
     assert "pioneer_fields" in response
     assert "pioneer_status_options" in response
     assert response["pioneer_status_options"] == PIONEER_STATUS_OPTIONS
+
+
+def test_migrate_v19_destructive_creates_pioneers_table():
+    """migrate_v19 creates pioneers table, drops pioneer_name/email from
+    project_pioneers and from projects, adds pioneer_id NOT NULL FK,
+    and is idempotent."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        # New table exists.
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "pioneers" in tables
+
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(pioneers)"
+        ).fetchall()}
+        for col in ("id", "name", "email", "notes", "created_by", "created_at"):
+            assert col in cols, f"pioneers.{col} missing"
+
+        # Partial unique index exists.
+        indexes = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='pioneers'"
+        ).fetchall()}
+        assert "idx_pioneers_email_lower" in indexes
+
+        # project_pioneers has pioneer_id (NOT NULL FK), no pioneer_name/email.
+        pp_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(project_pioneers)"
+        ).fetchall()}
+        assert "pioneer_id" in pp_cols
+        assert "pioneer_name" not in pp_cols
+        assert "pioneer_email" not in pp_cols
+
+        # Vestigial v1.0 columns dropped from projects.
+        proj_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(projects)"
+        ).fetchall()}
+        assert "pioneer_name" not in proj_cols
+        assert "pioneer_email" not in proj_cols
+
+        # Truncated: project_pioneers should be empty after migration runs on
+        # a fresh DB (no test fixtures yet).
+        n_pp = conn.execute("SELECT COUNT(*) AS n FROM project_pioneers").fetchone()["n"]
+        assert n_pp == 0
+
+    # Re-run — must be idempotent.
+    database.migrate_v19()
+    database.migrate_v19()
+
+
+def test_migrate_v19_email_unique_case_insensitive():
+    """Partial unique index rejects case-insensitive email duplicates;
+    NULL emails are allowed multiple times."""
+    import sqlite3
+    import pytest as _pytest
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        # Cleanup pioneers table (in case of prior test pollution).
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+        cur = conn.execute(
+            "INSERT INTO pioneers (name, email) VALUES (?, ?)",
+            ("Pia", "Pia@Example.com"),
+        )
+
+        with _pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO pioneers (name, email) VALUES (?, ?)",
+                ("Pia P.", "pia@example.com"),  # different case but same lower
+            )
+
+        # Different email is fine.
+        conn.execute(
+            "INSERT INTO pioneers (name, email) VALUES (?, ?)",
+            ("Bob", "bob@example.com"),
+        )
+
+        # Multiple NULL emails are allowed.
+        conn.execute("INSERT INTO pioneers (name) VALUES ('X')")
+        conn.execute("INSERT INTO pioneers (name) VALUES ('Y')")
+
+        # Cleanup
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
 
 
 if __name__ == "__main__":
