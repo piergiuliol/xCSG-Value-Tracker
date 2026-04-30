@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import auth
 from backend import database as db
 from backend import metrics as mtx
-from backend.database import PioneerInUseError
+from backend.pioneers import PioneerInUseError
 from backend.models import (
     ActivityLogEntry,
     AppSettings,
