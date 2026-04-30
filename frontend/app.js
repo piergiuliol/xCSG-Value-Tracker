@@ -4503,6 +4503,23 @@ function toggleMethodAccordion(header) {
   item.classList.toggle('meth-open');
 }
 
+// ── Pioneer status constants (shared by index/table/detail renderers) ───────
+// Fallback used when /api/schema hasn't populated pioneer_status_options yet.
+const PIONEER_STATUS_FALLBACK = [
+  { value: 'pending',          label: 'Pending' },
+  { value: 'pending_overdue',  label: 'Overdue' },
+  { value: 'completed',        label: 'Completed' },
+  { value: 'never',            label: 'Never assigned' },
+];
+// CSS strings (background+color) keyed by status value. Used in the
+// pioneers table row, the chip filter, and the detail-page activity strip.
+const PIONEER_STATUS_BADGE_STYLES = {
+  pending:         'background:#fef3c7;color:#92400e;',
+  pending_overdue: 'background:#fee2e2;color:#991b1b;',
+  completed:       'background:#d1fae5;color:#065f46;',
+  never:           'background:#f3f4f6;color:#6b7280;',
+};
+
 async function renderPioneersIndex() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading pioneers…</div>';
@@ -4589,12 +4606,7 @@ function renderPioneersFilterChips() {
 
   const statusEl = document.getElementById('pioneersStatusFilter');
   if (statusEl) {
-    const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : [
-      { value: 'pending', label: 'Pending' },
-      { value: 'pending_overdue', label: 'Overdue' },
-      { value: 'completed', label: 'Completed' },
-      { value: 'never', label: 'Never assigned' },
-    ];
+    const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : PIONEER_STATUS_FALLBACK;
     const chips = statusOpts.map(function(opt) { return chipBtn('status', opt.value, opt.label); });
     statusEl.innerHTML = '<span style="font-size:12px;color:#6b7280;font-weight:600">Status:</span> ' + chips.join('');
   }
@@ -4661,14 +4673,9 @@ function renderPioneersTable() {
     return;
   }
 
-  const statusBadgeStyle = {
-    pending: 'background:#fef3c7;color:#92400e;',
-    pending_overdue: 'background:#fee2e2;color:#991b1b;',
-    completed: 'background:#d1fae5;color:#065f46;',
-    never: 'background:#f3f4f6;color:#6b7280;',
-  };
+  const statusBadgeStyle = PIONEER_STATUS_BADGE_STYLES;
 
-  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : [];
+  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : PIONEER_STATUS_FALLBACK;
   function statusLabel(val) {
     const opt = statusOpts.find(function(o) { return o.value === val; });
     return opt ? opt.label : (val || '—');
@@ -4822,13 +4829,8 @@ async function renderPioneerDetail(id) {
     return;
   }
 
-  const statusBadgeStyle = {
-    pending: 'background:#fef3c7;color:#92400e;',
-    pending_overdue: 'background:#fee2e2;color:#991b1b;',
-    completed: 'background:#d1fae5;color:#065f46;',
-    never: 'background:#f3f4f6;color:#6b7280;',
-  };
-  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : [];
+  const statusBadgeStyle = PIONEER_STATUS_BADGE_STYLES;
+  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : PIONEER_STATUS_FALLBACK;
   function statusLabel(val) {
     const opt = statusOpts.find(function(o) { return o.value === val; });
     return opt ? opt.label : (val || 'Unknown');
