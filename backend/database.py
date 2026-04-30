@@ -1299,8 +1299,9 @@ def create_project(data: dict) -> int:
     """Create a project with multi-pioneer support.
 
     Accepts either:
-    - ``pioneers`` list (v1.1): each dict has ``name``, optional ``email``, optional ``total_rounds``
-    - ``pioneer_name`` string (v1.0 compat): creates a single pioneer from it
+    - ``pioneers`` list: each dict may carry ``pioneer_id`` (reference existing)
+      or ``name``+``email`` (inline find-or-create).
+    - ``pioneer_name`` string (v1.0 compat): creates a single pioneer from it.
     """
     category_id = data["category_id"]
     for field in ("legacy_calendar_days", "legacy_revision_rounds"):
@@ -1322,8 +1323,6 @@ def create_project(data: dict) -> int:
 
     # Generate a legacy token for the project row (backward compat)
     project_token = secrets.token_urlsafe(32)
-    pioneer_name_for_project = pioneers_input[0]["name"] if pioneers_input else ""
-    pioneer_email_for_project = (pioneers_input[0].get("email") or "") if pioneers_input else ""
 
     legacy_overridden = data.get("legacy_overridden", False)
     default_rounds = data.get("default_rounds", 1)
@@ -1334,22 +1333,20 @@ def create_project(data: dict) -> int:
         cur = conn.execute(
             """INSERT INTO projects
                (created_by, project_name, category_id, practice_id, client_name,
-                pioneer_name, pioneer_email, description,
+                description,
                 date_started, date_expected_delivered, date_delivered,
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_revision_rounds,
                 legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
                 default_rounds, show_previous_answers, show_other_pioneers_answers, status,
                 currency, xcsg_pricing_model, scope_expansion_revenue)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
                 data["category_id"],
                 data.get("practice_id"),
                 data.get("client_name"),
-                pioneer_name_for_project,
-                pioneer_email_for_project,
                 data.get("description"),
                 data.get("date_started"),
                 data.get("date_expected_delivered"),
@@ -1378,35 +1375,36 @@ def create_project(data: dict) -> int:
             ),
         )
         project_id = cur.lastrowid
+        conn.commit()
 
-        # Create pioneer rows + auto-issue round 1 token for each.
-        if pioneers_input:
-            for p in pioneers_input:
-                token = secrets.token_urlsafe(32)
-                cur_pp = conn.execute(
-                    """INSERT INTO project_pioneers
-                       (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate, role_name)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (project_id, p["name"], p.get("email"), p.get("total_rounds"), token, p.get("day_rate"), p.get("role_name")),
-                )
-                conn.execute(
-                    """INSERT INTO pioneer_round_tokens
-                       (pioneer_id, round_number, token, issued_by)
-                       VALUES (?, 1, ?, ?)""",
-                    (cur_pp.lastrowid, token, data.get("created_by")),
-                )
-
-        # Persist legacy_team mix (Phase 2c).
-        legacy_team = data.get("legacy_team") or []
-        for r in legacy_team:
-            conn.execute(
-                """INSERT INTO project_legacy_team (project_id, role_name, count, day_rate)
-                   VALUES (?, ?, ?, ?)""",
-                (project_id, r["role_name"], r["count"], r["day_rate"]),
+    # Create pioneer rows outside the project INSERT transaction so add_pioneer
+    # can open its own connection (it calls find_pioneer_by_email / create_pioneer).
+    if pioneers_input:
+        for p in pioneers_input:
+            add_pioneer(
+                project_id=project_id,
+                pioneer_id=p.get("pioneer_id"),
+                name=p.get("name"),
+                email=p.get("email"),
+                total_rounds=p.get("total_rounds"),
+                issued_by=data.get("created_by"),
+                day_rate=p.get("day_rate"),
+                role_name=p.get("role_name"),
             )
 
-        conn.commit()
-        return project_id
+    # Persist legacy_team mix (Phase 2c).
+    legacy_team = data.get("legacy_team") or []
+    if legacy_team:
+        with _db() as conn:
+            for r in legacy_team:
+                conn.execute(
+                    """INSERT INTO project_legacy_team (project_id, role_name, count, day_rate)
+                       VALUES (?, ?, ?, ?)""",
+                    (project_id, r["role_name"], r["count"], r["day_rate"]),
+                )
+            conn.commit()
+
+    return project_id
 
 
 def get_project(project_id: int) -> Optional[sqlite3.Row]:
@@ -1437,7 +1435,8 @@ def list_projects(
                    LEFT JOIN practices pr ON p.practice_id = pr.id"""
         params = []
         if pioneer:
-            query += " JOIN project_pioneers pp ON pp.project_id = p.id"
+            query += (" JOIN project_pioneers pp ON pp.project_id = p.id"
+                      " JOIN pioneers pio ON pio.id = pp.pioneer_id")
         query += " WHERE 1=1"
         if status_filter:
             query += " AND p.status = ?"
@@ -1449,7 +1448,7 @@ def list_projects(
             query += " AND p.practice_id = ?"
             params.append(practice_id)
         if pioneer:
-            query += " AND pp.pioneer_name = ?"
+            query += " AND pio.name = ?"
             params.append(pioneer)
         if client:
             query += " AND p.client_name = ?"
@@ -1543,15 +1542,19 @@ def list_pioneers(project_id: int) -> list:
     """Return all pioneers for a project with response counts and round tokens.
 
     Each pioneer dict gains a ``rounds`` list containing every round token row
-    (issued and/or completed) ordered by round_number.
+    (issued and/or completed) ordered by round_number. Names and emails are
+    resolved from the ``pioneers`` table via JOIN.
     """
     with _db() as conn:
         rows = conn.execute(
-            """SELECT pp.*,
+            """SELECT pp.id, pp.project_id, pp.pioneer_id,
+                      pio.name AS pioneer_name, pio.email AS pioneer_email,
+                      pp.total_rounds, pp.expert_token, pp.day_rate, pp.role_name,
                       COALESCE(stats.response_count, 0) AS response_count,
                       stats.last_round,
                       stats.last_submitted
                FROM project_pioneers pp
+               JOIN pioneers pio ON pio.id = pp.pioneer_id
                LEFT JOIN (
                    SELECT pioneer_id,
                           COUNT(*) AS response_count,
@@ -1562,7 +1565,7 @@ def list_pioneers(project_id: int) -> list:
                    GROUP BY pioneer_id
                ) stats ON pp.id = stats.pioneer_id
                WHERE pp.project_id = ?
-               ORDER BY pp.created_at ASC""",
+               ORDER BY pp.id ASC""",
             (project_id,),
         ).fetchall()
         pioneers = [dict(r) for r in rows]
@@ -1582,26 +1585,49 @@ def list_pioneers(project_id: int) -> list:
         return pioneers
 
 
-def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int = None, issued_by: Optional[int] = None, day_rate: Optional[float] = None, role_name: Optional[str] = None) -> int:
-    """Add a new pioneer to an existing project and auto-issue round 1 token.
+def add_pioneer(
+    project_id: int,
+    pioneer_id: Optional[int] = None,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    total_rounds: Optional[int] = None,
+    issued_by: Optional[int] = None,
+    day_rate: Optional[float] = None,
+    role_name: Optional[str] = None,
+) -> int:
+    """Add a pioneer-on-project row.
 
-    Returns the new pioneer id.
+    If pioneer_id is None, find-or-create a pioneer by email (or create new if
+    no email match). Returns the new project_pioneers.id.
     """
+    # Resolve pioneer_id via find-or-create if not supplied directly.
+    if pioneer_id is None:
+        if email:
+            existing = find_pioneer_by_email(email)
+            if existing:
+                pioneer_id = existing["id"]
+        if pioneer_id is None:
+            if not name or not name.strip():
+                raise ValueError("add_pioneer: pioneer_id or name+email required")
+            pioneer_id = create_pioneer(
+                name=name, email=email, notes=None, created_by=issued_by,
+            )
+
     token = secrets.token_urlsafe(32)
     with _db() as conn:
         cur = conn.execute(
-            """INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, total_rounds, expert_token, day_rate, role_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (project_id, name, email, total_rounds, token, day_rate, role_name),
+            """INSERT INTO project_pioneers (project_id, pioneer_id, total_rounds, expert_token, day_rate, role_name)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (project_id, pioneer_id, total_rounds, token, day_rate, role_name),
         )
-        pioneer_id = cur.lastrowid
+        pp_id = cur.lastrowid
         conn.execute(
             """INSERT INTO pioneer_round_tokens (pioneer_id, round_number, token, issued_by)
                VALUES (?, 1, ?, ?)""",
-            (pioneer_id, token, issued_by),
+            (pp_id, token, issued_by),
         )
         conn.commit()
-        return pioneer_id
+        return pp_id
 
 
 def create_pioneer(name: str, email: Optional[str], notes: Optional[str],
@@ -1895,8 +1921,8 @@ def remove_pioneer(pioneer_id: int) -> bool:
 
 
 def update_pioneer(pioneer_id: int, data: dict) -> bool:
-    """Update allowed fields on a pioneer."""
-    allowed = {"pioneer_name", "pioneer_email", "total_rounds", "show_previous", "day_rate", "role_name"}
+    """Update allowed fields on a project_pioneers row."""
+    allowed = {"total_rounds", "show_previous", "day_rate", "role_name"}
     fields = {}
     for k, v in data.items():
         if k not in allowed:
@@ -1934,7 +1960,8 @@ def get_round_token(token: str) -> Optional[dict]:
         row = conn.execute(
             """SELECT prt.id AS token_row_id, prt.pioneer_id, prt.round_number,
                       prt.token, prt.issued_at, prt.completed_at, prt.response_id,
-                      pp.pioneer_name, pp.pioneer_email, pp.total_rounds, pp.show_previous,
+                      pio.name AS pioneer_name, pio.email AS pioneer_email,
+                      pp.total_rounds,
                       pp.project_id,
                       p.project_name, p.category_id, p.practice_id, p.client_name,
                       p.description, p.date_started, p.date_delivered,
@@ -1948,6 +1975,7 @@ def get_round_token(token: str) -> Optional[dict]:
                       pr.code AS practice_code, pr.name AS practice_name
                FROM pioneer_round_tokens prt
                JOIN project_pioneers pp ON prt.pioneer_id = pp.id
+               JOIN pioneers pio ON pio.id = pp.pioneer_id
                JOIN projects p ON pp.project_id = p.id
                JOIN project_categories pc ON p.category_id = pc.id
                LEFT JOIN practices pr ON p.practice_id = pr.id
@@ -2063,13 +2091,14 @@ def get_other_pioneer_responses(project_id: int, exclude_pioneer_id: int) -> lis
     """
     with _db() as conn:
         rows = conn.execute(
-            """SELECT er.*, pp.pioneer_name AS pioneer_name
+            """SELECT er.*, pio.name AS pioneer_name
                FROM expert_responses er
                JOIN project_pioneers pp ON pp.id = er.pioneer_id
+               JOIN pioneers pio ON pio.id = pp.pioneer_id
                WHERE er.project_id = ?
                  AND er.pioneer_id != ?
                  AND er.submitted_at IS NOT NULL
-               ORDER BY pp.pioneer_name, er.round_number""",
+               ORDER BY pio.name, er.round_number""",
             (project_id, exclude_pioneer_id),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -2195,9 +2224,11 @@ def get_all_project_responses(project_id: int) -> list:
     """Return all responses for a project across all pioneers and rounds."""
     with _db() as conn:
         rows = conn.execute(
-            """SELECT er.*, pp.pioneer_name, pp.pioneer_email
+            """SELECT er.*,
+                      pio.name AS pioneer_name, pio.email AS pioneer_email
                FROM expert_responses er
                LEFT JOIN project_pioneers pp ON er.pioneer_id = pp.id
+               LEFT JOIN pioneers pio ON pio.id = pp.pioneer_id
                WHERE er.project_id = ?
                ORDER BY er.pioneer_id, er.round_number ASC""",
             (project_id,),
@@ -2234,7 +2265,7 @@ def list_all_notes(
           er.id, er.project_id, p.project_name,
           p.category_id, c.name AS category_name,
           pr.code AS practice_code, pr.name AS practice_name,
-          pp.id AS pioneer_id, pp.pioneer_name AS pioneer_name,
+          pp.id AS pioneer_id, pio.name AS pioneer_name,
           er.round_number, er.submitted_at, er.notes,
           p.date_delivered
         FROM expert_responses er
@@ -2242,11 +2273,12 @@ def list_all_notes(
         LEFT JOIN project_categories c ON c.id = p.category_id
         LEFT JOIN practices pr ON pr.id = p.practice_id
         LEFT JOIN project_pioneers pp ON pp.id = er.pioneer_id
+        LEFT JOIN pioneers pio ON pio.id = pp.pioneer_id
         WHERE er.submitted_at IS NOT NULL
           AND er.notes IS NOT NULL AND TRIM(er.notes) != ''
           AND (? IS NULL OR pr.code = ?)
           AND (? IS NULL OR p.category_id = ?)
-          AND (? IS NULL OR pp.pioneer_name = ?)
+          AND (? IS NULL OR pio.name = ?)
           AND (? IS NULL OR p.date_delivered >= ?)
           AND (? IS NULL OR p.date_delivered <= ?)
           AND (? IS NULL OR LOWER(er.notes) LIKE LOWER(?))

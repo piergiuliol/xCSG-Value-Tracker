@@ -472,7 +472,17 @@ async def create_project(
 
     data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
-    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds, "day_rate": p.day_rate, "role_name": p.role_name} for p in body.pioneers]
+    data["pioneers"] = [
+        {
+            "pioneer_id": p.pioneer_id,
+            "name": p.name,
+            "email": p.email,
+            "total_rounds": p.total_rounds,
+            "day_rate": p.day_rate,
+            "role_name": p.role_name,
+        }
+        for p in body.pioneers
+    ]
 
     norm = db.get_norm_by_category(body.category_id)
     if norm:
@@ -600,7 +610,16 @@ async def add_project_pioneer(
     current_count = len(db.list_pioneers(project_id))
     if current_count >= MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
-    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds, day_rate=body.day_rate, role_name=body.role_name)
+    pioneer_id = db.add_pioneer(
+        project_id=project_id,
+        pioneer_id=body.pioneer_id,
+        name=body.name,
+        email=body.email,
+        total_rounds=body.total_rounds,
+        issued_by=current_user.get("sub"),
+        day_rate=body.day_rate,
+        role_name=body.role_name,
+    )
     pioneers = db.list_pioneers(project_id)
     new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
     db.log_activity(
@@ -710,7 +729,10 @@ async def get_pioneer_round(
 
     with db._db() as conn:
         pp = conn.execute(
-            "SELECT project_id, pioneer_name FROM project_pioneers WHERE id = ?",
+            """SELECT pp.project_id, pio.name AS pioneer_name
+               FROM project_pioneers pp
+               JOIN pioneers pio ON pio.id = pp.pioneer_id
+               WHERE pp.id = ?""",
             (pioneer_id,),
         ).fetchone()
     if not pp:
