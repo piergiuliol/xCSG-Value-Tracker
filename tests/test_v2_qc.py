@@ -2429,6 +2429,8 @@ def main():
     test_pioneer_models()
     test_pioneer_db_helpers_crud()
     test_delete_pioneer_assigned_to_project_raises()
+    test_list_pioneers_with_metrics_aggregation()
+    test_get_pioneer_with_metrics_includes_portfolio()
     test_migrate_v19_destructive_creates_pioneers_table()
     test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v15_idempotent()
@@ -2749,6 +2751,63 @@ def test_delete_pioneer_assigned_to_project_raises():
             conn.execute("DELETE FROM projects WHERE id = ?", (proj_id,))
             conn.execute("DELETE FROM pioneers WHERE id = ?", (pid,))
             conn.commit()
+
+
+def test_list_pioneers_with_metrics_aggregation():
+    """list_pioneers_with_metrics returns one row per pioneer with aggregated
+    project count, completion rate, status, practices, roles, and avg metrics."""
+    from backend import database
+
+    database.init_db()
+
+    # Cleanup.
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    # Create a pioneer with no project assignments — status should be "never".
+    p1 = database.create_pioneer(name="Newbie", email="newbie@example.com", notes=None, created_by=1)
+
+    rows = database.list_pioneers_with_metrics()
+    by_id = {r["id"]: r for r in rows}
+    assert p1 in by_id
+    assert by_id[p1]["status"] == "never"
+    assert by_id[p1]["project_count"] == 0
+    assert by_id[p1]["rounds_completed"] == 0
+    assert by_id[p1]["completion_rate"] is None
+
+    # Cleanup.
+    with database._db() as conn:
+        conn.execute("DELETE FROM pioneers WHERE id = ?", (p1,))
+        conn.commit()
+
+
+def test_get_pioneer_with_metrics_includes_portfolio():
+    """get_pioneer_with_metrics returns the same shape as list, plus a
+    portfolio list of project entries."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    pid = database.create_pioneer(name="Solo", email="solo@example.com", notes=None, created_by=1)
+    out = database.get_pioneer_with_metrics(pid)
+    assert out is not None
+    assert out["id"] == pid
+    assert "portfolio" in out
+    assert out["portfolio"] == []
+
+    # Non-existent.
+    assert database.get_pioneer_with_metrics(99999) is None
+
+    with database._db() as conn:
+        conn.execute("DELETE FROM pioneers WHERE id = ?", (pid,))
+        conn.commit()
 
 
 if __name__ == "__main__":
