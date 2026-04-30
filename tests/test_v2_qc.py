@@ -2477,6 +2477,7 @@ def main():
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
+    test_dashboard_pioneer_filter()
     test_expert_notes()
     test_notes_feed_endpoint()
     test_notes_excel_sheet()
@@ -3045,6 +3046,65 @@ def test_project_create_with_inline_pioneer():
         requests.delete(f"{BASE}/api/projects/{proj_id}", headers=headers)
         if new_pioneer:
             requests.delete(f"{BASE}/api/pioneers/{new_pioneer['id']}", headers=headers)
+
+
+def test_dashboard_pioneer_filter():
+    """GET /api/dashboard/metrics with pioneer_id query param scopes to that
+    pioneer's projects only."""
+    headers = auth_h(admin_token())
+
+    # Create two pioneers and two projects, each with a different pioneer.
+    p1 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Filter A", "email": "filter-a@example.com",
+    }).json()
+    p2 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Filter B", "email": "filter-b@example.com",
+    }).json()
+
+    proj1 = requests.post(f"{BASE}/api/projects", headers=headers, json={
+        "project_name": "filter-test-1",
+        "category_id": 1,
+        "pioneers": [{"pioneer_id": p1["id"], "total_rounds": 1}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }).json()
+    proj2 = requests.post(f"{BASE}/api/projects", headers=headers, json={
+        "project_name": "filter-test-2",
+        "category_id": 1,
+        "pioneers": [{"pioneer_id": p2["id"], "total_rounds": 1}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }).json()
+
+    try:
+        # Without filter — both projects counted.
+        all_metrics = requests.get(f"{BASE}/api/dashboard/metrics", headers=headers).json()
+        assert all_metrics["total_projects"] >= 2
+
+        # With pioneer_id=p1 — proj1 included, proj2 excluded.
+        p1_metrics = requests.get(
+            f"{BASE}/api/dashboard/metrics?pioneer_id={p1['id']}", headers=headers
+        ).json()
+        assert p1_metrics["total_projects"] <= all_metrics["total_projects"]
+        assert p1_metrics["total_projects"] >= 1  # at least proj1
+
+        # With both pioneer_ids — both included.
+        both_metrics = requests.get(
+            f"{BASE}/api/dashboard/metrics?pioneer_id={p1['id']}&pioneer_id={p2['id']}",
+            headers=headers,
+        ).json()
+        assert both_metrics["total_projects"] >= 2  # at least proj1 and proj2
+
+        # Unknown pioneer_id — no projects matched (empty filter).
+        unknown_metrics = requests.get(
+            f"{BASE}/api/dashboard/metrics?pioneer_id=999999", headers=headers
+        ).json()
+        assert unknown_metrics["total_projects"] == 0
+    finally:
+        requests.delete(f"{BASE}/api/projects/{proj1['id']}", headers=headers)
+        requests.delete(f"{BASE}/api/projects/{proj2['id']}", headers=headers)
+        requests.delete(f"{BASE}/api/pioneers/{p1['id']}", headers=headers)
+        requests.delete(f"{BASE}/api/pioneers/{p2['id']}", headers=headers)
 
 
 if __name__ == "__main__":

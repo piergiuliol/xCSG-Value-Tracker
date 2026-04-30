@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -964,21 +964,52 @@ async def list_norm_aggregates(current_user: dict = Depends(auth.get_current_use
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
+def _filter_project_ids_by_pioneer(pioneer_ids: Optional[List[int]]) -> Optional[set]:
+    """Return the set of project ids that have any of the given pioneer_ids
+    assigned. Returns None if pioneer_ids is None/empty (no filter).
+    Returns an empty set when pioneer_ids has values but none match — the
+    caller must treat this as 'filter all projects out'."""
+    if not pioneer_ids:
+        return None
+    placeholders = ",".join("?" for _ in pioneer_ids)
+    with db._db() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT project_id FROM project_pioneers WHERE pioneer_id IN ({placeholders})",
+            tuple(pioneer_ids),
+        ).fetchall()
+    return {r["project_id"] for r in rows}
+
+
 @app.get("/api/dashboard/metrics")
-async def dashboard_metrics(current_user: dict = Depends(auth.get_current_user)):
-    complete = _build_averaged_complete_projects()
+async def dashboard_metrics(
+    pioneer_id: Optional[List[int]] = Query(None),
+    current_user: dict = Depends(auth.get_current_user),
+):
+    project_id_filter = _filter_project_ids_by_pioneer(pioneer_id)
     all_projects = db.list_projects()
+    if project_id_filter is not None:
+        all_projects = [p for p in all_projects if p["id"] in project_id_filter]
+    complete = _build_averaged_complete_projects()
+    if project_id_filter is not None:
+        complete = [p for p in complete if p["id"] in project_id_filter]
     return mtx.compute_dashboard_metrics(complete, all_projects)
 
 
 @app.get("/api/dashboard/takeaways")
-async def dashboard_takeaways(current_user: dict = Depends(auth.get_current_user)):
+async def dashboard_takeaways(
+    pioneer_id: Optional[List[int]] = Query(None),
+    current_user: dict = Depends(auth.get_current_user),
+):
     """Return {chart_id: takeaway_string} for each dashboard chart."""
     from backend.takeaways import compute_takeaways
     from backend.schema import DASHBOARD_CONFIG
 
+    project_id_filter = _filter_project_ids_by_pioneer(pioneer_id)
     complete = _build_averaged_complete_projects()
     all_p = db.list_projects()
+    if project_id_filter is not None:
+        complete = [p for p in complete if p["id"] in project_id_filter]
+        all_p = [p for p in all_p if p["id"] in project_id_filter]
     aggregates = mtx.compute_summary(complete, all_p)
     scaling_gates = mtx.compute_scaling_gates(complete)
     return compute_takeaways(complete, aggregates, scaling_gates, DASHBOARD_CONFIG["charts"])
