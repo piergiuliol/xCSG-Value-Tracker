@@ -4582,13 +4582,17 @@ function renderPioneersFilterChips() {
     if (p.status) allStatuses.add(p.status);
   });
 
+  // Build chips with the value carried in data-* attributes; a delegated
+  // click handler reads them. This avoids string-interpolating the value
+  // into an onclick="..." attribute, where characters like <, >, &, or "
+  // would break the attribute or open an XSS hole.
   function chipBtn(key, value, label) {
     const isActive = (window._pioneersFilters[key] || []).includes(value);
     const activeStyle = isActive
       ? 'background:#121F6B;color:#fff;border-color:#121F6B;'
       : 'background:#f3f4f6;color:#374151;border-color:#d1d5db;';
-    return '<button style="' + activeStyle + 'border:1px solid;border-radius:20px;padding:3px 10px;font-size:12px;cursor:pointer" '
-      + 'onclick="togglePioneersFilter(\'' + key + '\',\'' + value.replace(/'/g, '\\\'') + '\')">'
+    return '<button class="pioneers-filter-chip" data-filter-key="' + esc(key) + '" data-filter-value="' + esc(value) + '"'
+      + ' style="' + activeStyle + 'border:1px solid;border-radius:20px;padding:3px 10px;font-size:12px;cursor:pointer">'
       + esc(label) + '</button>';
   }
 
@@ -4614,6 +4618,18 @@ function renderPioneersFilterChips() {
     const chips = statusOpts.map(function(opt) { return chipBtn('status', opt.value, opt.label); });
     statusEl.innerHTML = '<span style="font-size:12px;color:#6b7280;font-weight:600">Status:</span> ' + chips.join('');
   }
+
+  // Wire delegated click handlers (idempotent — re-bind every render so the
+  // handlers attach to the freshly-replaced DOM).
+  ['pioneersPracticeFilter', 'pioneersRoleFilter', 'pioneersStatusFilter'].forEach(function(containerId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.querySelectorAll('button.pioneers-filter-chip').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        togglePioneersFilter(btn.dataset.filterKey, btn.dataset.filterValue);
+      });
+    });
+  });
 }
 
 function togglePioneersFilter(key, value) {
