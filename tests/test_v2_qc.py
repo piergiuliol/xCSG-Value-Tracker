@@ -2425,6 +2425,7 @@ def main():
     test_economics_schema()
     test_practice_roles_schema()
     test_legacy_team_schema()
+    test_pioneer_schema()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -2468,6 +2469,35 @@ def main():
                 print(f"    {detail}")
     
     return 0 if failed == 0 else 1
+
+def test_pioneer_schema():
+    """schema.py exposes PIONEER_FIELDS, PIONEER_STATUS_OPTIONS, and the
+    pioneer_overdue_days threshold."""
+    from backend.schema import (
+        PIONEER_FIELDS, PIONEER_STATUS_OPTIONS, DASHBOARD_CONFIG, build_schema_response,
+    )
+
+    expected = {"name", "email", "notes"}
+    assert expected.issubset(set(PIONEER_FIELDS.keys()))
+    assert PIONEER_FIELDS["name"]["required"] is True
+    assert PIONEER_FIELDS["email"].get("required") is not True
+    assert PIONEER_FIELDS["name"].get("max_length") == 120
+
+    # Status options: list of {value, label} dicts.
+    values = {opt["value"] for opt in PIONEER_STATUS_OPTIONS}
+    assert values == {"never", "pending", "pending_overdue", "completed"}
+    labels = {opt["label"] for opt in PIONEER_STATUS_OPTIONS}
+    assert labels == {"Not assigned", "Pending", "Overdue", "Completed"}
+
+    # Threshold for pending_overdue.
+    assert DASHBOARD_CONFIG["thresholds"]["pioneer_overdue_days"] == 21
+
+    # Surfaced via /api/schema.
+    response = build_schema_response()
+    assert "pioneer_fields" in response
+    assert "pioneer_status_options" in response
+    assert response["pioneer_status_options"] == PIONEER_STATUS_OPTIONS
+
 
 if __name__ == "__main__":
     sys.exit(main())
