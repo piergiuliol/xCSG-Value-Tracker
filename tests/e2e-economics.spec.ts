@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { inlineCreatePioneer } from './test-helpers';
 
 const BASE = 'http://localhost:8077';
 
@@ -22,8 +23,8 @@ async function fillRequiredFields(page: Page, projectName: string) {
   await page.fill('#fName', projectName);
   await page.selectOption('#fCategory', { index: 1 });
 
-  const firstPioneerRow = page.locator('#pioneersContainer .pioneer-row').first();
-  await firstPioneerRow.locator('.pioneer-name').fill('Dr. Econ Test');
+  // Pioneer assignment now uses a picker + inline-create flow.
+  await inlineCreatePioneer(page, '#pioneersContainer .pioneer-row', 'Dr. Econ Test', '');
 
   // xCSG performance
   await page.fill('#fXTeam', '2');

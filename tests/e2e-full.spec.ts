@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { inlineCreatePioneer } from './test-helpers';
 
 const BASE = 'http://localhost:8077';
 const jsErrors: string[] = [];
@@ -46,11 +47,8 @@ test.describe.serial('xCSG Value Tracker E2E', () => {
     await page.selectOption('#fCategory', { index: 1 });
     // Category change auto-populates #fPractice (each seeded category has one practice).
 
-    // Pioneer assignment is now a separate sub-form: fill the first pioneer row
-    // that renderNewProject() pre-creates. There is no inline #fPioneer / #fEmail.
-    const firstPioneerRow = page.locator('#pioneersContainer .pioneer-row').first();
-    await firstPioneerRow.locator('.pioneer-name').fill('Dr. QA');
-    await firstPioneerRow.locator('.pioneer-email').fill('qa@test.com');
+    // Pioneer assignment now uses a picker + inline-create flow.
+    await inlineCreatePioneer(page, '#pioneersContainer .pioneer-row', 'Dr. QA', 'qa@test.com');
 
     // xCSG Performance
     await page.fill('#fXDays', '5');

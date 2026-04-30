@@ -111,3 +111,9 @@ def get_current_user_analyst(payload: dict = Depends(_get_payload)) -> dict:
             detail="Analyst or admin access required",
         )
     return payload
+
+
+# get_current_user_writer is an alias for get_current_user_analyst — both
+# names are used in different parts of the codebase. They have identical
+# semantics: admin or analyst required.
+get_current_user_writer = get_current_user_analyst

@@ -40,10 +40,13 @@ class RegisterRequest(BaseModel):
     role: str = "viewer"
 
 
-# ── Pioneers ─────────────────────────────────────────────────────────────────
+# ── Pioneers (per-project, nested) ───────────────────────────────────────────
 
-class PioneerCreate(BaseModel):
-    name: str
+class ProjectPioneerEntry(BaseModel):
+    """A pioneer entry inside ProjectCreate.pioneers — either references an
+    existing pioneer by id, OR provides name+email for inline create."""
+    pioneer_id: Optional[int] = None
+    name: Optional[str] = None
     email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
     day_rate: Optional[float] = None
@@ -56,12 +59,18 @@ class PioneerCreate(BaseModel):
             raise ValueError("day_rate must be >= 0")
         return v
 
+    @model_validator(mode="after")
+    def _id_or_name_required(self) -> "ProjectPioneerEntry":
+        if self.pioneer_id is None and (not self.name or not self.name.strip()):
+            raise ValueError("pioneer entry must have either pioneer_id or a non-empty name")
+        return self
 
-class PioneerUpdate(BaseModel):
+
+class ProjectPioneerUpdate(BaseModel):
+    """PUT /api/projects/{id}/pioneers/{id} — per-project pioneer update."""
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
-    show_previous: Optional[bool] = None
     day_rate: Optional[float] = None
     role_name: Optional[str] = None
 
@@ -118,7 +127,7 @@ class ProjectCreate(BaseModel):
     category_id: int
     practice_id: Optional[int] = None
     client_name: Optional[str] = None
-    pioneers: List[PioneerCreate] = []
+    pioneers: List[ProjectPioneerEntry] = []
     default_rounds: int = 1
     show_previous_answers: bool = False
     show_other_pioneers_answers: bool = False
@@ -186,8 +195,6 @@ class ProjectUpdate(BaseModel):
     category_id: Optional[int] = None
     practice_id: Optional[int] = None
     client_name: Optional[str] = None
-    pioneer_name: Optional[str] = None
-    pioneer_email: Optional[EmailStr] = None
     default_rounds: Optional[int] = None
     show_previous_answers: Optional[bool] = None
     show_other_pioneers_answers: Optional[bool] = None
@@ -518,3 +525,77 @@ class LegacyTeamRoleEntry(BaseModel):
         if v < 0:
             raise ValueError("day_rate must be >= 0")
         return v
+
+
+# ── Pioneers (Phase 3a) ───────────────────────────────────────────────────────
+
+class PioneerCreate(BaseModel):
+    """Top-level POST /api/pioneers — create a standalone pioneer record."""
+    name: str
+    email: Optional[EmailStr] = None
+    notes: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_non_empty(cls, v: str) -> str:
+        s = v.strip() if isinstance(v, str) else ""
+        if not s:
+            raise ValueError("name must not be empty")
+        if len(s) > 120:
+            raise ValueError("name must be at most 120 characters")
+        return s
+
+    @field_validator("notes")
+    @classmethod
+    def _notes_max_length(cls, v):
+        if v is not None and len(v) > 2000:
+            raise ValueError("notes must be at most 2000 characters")
+        return v
+
+
+class PioneerUpdate(BaseModel):
+    """PUT /api/pioneers/{id} — admin edits to identity / notes."""
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    notes: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_non_empty(cls, v):
+        if v is None:
+            return v
+        s = v.strip() if isinstance(v, str) else ""
+        if not s:
+            raise ValueError("name must not be empty")
+        if len(s) > 120:
+            raise ValueError("name must be at most 120 characters")
+        return s
+
+    @field_validator("notes")
+    @classmethod
+    def _notes_max_length(cls, v):
+        if v is not None and len(v) > 2000:
+            raise ValueError("notes must be at most 2000 characters")
+        return v
+
+
+class PioneerSummary(BaseModel):
+    """Aggregated shape returned by GET /api/pioneers and /api/pioneers/{id}."""
+    id: int
+    name: str
+    email: Optional[str] = None
+    notes: Optional[str] = None
+    project_count: int = 0
+    rounds_completed: int = 0
+    rounds_expected: int = 0
+    completion_rate: Optional[float] = None
+    last_activity_at: Optional[str] = None
+    status: str
+    avg_quality_score: Optional[float] = None
+    avg_value_gain: Optional[float] = None
+    avg_machine_first: Optional[float] = None
+    avg_senior_led: Optional[float] = None
+    avg_knowledge: Optional[float] = None
+    practices: List[dict] = []
+    roles: List[dict] = []
+    portfolio: Optional[List[dict]] = None  # only populated by GET /api/pioneers/{id}

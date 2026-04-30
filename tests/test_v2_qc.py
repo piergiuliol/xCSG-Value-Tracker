@@ -52,6 +52,11 @@ def admin_token():
 def pmo_token():
     return get_token("pmo")["access_token"]
 
+def login_token(username, password):
+    r = requests.post(f"{BASE}/api/auth/login", json={"username": username, "password": password})
+    r.raise_for_status()
+    return r.json()["access_token"]
+
 def auth_h(token):
     return {"Authorization": f"Bearer {token}"}
 
@@ -236,7 +241,7 @@ def test_create_deliverable():
         "project_name": "QA Test Deliverable",
         "category_id": cat_id,
         "practice_id": practice_id,
-        "pioneer_name": "Dr. QA",
+        "pioneers": [{"name": "Dr. QA"}],
         "client_name": "QA Client",
         "engagement_stage": "Active engagement",
         "date_started": "2026-03-01",
@@ -247,7 +252,7 @@ def test_create_deliverable():
         "xcsg_scope_expansion": "No",
         "engagement_revenue": 100000,
     }
-    
+
     payload["xcsg_revision_rounds"] = "1"
     r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json=payload)
     test("POST /api/projects returns 201", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:100]}")
@@ -266,17 +271,18 @@ def test_create_deliverable():
         # Clean up
         requests.delete(f"{BASE}/api/projects/{proj['id']}", headers=auth_h(tk))
     
-    # Required fields test - missing pioneer_name
+    # Required fields test - empty pioneers list rejected
     payload2 = {
         "project_name": "QA Test No Pioneer",
         "category_id": cat_id,
+        "pioneers": [],
         "date_started": "2026-03-01",
         "date_delivered": "2026-03-10",
         "xcsg_team_size": "2",
         "xcsg_revision_rounds": "0",
     }
     r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json=payload2)
-    test("Missing pioneer_name rejected", r.status_code == 422, f"got {r.status_code}")
+    test("Empty pioneers list rejected", r.status_code == 422, f"got {r.status_code}")
     
     # No legacy estimate fields in PMO form
     test("No legacy_calendar_days required (V2)", True)  # just checking it's not required
@@ -300,7 +306,7 @@ def test_expert_assessment():
     r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json={
         "project_name": "QA Expert Test",
         "category_id": cat_id,
-        "pioneer_name": "Dr. Expert QA",
+        "pioneers": [{"name": "Dr. Expert QA"}],
         "engagement_stage": "Active engagement",
         "date_started": "2026-03-01",
         "date_delivered": "2026-03-10",
@@ -1342,30 +1348,36 @@ def test_migrate_v17_idempotent():
     database.migrate_v17()
     database.migrate_v17()
 
-    # Existing rows should have NULL role_name.
+    # Existing rows should have NULL role_name — verify via a temporary fixture.
     with database._db() as conn:
-        # Insert a quick test fixture: a project + pioneer.
+        # Insert a pioneer record first (required by the project_pioneers FK).
+        cur_pio = conn.execute(
+            "INSERT INTO pioneers (name, email) VALUES ('P', 'p@x.io')"
+        )
+        pioneer_registry_id = cur_pio.lastrowid
+        # Insert a project (no pioneer_name / pioneer_email columns since migrate_v19).
         cur = conn.execute(
             "INSERT INTO projects (created_by, project_name, category_id, "
-            "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
+            "xcsg_team_size, xcsg_revision_rounds, "
             "legacy_calendar_days, legacy_revision_rounds, "
             "expert_token, status) "
-            "VALUES (1, 'mig17 test', 1, 'P', 'p@x.io', '2', '1', '10', '1', 'tok-mig17', 'pending')"
+            "VALUES (1, 'mig17 test', 1, '2', '1', '10', '1', 'tok-mig17', 'pending')"
         )
         project_id = cur.lastrowid
         cur = conn.execute(
-            "INSERT INTO project_pioneers (project_id, pioneer_name, pioneer_email, expert_token) "
-            "VALUES (?, 'P', 'p@x.io', 'tok-mig17-pp')",
-            (project_id,),
+            "INSERT INTO project_pioneers (project_id, pioneer_id, expert_token) "
+            "VALUES (?, ?, 'tok-mig17-pp')",
+            (project_id, pioneer_registry_id),
         )
         pid = cur.lastrowid
         row = conn.execute(
             "SELECT role_name FROM project_pioneers WHERE id = ?", (pid,)
         ).fetchone()
         assert row["role_name"] is None
-        # Cleanup — delete pioneer before project to satisfy FK constraint.
+        # Cleanup — delete pioneer_pioneers before project to satisfy FK constraint.
         conn.execute("DELETE FROM project_pioneers WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        conn.execute("DELETE FROM pioneers WHERE id = ?", (pioneer_registry_id,))
         conn.commit()
 
 
@@ -1478,11 +1490,11 @@ def test_legacy_team_schema():
 
 
 def test_economics_models():
-    """ProjectCreate, PioneerCreate, PracticeUpdate accept and validate economics fields."""
+    """ProjectCreate, ProjectPioneerEntry, PracticeUpdate accept and validate economics fields."""
     import pytest
     from pydantic import ValidationError
     from backend.models import (
-        ProjectCreate, ProjectUpdate, PioneerCreate, PracticeUpdate,
+        ProjectCreate, ProjectUpdate, ProjectPioneerEntry, PracticeUpdate,
         AppSettings, AppSettingsUpdate,
     )
 
@@ -1510,7 +1522,7 @@ def test_economics_models():
         with pytest.raises(ValidationError):
             ProjectCreate(**{**base, bad_field: -1})
     with pytest.raises(ValidationError):
-        PioneerCreate(name="Pia", day_rate=-50)
+        ProjectPioneerEntry(name="Pia", day_rate=-50)
 
     # Invalid currency / pricing model are rejected.
     with pytest.raises(ValidationError):
@@ -2161,9 +2173,9 @@ def test_legacy_team_db_helpers():
     with database._db() as conn:
         cur = conn.execute(
             "INSERT INTO projects (created_by, project_name, category_id, "
-            "pioneer_name, pioneer_email, xcsg_team_size, xcsg_revision_rounds, "
+            "xcsg_team_size, xcsg_revision_rounds, "
             "legacy_calendar_days, legacy_revision_rounds, expert_token, status) "
-            "VALUES (1, 'lt test', 1, 'P', 'p@x.io', '1', '1', '10', '1', 'tok-lt', 'pending')"
+            "VALUES (1, 'lt test', 1, '1', '1', '10', '1', 'tok-lt', 'pending')"
         )
         project_id = cur.lastrowid
         conn.commit()
@@ -2260,22 +2272,22 @@ def test_legacy_team_persistence():
 
 
 def test_pioneer_role_name_in_models():
-    """PioneerCreate and PioneerUpdate accept optional role_name."""
-    from backend.models import PioneerCreate, PioneerUpdate
+    """ProjectPioneerEntry and ProjectPioneerUpdate accept optional role_name."""
+    from backend.models import ProjectPioneerEntry, ProjectPioneerUpdate
 
     # Happy path with role_name.
-    p = PioneerCreate(name="Pia", email="pia@example.com", day_rate=1500, role_name="Senior")
+    p = ProjectPioneerEntry(name="Pia", email="pia@example.com", day_rate=1500, role_name="Senior")
     assert p.role_name == "Senior"
     assert p.day_rate == 1500
 
     # role_name optional — None is fine.
-    p2 = PioneerCreate(name="Bob", email="bob@example.com")
+    p2 = ProjectPioneerEntry(name="Bob", email="bob@example.com")
     assert p2.role_name is None
 
-    # PioneerUpdate also accepts role_name.
-    u = PioneerUpdate(role_name="Manager")
+    # ProjectPioneerUpdate also accepts role_name.
+    u = ProjectPioneerUpdate(role_name="Manager")
     assert u.role_name == "Manager"
-    u2 = PioneerUpdate()
+    u2 = ProjectPioneerUpdate()
     assert u2.role_name is None
 
 
@@ -2425,6 +2437,20 @@ def main():
     test_economics_schema()
     test_practice_roles_schema()
     test_legacy_team_schema()
+    test_pioneer_schema()
+    test_pioneer_models()
+    test_pioneer_db_helpers_crud()
+    test_delete_pioneer_assigned_to_project_raises()
+    test_list_pioneers_with_metrics_aggregation()
+    test_get_pioneer_with_metrics_includes_portfolio()
+    test_pioneer_api_crud()
+    test_pioneer_api_find_or_create()
+    test_pioneer_api_admin_only()
+    test_pioneer_delete_in_use_returns_409()
+    test_project_create_with_existing_pioneer_id()
+    test_project_create_with_inline_pioneer()
+    test_migrate_v19_destructive_creates_pioneers_table()
+    test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -2468,6 +2494,558 @@ def main():
                 print(f"    {detail}")
     
     return 0 if failed == 0 else 1
+
+def test_pioneer_schema():
+    """schema.py exposes PIONEER_FIELDS, PIONEER_STATUS_OPTIONS, and the
+    pioneer_overdue_days threshold."""
+    from backend.schema import (
+        PIONEER_FIELDS, PIONEER_STATUS_OPTIONS, DASHBOARD_CONFIG, build_schema_response,
+    )
+
+    expected = {"name", "email", "notes"}
+    assert expected.issubset(set(PIONEER_FIELDS.keys()))
+    assert PIONEER_FIELDS["name"]["required"] is True
+    assert PIONEER_FIELDS["email"].get("required") is not True
+    assert PIONEER_FIELDS["name"].get("max_length") == 120
+
+    # Status options: list of {value, label} dicts.
+    values = {opt["value"] for opt in PIONEER_STATUS_OPTIONS}
+    assert values == {"never", "pending", "pending_overdue", "completed"}
+    labels = {opt["label"] for opt in PIONEER_STATUS_OPTIONS}
+    assert labels == {"Not assigned", "Pending", "Overdue", "Completed"}
+
+    # Threshold for pending_overdue.
+    assert DASHBOARD_CONFIG["thresholds"]["pioneer_overdue_days"] == 21
+
+    # Surfaced via /api/schema.
+    response = build_schema_response()
+    assert "pioneer_fields" in response
+    assert "pioneer_status_options" in response
+    assert response["pioneer_status_options"] == PIONEER_STATUS_OPTIONS
+
+
+def test_migrate_v19_destructive_creates_pioneers_table():
+    """migrate_v19 creates pioneers table, drops pioneer_name/email from
+    project_pioneers and from projects, adds pioneer_id NOT NULL FK,
+    and is idempotent."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        # New table exists.
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "pioneers" in tables
+
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(pioneers)"
+        ).fetchall()}
+        for col in ("id", "name", "email", "notes", "created_by", "created_at"):
+            assert col in cols, f"pioneers.{col} missing"
+
+        # Partial unique index exists.
+        indexes = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='pioneers'"
+        ).fetchall()}
+        assert "idx_pioneers_email_lower" in indexes
+
+        # project_pioneers has pioneer_id (NOT NULL FK), no pioneer_name/email.
+        pp_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(project_pioneers)"
+        ).fetchall()}
+        assert "pioneer_id" in pp_cols
+        assert "pioneer_name" not in pp_cols
+        assert "pioneer_email" not in pp_cols
+
+        # Vestigial v1.0 columns dropped from projects.
+        proj_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(projects)"
+        ).fetchall()}
+        assert "pioneer_name" not in proj_cols
+        assert "pioneer_email" not in proj_cols
+
+    # Re-run — must be idempotent.
+    database.migrate_v19()
+    database.migrate_v19()
+
+
+def test_migrate_v19_email_unique_case_insensitive():
+    """Partial unique index rejects case-insensitive email duplicates;
+    NULL emails are allowed multiple times."""
+    import sqlite3
+    import pytest as _pytest
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        # Cleanup pioneers table (in case of prior test pollution).
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+        cur = conn.execute(
+            "INSERT INTO pioneers (name, email) VALUES (?, ?)",
+            ("Pia", "Pia@Example.com"),
+        )
+
+        with _pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO pioneers (name, email) VALUES (?, ?)",
+                ("Pia P.", "pia@example.com"),  # different case but same lower
+            )
+
+        # Different email is fine.
+        conn.execute(
+            "INSERT INTO pioneers (name, email) VALUES (?, ?)",
+            ("Bob", "bob@example.com"),
+        )
+
+        # Multiple NULL emails are allowed.
+        conn.execute("INSERT INTO pioneers (name) VALUES ('X')")
+        conn.execute("INSERT INTO pioneers (name) VALUES ('Y')")
+
+        # Cleanup
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+
+def test_pioneer_models():
+    """Top-level PioneerCreate / PioneerUpdate / PioneerSummary validate.
+    Nested ProjectPioneerEntry (inside ProjectCreate.pioneers) accepts either
+    pioneer_id OR name+email."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        PioneerCreate, PioneerUpdate, PioneerSummary,
+        ProjectCreate, ProjectPioneerEntry,
+    )
+
+    # Top-level PioneerCreate (for POST /api/pioneers).
+    p = PioneerCreate(name="Pia P.", email="pia@example.com", notes="Senior expert")
+    assert p.name == "Pia P."
+    assert p.email == "pia@example.com"
+    assert p.notes == "Senior expert"
+
+    # Email is optional, notes optional.
+    p2 = PioneerCreate(name="Bob")
+    assert p2.email is None
+    assert p2.notes is None
+
+    # Empty name rejected.
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="")
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="   ")
+
+    # Name > 120 chars rejected.
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="x" * 121)
+
+    # PioneerUpdate — all fields optional.
+    u = PioneerUpdate(name="Pia New Name")
+    assert u.name == "Pia New Name"
+    u2 = PioneerUpdate()
+    assert u2.name is None and u2.email is None and u2.notes is None
+
+    # PioneerSummary minimal shape (used as response model).
+    s = PioneerSummary(
+        id=1, name="Pia", email="pia@example.com", notes=None,
+        project_count=3, rounds_completed=4, rounds_expected=6,
+        completion_rate=0.667, last_activity_at="2026-04-26",
+        status="pending",
+        avg_quality_score=0.78, avg_value_gain=1.6,
+        avg_machine_first=1.4, avg_senior_led=2.1, avg_knowledge=1.8,
+        practices=[{"code": "RWE", "count": 3}],
+        roles=[{"role_name": "Senior", "count": 2}],
+    )
+    assert s.id == 1
+    assert s.status == "pending"
+    assert len(s.practices) == 1
+
+    # Nested ProjectPioneerEntry (inside ProjectCreate.pioneers) — accepts pioneer_id.
+    base = {
+        "project_name": "T", "category_id": 1,
+        "xcsg_team_size": "1", "xcsg_revision_rounds": "1",
+    }
+    p_with_id = ProjectCreate(**base, pioneers=[{"pioneer_id": 7}])
+    assert p_with_id.pioneers[0].pioneer_id == 7
+    assert p_with_id.pioneers[0].name is None  # not provided
+
+    # Nested ProjectPioneerEntry — accepts name+email (inline create path).
+    p_with_inline = ProjectCreate(**base, pioneers=[
+        {"name": "New Pia", "email": "newpia@example.com"},
+    ])
+    assert p_with_inline.pioneers[0].pioneer_id is None
+    assert p_with_inline.pioneers[0].name == "New Pia"
+    assert p_with_inline.pioneers[0].email == "newpia@example.com"
+
+    # Nested — must have at least pioneer_id OR name (validator rejects neither).
+    with pytest.raises(ValidationError):
+        ProjectCreate(**base, pioneers=[{}])  # no id, no name
+
+
+def test_pioneer_db_helpers_crud():
+    """create_pioneer / find_pioneer_by_email / update_pioneer_record / delete_pioneer."""
+    from backend import database
+
+    database.init_db()
+
+    # Cleanup any leftover pioneers from prior tests.
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    # Create a pioneer.
+    pid = database.create_pioneer(name="Pia P.", email="pia@example.com", notes=None, created_by=1)
+    assert isinstance(pid, int) and pid > 0
+
+    # find_pioneer_by_email — case-insensitive.
+    found = database.find_pioneer_by_email("PIA@EXAMPLE.COM")
+    assert found is not None
+    assert found["id"] == pid
+
+    # find_pioneer_by_email — None when not found.
+    assert database.find_pioneer_by_email("nobody@nowhere.com") is None
+    assert database.find_pioneer_by_email(None) is None
+
+    # update_pioneer_record.
+    database.update_pioneer_record(pid, name="Pia Pio", email="pia@example.com", notes="Senior")
+    with database._db() as conn:
+        row = conn.execute("SELECT * FROM pioneers WHERE id = ?", (pid,)).fetchone()
+    assert row["name"] == "Pia Pio"
+    assert row["notes"] == "Senior"
+
+    # delete_pioneer — succeeds when not on any project.
+    database.delete_pioneer(pid)
+    assert database.find_pioneer_by_email("pia@example.com") is None
+
+
+def test_delete_pioneer_assigned_to_project_raises():
+    """delete_pioneer raises a specific exception when the pioneer is on a project."""
+    import pytest as _pytest
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    pid = database.create_pioneer(name="Bob", email="bob@example.com", notes=None, created_by=1)
+
+    # Manually create a project + assign pioneer.
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO projects (created_by, project_name, category_id, "
+            "xcsg_team_size, xcsg_revision_rounds, "
+            "legacy_calendar_days, legacy_revision_rounds, "
+            "expert_token, status) "
+            "VALUES (1, 'P', 1, '1', '1', '10', '1', 'tok-del-test', 'pending')"
+        )
+        proj_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO project_pioneers (project_id, pioneer_id, expert_token) "
+            "VALUES (?, ?, ?)",
+            (proj_id, pid, "tok-pp-del-test"),
+        )
+        conn.commit()
+
+    # Delete should raise.
+    try:
+        with _pytest.raises(database.PioneerInUseError):
+            database.delete_pioneer(pid)
+    finally:
+        with database._db() as conn:
+            conn.execute("DELETE FROM project_pioneers WHERE project_id = ?", (proj_id,))
+            conn.execute("DELETE FROM projects WHERE id = ?", (proj_id,))
+            conn.execute("DELETE FROM pioneers WHERE id = ?", (pid,))
+            conn.commit()
+
+
+def test_list_pioneers_with_metrics_aggregation():
+    """list_pioneers_with_metrics returns one row per pioneer with aggregated
+    project count, completion rate, status, practices, roles, and avg metrics."""
+    from backend import database
+
+    database.init_db()
+
+    # Cleanup.
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    # Create a pioneer with no project assignments — status should be "never".
+    p1 = database.create_pioneer(name="Newbie", email="newbie@example.com", notes=None, created_by=1)
+
+    rows = database.list_pioneers_with_metrics()
+    by_id = {r["id"]: r for r in rows}
+    assert p1 in by_id
+    assert by_id[p1]["status"] == "never"
+    assert by_id[p1]["project_count"] == 0
+    assert by_id[p1]["rounds_completed"] == 0
+    assert by_id[p1]["completion_rate"] is None
+
+    # Cleanup.
+    with database._db() as conn:
+        conn.execute("DELETE FROM pioneers WHERE id = ?", (p1,))
+        conn.commit()
+
+
+def test_get_pioneer_with_metrics_includes_portfolio():
+    """get_pioneer_with_metrics returns the same shape as list, plus a
+    portfolio list of project entries."""
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    pid = database.create_pioneer(name="Solo", email="solo@example.com", notes=None, created_by=1)
+    out = database.get_pioneer_with_metrics(pid)
+    assert out is not None
+    assert out["id"] == pid
+    assert "portfolio" in out
+    assert out["portfolio"] == []
+
+    # Non-existent.
+    assert database.get_pioneer_with_metrics(99999) is None
+
+    with database._db() as conn:
+        conn.execute("DELETE FROM pioneers WHERE id = ?", (pid,))
+        conn.commit()
+
+
+def test_pioneer_api_crud():
+    """POST -> GET -> GET list -> PUT -> DELETE happy path."""
+    headers = auth_h(admin_token())
+
+    # Cleanup any leftover api-test pioneers.
+    pre = requests.get(f"{BASE}/api/pioneers", headers=headers).json()
+    for p in pre:
+        if p.get("email") and "api-test" in p["email"]:
+            requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+    # POST — create.
+    r = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Pia API-Test", "email": "pia-api-test@example.com", "notes": "Initial",
+    })
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    try:
+        # GET single.
+        r = requests.get(f"{BASE}/api/pioneers/{pid}", headers=headers)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "Pia API-Test"
+        assert "portfolio" in body
+        assert body["portfolio"] == []
+        assert body["status"] == "never"
+
+        # GET list — pioneer appears.
+        r = requests.get(f"{BASE}/api/pioneers", headers=headers)
+        ids = {p["id"] for p in r.json()}
+        assert pid in ids
+
+        # PUT.
+        r = requests.put(f"{BASE}/api/pioneers/{pid}", headers=headers, json={
+            "name": "Pia A-T",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["name"] == "Pia A-T"
+
+        # GET 404 for unknown.
+        assert requests.get(f"{BASE}/api/pioneers/99999", headers=headers).status_code == 404
+    finally:
+        # DELETE — succeeds because no project assignments.
+        del_r = requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+        assert del_r.status_code == 204
+
+
+def test_pioneer_api_find_or_create():
+    """POST with an email that already exists returns 200 with the existing
+    record (find-or-create); without email always 201."""
+    headers = auth_h(admin_token())
+
+    # First create.
+    r1 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Foc Pia", "email": "foc-pia@example.com",
+    })
+    assert r1.status_code == 201
+    pid = r1.json()["id"]
+
+    try:
+        # Second POST with same email (different case) -> 200, returns same id.
+        r2 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+            "name": "Different Name", "email": "FOC-PIA@EXAMPLE.COM",
+        })
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["id"] == pid
+        # Server returns the EXISTING record; the conflicting name is not applied.
+        assert r2.json()["name"] == "Foc Pia"
+
+        # POST without email -> always 201, new id.
+        r3 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+            "name": "No Email Pia",
+        })
+        assert r3.status_code == 201
+        assert r3.json()["id"] != pid
+        # Cleanup.
+        requests.delete(f"{BASE}/api/pioneers/{r3.json()['id']}", headers=headers)
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+
+
+def test_pioneer_api_admin_only():
+    """PUT / DELETE require admin. POST is admin + analyst. GET is everyone."""
+    h_admin = auth_h(admin_token())
+    h_analyst = auth_h(login_token("pmo", "AliraPMO2026!"))
+    h_viewer = auth_h(login_token("viewer", "AliraView2026!"))
+
+    # GET allowed for all.
+    assert requests.get(f"{BASE}/api/pioneers", headers=h_admin).status_code == 200
+    assert requests.get(f"{BASE}/api/pioneers", headers=h_analyst).status_code == 200
+    assert requests.get(f"{BASE}/api/pioneers", headers=h_viewer).status_code == 200
+
+    # POST allowed for admin + analyst, blocked for viewer.
+    r = requests.post(f"{BASE}/api/pioneers", headers=h_analyst, json={
+        "name": "Analyst Created", "email": "analyst-created@example.com",
+    })
+    assert r.status_code in (200, 201), r.text
+    pid = r.json()["id"]
+
+    try:
+        assert requests.post(f"{BASE}/api/pioneers", headers=h_viewer, json={
+            "name": "Viewer Tried", "email": "viewer-tried@example.com",
+        }).status_code == 403
+
+        # PUT — admin only.
+        assert requests.put(f"{BASE}/api/pioneers/{pid}", headers=h_admin, json={"notes": "x"}).status_code == 200
+        assert requests.put(f"{BASE}/api/pioneers/{pid}", headers=h_analyst, json={"notes": "y"}).status_code == 403
+        assert requests.put(f"{BASE}/api/pioneers/{pid}", headers=h_viewer, json={"notes": "z"}).status_code == 403
+
+        # DELETE — admin only.
+        assert requests.delete(f"{BASE}/api/pioneers/{pid}", headers=h_analyst).status_code == 403
+        assert requests.delete(f"{BASE}/api/pioneers/{pid}", headers=h_viewer).status_code == 403
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{pid}", headers=h_admin)
+
+
+def test_pioneer_delete_in_use_returns_409():
+    """DELETE returns 409 when the pioneer is on any project."""
+    headers = auth_h(admin_token())
+
+    # Create pioneer.
+    r = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "InUse Pia", "email": "inuse-pia@example.com",
+    })
+    pid = r.json()["id"]
+
+    # Create project assigning this pioneer (via pioneer_id).
+    proj_r = requests.post(f"{BASE}/api/projects", headers=headers, json={
+        "project_name": "delete-in-use test",
+        "category_id": 1,
+        "pioneers": [{"pioneer_id": pid}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    })
+    assert proj_r.status_code == 201, proj_r.text
+    proj_id = proj_r.json()["id"]
+
+    try:
+        # DELETE pioneer -> 409.
+        del_r = requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+        assert del_r.status_code == 409, del_r.text
+        # Detail should mention the project count.
+        detail = del_r.json().get("detail", "")
+        assert "1" in str(detail)
+    finally:
+        requests.delete(f"{BASE}/api/projects/{proj_id}", headers=headers)
+        requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+
+
+def test_project_create_with_existing_pioneer_id():
+    """ProjectCreate.pioneers entries can reference an existing pioneer by id."""
+    headers = auth_h(admin_token())
+
+    # Create a pioneer first.
+    pr = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Existing Pia", "email": "existing-pia@example.com",
+    })
+    assert pr.status_code in (200, 201)
+    pid = pr.json()["id"]
+
+    try:
+        # Create project referencing pioneer by id.
+        proj_r = requests.post(f"{BASE}/api/projects", headers=headers, json={
+            "project_name": "with-existing-id",
+            "category_id": 1,
+            "pioneers": [{"pioneer_id": pid, "total_rounds": 2, "role_name": "Senior"}],
+            "xcsg_team_size": "1",
+            "xcsg_revision_rounds": "1",
+        })
+        assert proj_r.status_code == 201, proj_r.text
+        proj_id = proj_r.json()["id"]
+
+        # GET project: pioneer name comes from pioneers table.
+        detail = requests.get(f"{BASE}/api/projects/{proj_id}", headers=headers).json()
+        assert detail["pioneers"][0]["pioneer_id"] == pid
+        assert detail["pioneers"][0]["pioneer_name"] == "Existing Pia"
+        assert detail["pioneers"][0]["pioneer_email"] == "existing-pia@example.com"
+        assert detail["pioneers"][0]["role_name"] == "Senior"
+
+        # Cleanup.
+        requests.delete(f"{BASE}/api/projects/{proj_id}", headers=headers)
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+
+
+def test_project_create_with_inline_pioneer():
+    """ProjectCreate.pioneers can carry name+email — server find-or-creates the pioneer."""
+    headers = auth_h(admin_token())
+
+    # Cleanup any leftover.
+    pre = requests.get(f"{BASE}/api/pioneers", headers=headers).json()
+    for p in pre:
+        if p.get("email") == "inline-pia@example.com":
+            requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+    # Create project with inline pioneer.
+    proj_r = requests.post(f"{BASE}/api/projects", headers=headers, json={
+        "project_name": "with-inline-pioneer",
+        "category_id": 1,
+        "pioneers": [{"name": "Inline Pia", "email": "inline-pia@example.com", "total_rounds": 1}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    })
+    assert proj_r.status_code == 201, proj_r.text
+    proj_id = proj_r.json()["id"]
+
+    new_pioneer = None
+    try:
+        # Pioneer was created.
+        all_p = requests.get(f"{BASE}/api/pioneers", headers=headers).json()
+        new_pioneer = next((p for p in all_p if p.get("email") == "inline-pia@example.com"), None)
+        assert new_pioneer is not None
+
+        # And the project references it.
+        detail = requests.get(f"{BASE}/api/projects/{proj_id}", headers=headers).json()
+        assert detail["pioneers"][0]["pioneer_id"] == new_pioneer["id"]
+    finally:
+        requests.delete(f"{BASE}/api/projects/{proj_id}", headers=headers)
+        if new_pioneer:
+            requests.delete(f"{BASE}/api/pioneers/{new_pioneer['id']}", headers=headers)
+
 
 if __name__ == "__main__":
     sys.exit(main())

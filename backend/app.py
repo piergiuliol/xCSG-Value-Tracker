@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import auth
 from backend import database as db
 from backend import metrics as mtx
+from backend.pioneers import PioneerInUseError
 from backend.models import (
     ActivityLogEntry,
     AppSettings,
@@ -30,8 +31,11 @@ from backend.models import (
     LoginRequest,
     LoginResponse,
     MetricsSummary,
+    ProjectPioneerEntry,
+    ProjectPioneerUpdate,
     PioneerCreate,
     PioneerUpdate,
+    PioneerSummary,
     PracticeCreate,
     PracticeUpdate,
     PracticeRoleEntry,
@@ -468,7 +472,17 @@ async def create_project(
 
     data = _normalize_project_payload(body.model_dump())
     data["created_by"] = current_user["sub"]
-    data["pioneers"] = [{"name": p.name, "email": p.email, "total_rounds": p.total_rounds, "day_rate": p.day_rate, "role_name": p.role_name} for p in body.pioneers]
+    data["pioneers"] = [
+        {
+            "pioneer_id": p.pioneer_id,
+            "name": p.name,
+            "email": p.email,
+            "total_rounds": p.total_rounds,
+            "day_rate": p.day_rate,
+            "role_name": p.role_name,
+        }
+        for p in body.pioneers
+    ]
 
     norm = db.get_norm_by_category(body.category_id)
     if norm:
@@ -587,7 +601,7 @@ async def list_project_pioneers(
 @app.post("/api/projects/{project_id}/pioneers", status_code=201)
 async def add_project_pioneer(
     project_id: int,
-    body: PioneerCreate,
+    body: ProjectPioneerEntry,
     current_user: dict = Depends(auth.get_current_user_analyst),
 ):
     row = db.get_project(project_id)
@@ -596,7 +610,16 @@ async def add_project_pioneer(
     current_count = len(db.list_pioneers(project_id))
     if current_count >= MAX_PIONEERS_PER_PROJECT:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_PIONEERS_PER_PROJECT} pioneers per project")
-    pioneer_id = db.add_pioneer(project_id, body.name, body.email, body.total_rounds, day_rate=body.day_rate, role_name=body.role_name)
+    pioneer_id = db.add_pioneer(
+        project_id=project_id,
+        pioneer_id=body.pioneer_id,
+        name=body.name,
+        email=body.email,
+        total_rounds=body.total_rounds,
+        issued_by=current_user.get("sub"),
+        day_rate=body.day_rate,
+        role_name=body.role_name,
+    )
     pioneers = db.list_pioneers(project_id)
     new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
     db.log_activity(
@@ -612,7 +635,7 @@ async def add_project_pioneer(
 async def update_project_pioneer(
     project_id: int,
     pioneer_id: int,
-    body: PioneerUpdate,
+    body: ProjectPioneerUpdate,
     current_user: dict = Depends(auth.get_current_user_analyst),
 ):
     row = db.get_project(project_id)
@@ -706,7 +729,10 @@ async def get_pioneer_round(
 
     with db._db() as conn:
         pp = conn.execute(
-            "SELECT project_id, pioneer_name FROM project_pioneers WHERE id = ?",
+            """SELECT pp.project_id, pio.name AS pioneer_name
+               FROM project_pioneers pp
+               JOIN pioneers pio ON pio.id = pp.pioneer_id
+               WHERE pp.id = ?""",
             (pioneer_id,),
         ).fetchone()
     if not pp:
@@ -1352,6 +1378,73 @@ async def update_settings(
 ):
     db.update_app_settings(default_currency=payload.default_currency)
     return db.get_app_settings()
+
+
+# ── Pioneer Registry (Phase 3a) ───────────────────────────────────────────────
+
+@app.get("/api/pioneers")
+def list_pioneers_endpoint(user=Depends(auth.get_current_user)):
+    return db.list_pioneers_with_metrics()
+
+
+@app.get("/api/pioneers/{pioneer_id}")
+def get_pioneer_endpoint(pioneer_id: int, user=Depends(auth.get_current_user)):
+    pioneer = db.get_pioneer_with_metrics(pioneer_id)
+    if not pioneer:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+    return pioneer
+
+
+@app.post("/api/pioneers", status_code=201)
+def create_pioneer_endpoint(
+    payload: PioneerCreate,
+    response: Response,
+    user=Depends(auth.get_current_user_writer),
+):
+    """Find-or-create by case-insensitive email when provided.
+    201 = new pioneer; 200 = existing pioneer (caller distinguishes by status code)."""
+    if payload.email:
+        existing = db.find_pioneer_by_email(payload.email)
+        if existing:
+            response.status_code = 200
+            return db.get_pioneer_with_metrics(existing["id"])
+    user_id = user.get("sub")
+    pid = db.create_pioneer(
+        name=payload.name,
+        email=payload.email,
+        notes=payload.notes,
+        created_by=user_id,
+    )
+    return db.get_pioneer_with_metrics(pid)
+
+
+@app.put("/api/pioneers/{pioneer_id}")
+def update_pioneer_endpoint(
+    pioneer_id: int,
+    payload: PioneerUpdate,
+    user=Depends(auth.get_current_user_admin),
+):
+    pioneer = db.get_pioneer_with_metrics(pioneer_id)
+    if not pioneer:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+    db.update_pioneer_record(
+        pioneer_id, name=payload.name, email=payload.email, notes=payload.notes,
+    )
+    return db.get_pioneer_with_metrics(pioneer_id)
+
+
+@app.delete("/api/pioneers/{pioneer_id}", status_code=204)
+def delete_pioneer_endpoint(
+    pioneer_id: int,
+    user=Depends(auth.get_current_user_admin),
+):
+    try:
+        db.delete_pioneer(pioneer_id)
+    except PioneerInUseError as e:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pioneer is assigned to {e.project_count} project(s); remove from all projects before deleting.",
+        )
 
 
 # ── Static file mount — MUST BE LAST ─────────────────────────────────────────

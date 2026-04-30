@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { inlineCreatePioneer } from './test-helpers';
 
 /**
  * Realistic E2E test: creates 20 projects across categories with varied
@@ -155,10 +156,10 @@ test.describe.serial('Realistic 20-project E2E + QA/QC', () => {
       // Category change auto-populates #fPractice (each seeded category has one
       // allowed practice; the form auto-selects it when only one is valid).
 
-      // Pioneer assignment is a separate sub-form now — fill the first
-      // pioneer row that renderNewProject() pre-creates.
-      const firstPioneerRow = page.locator('#pioneersContainer .pioneer-row').first();
-      await firstPioneerRow.locator('.pioneer-name').fill(p.pioneer);
+      // Pioneer assignment now uses a picker + inline-create flow.
+      // No email supplied — each call creates a fresh pioneer (duplicates by name
+      // are acceptable here; the test validates metrics, not pioneer uniqueness).
+      await inlineCreatePioneer(page, '#pioneersContainer .pioneer-row', p.pioneer, '');
 
       await page.fill('#fClient', p.client);
       await page.selectOption('#fStage', p.stage);

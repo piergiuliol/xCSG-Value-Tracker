@@ -226,6 +226,21 @@ LEGACY_TEAM_FIELDS = {
     "day_rate":  {"label": "Day rate", "type": "number", "min": 0, "required": True},
 }
 
+# ── Pioneers (Phase 3a) ──────────────────────────────────────────────────────
+
+PIONEER_FIELDS = {
+    "name":  {"label": "Name", "type": "text", "max_length": 120, "required": True},
+    "email": {"label": "Email", "type": "email", "max_length": 200},
+    "notes": {"label": "Notes", "type": "textarea", "max_length": 2000},
+}
+
+PIONEER_STATUS_OPTIONS = [
+    {"value": "never",            "label": "Not assigned"},
+    {"value": "pending",          "label": "Pending"},
+    {"value": "pending_overdue",  "label": "Overdue"},
+    {"value": "completed",        "label": "Completed"},
+]
+
 # ── Dashboard configuration (single source of truth for the frontend) ───────
 
 DASHBOARD_CONFIG = {
@@ -305,6 +320,7 @@ DASHBOARD_CONFIG = {
         "bar_top_n": 8,
         "metric_tone": {"success_above": 1.5, "blue_above": 1.0, "warning_above": 0.8},
         "pct_tone":    {"success_above": 0.8, "blue_above": 0.6, "warning_above": 0.4},
+        "pioneer_overdue_days": 21,
     },
 }
 
@@ -357,4 +373,6 @@ def build_schema_response() -> dict:
         "economics_fields": ECONOMICS_FIELDS,
         "practice_role_fields": PRACTICE_ROLE_FIELDS,
         "legacy_team_fields": LEGACY_TEAM_FIELDS,
+        "pioneer_fields": PIONEER_FIELDS,
+        "pioneer_status_options": PIONEER_STATUS_OPTIONS,
     }
