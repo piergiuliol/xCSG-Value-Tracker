@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import auth
 from backend import database as db
 from backend import metrics as mtx
+from backend.database import PioneerInUseError
 from backend.models import (
     ActivityLogEntry,
     AppSettings,
@@ -32,6 +33,9 @@ from backend.models import (
     MetricsSummary,
     ProjectPioneerEntry,
     ProjectPioneerUpdate,
+    PioneerCreate,
+    PioneerUpdate,
+    PioneerSummary,
     PracticeCreate,
     PracticeUpdate,
     PracticeRoleEntry,
@@ -1352,6 +1356,73 @@ async def update_settings(
 ):
     db.update_app_settings(default_currency=payload.default_currency)
     return db.get_app_settings()
+
+
+# ── Pioneer Registry (Phase 3a) ───────────────────────────────────────────────
+
+@app.get("/api/pioneers")
+def list_pioneers_endpoint(user=Depends(auth.get_current_user)):
+    return db.list_pioneers_with_metrics()
+
+
+@app.get("/api/pioneers/{pioneer_id}")
+def get_pioneer_endpoint(pioneer_id: int, user=Depends(auth.get_current_user)):
+    pioneer = db.get_pioneer_with_metrics(pioneer_id)
+    if not pioneer:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+    return pioneer
+
+
+@app.post("/api/pioneers", status_code=201)
+def create_pioneer_endpoint(
+    payload: PioneerCreate,
+    response: Response,
+    user=Depends(auth.get_current_user_writer),
+):
+    """Find-or-create by case-insensitive email when provided.
+    201 = new pioneer; 200 = existing pioneer (caller distinguishes by status code)."""
+    if payload.email:
+        existing = db.find_pioneer_by_email(payload.email)
+        if existing:
+            response.status_code = 200
+            return db.get_pioneer_with_metrics(existing["id"])
+    user_id = user.get("sub")
+    pid = db.create_pioneer(
+        name=payload.name,
+        email=payload.email,
+        notes=payload.notes,
+        created_by=user_id,
+    )
+    return db.get_pioneer_with_metrics(pid)
+
+
+@app.put("/api/pioneers/{pioneer_id}")
+def update_pioneer_endpoint(
+    pioneer_id: int,
+    payload: PioneerUpdate,
+    user=Depends(auth.get_current_user_admin),
+):
+    pioneer = db.get_pioneer_with_metrics(pioneer_id)
+    if not pioneer:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+    db.update_pioneer_record(
+        pioneer_id, name=payload.name, email=payload.email, notes=payload.notes,
+    )
+    return db.get_pioneer_with_metrics(pioneer_id)
+
+
+@app.delete("/api/pioneers/{pioneer_id}", status_code=204)
+def delete_pioneer_endpoint(
+    pioneer_id: int,
+    user=Depends(auth.get_current_user_admin),
+):
+    try:
+        db.delete_pioneer(pioneer_id)
+    except PioneerInUseError as e:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pioneer is assigned to {e.project_count} project(s); remove from all projects before deleting.",
+        )
 
 
 # ── Static file mount — MUST BE LAST ─────────────────────────────────────────

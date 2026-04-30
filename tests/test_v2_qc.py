@@ -52,6 +52,11 @@ def admin_token():
 def pmo_token():
     return get_token("pmo")["access_token"]
 
+def login_token(username, password):
+    r = requests.post(f"{BASE}/api/auth/login", json={"username": username, "password": password})
+    r.raise_for_status()
+    return r.json()["access_token"]
+
 def auth_h(token):
     return {"Authorization": f"Bearer {token}"}
 
@@ -2431,6 +2436,10 @@ def main():
     test_delete_pioneer_assigned_to_project_raises()
     test_list_pioneers_with_metrics_aggregation()
     test_get_pioneer_with_metrics_includes_portfolio()
+    test_pioneer_api_crud()
+    test_pioneer_api_find_or_create()
+    test_pioneer_api_admin_only()
+    test_pioneer_delete_in_use_returns_409()
     test_migrate_v19_destructive_creates_pioneers_table()
     test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v15_idempotent()
@@ -2808,6 +2817,155 @@ def test_get_pioneer_with_metrics_includes_portfolio():
     with database._db() as conn:
         conn.execute("DELETE FROM pioneers WHERE id = ?", (pid,))
         conn.commit()
+
+
+def test_pioneer_api_crud():
+    """POST -> GET -> GET list -> PUT -> DELETE happy path."""
+    headers = auth_h(admin_token())
+
+    # Cleanup any leftover api-test pioneers.
+    pre = requests.get(f"{BASE}/api/pioneers", headers=headers).json()
+    for p in pre:
+        if p.get("email") and "api-test" in p["email"]:
+            requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+    # POST — create.
+    r = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Pia API-Test", "email": "pia-api-test@example.com", "notes": "Initial",
+    })
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    try:
+        # GET single.
+        r = requests.get(f"{BASE}/api/pioneers/{pid}", headers=headers)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "Pia API-Test"
+        assert "portfolio" in body
+        assert body["portfolio"] == []
+        assert body["status"] == "never"
+
+        # GET list — pioneer appears.
+        r = requests.get(f"{BASE}/api/pioneers", headers=headers)
+        ids = {p["id"] for p in r.json()}
+        assert pid in ids
+
+        # PUT.
+        r = requests.put(f"{BASE}/api/pioneers/{pid}", headers=headers, json={
+            "name": "Pia A-T",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["name"] == "Pia A-T"
+
+        # GET 404 for unknown.
+        assert requests.get(f"{BASE}/api/pioneers/99999", headers=headers).status_code == 404
+    finally:
+        # DELETE — succeeds because no project assignments.
+        del_r = requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+        assert del_r.status_code == 204
+
+
+def test_pioneer_api_find_or_create():
+    """POST with an email that already exists returns 200 with the existing
+    record (find-or-create); without email always 201."""
+    headers = auth_h(admin_token())
+
+    # First create.
+    r1 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Foc Pia", "email": "foc-pia@example.com",
+    })
+    assert r1.status_code == 201
+    pid = r1.json()["id"]
+
+    try:
+        # Second POST with same email (different case) -> 200, returns same id.
+        r2 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+            "name": "Different Name", "email": "FOC-PIA@EXAMPLE.COM",
+        })
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["id"] == pid
+        # Server returns the EXISTING record; the conflicting name is not applied.
+        assert r2.json()["name"] == "Foc Pia"
+
+        # POST without email -> always 201, new id.
+        r3 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+            "name": "No Email Pia",
+        })
+        assert r3.status_code == 201
+        assert r3.json()["id"] != pid
+        # Cleanup.
+        requests.delete(f"{BASE}/api/pioneers/{r3.json()['id']}", headers=headers)
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+
+
+def test_pioneer_api_admin_only():
+    """PUT / DELETE require admin. POST is admin + analyst. GET is everyone."""
+    h_admin = auth_h(admin_token())
+    h_analyst = auth_h(login_token("pmo", "AliraPMO2026!"))
+    h_viewer = auth_h(login_token("viewer", "AliraView2026!"))
+
+    # GET allowed for all.
+    assert requests.get(f"{BASE}/api/pioneers", headers=h_admin).status_code == 200
+    assert requests.get(f"{BASE}/api/pioneers", headers=h_analyst).status_code == 200
+    assert requests.get(f"{BASE}/api/pioneers", headers=h_viewer).status_code == 200
+
+    # POST allowed for admin + analyst, blocked for viewer.
+    r = requests.post(f"{BASE}/api/pioneers", headers=h_analyst, json={
+        "name": "Analyst Created", "email": "analyst-created@example.com",
+    })
+    assert r.status_code in (200, 201), r.text
+    pid = r.json()["id"]
+
+    try:
+        assert requests.post(f"{BASE}/api/pioneers", headers=h_viewer, json={
+            "name": "Viewer Tried", "email": "viewer-tried@example.com",
+        }).status_code == 403
+
+        # PUT — admin only.
+        assert requests.put(f"{BASE}/api/pioneers/{pid}", headers=h_admin, json={"notes": "x"}).status_code == 200
+        assert requests.put(f"{BASE}/api/pioneers/{pid}", headers=h_analyst, json={"notes": "y"}).status_code == 403
+        assert requests.put(f"{BASE}/api/pioneers/{pid}", headers=h_viewer, json={"notes": "z"}).status_code == 403
+
+        # DELETE — admin only.
+        assert requests.delete(f"{BASE}/api/pioneers/{pid}", headers=h_analyst).status_code == 403
+        assert requests.delete(f"{BASE}/api/pioneers/{pid}", headers=h_viewer).status_code == 403
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{pid}", headers=h_admin)
+
+
+def test_pioneer_delete_in_use_returns_409():
+    """DELETE returns 409 when the pioneer is on any project."""
+    headers = auth_h(admin_token())
+
+    # Create pioneer.
+    r = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "InUse Pia", "email": "inuse-pia@example.com",
+    })
+    pid = r.json()["id"]
+
+    # Create project assigning this pioneer (via pioneer_id).
+    proj_r = requests.post(f"{BASE}/api/projects", headers=headers, json={
+        "project_name": "delete-in-use test",
+        "category_id": 1,
+        "pioneers": [{"pioneer_id": pid}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    })
+    assert proj_r.status_code == 201, proj_r.text
+    proj_id = proj_r.json()["id"]
+
+    try:
+        # DELETE pioneer -> 409.
+        del_r = requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
+        assert del_r.status_code == 409, del_r.text
+        # Detail should mention the project count.
+        detail = del_r.json().get("detail", "")
+        assert "1" in str(detail)
+    finally:
+        requests.delete(f"{BASE}/api/projects/{proj_id}", headers=headers)
+        requests.delete(f"{BASE}/api/pioneers/{pid}", headers=headers)
 
 
 if __name__ == "__main__":

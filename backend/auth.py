@@ -111,3 +111,13 @@ def get_current_user_analyst(payload: dict = Depends(_get_payload)) -> dict:
             detail="Analyst or admin access required",
         )
     return payload
+
+
+def get_current_user_writer(payload: dict = Depends(_get_payload)) -> dict:
+    """Admin or analyst — required for write operations like creating pioneers."""
+    if payload.get("role") not in ("admin", "analyst"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or analyst required",
+        )
+    return payload
