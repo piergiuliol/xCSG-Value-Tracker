@@ -4,6 +4,8 @@ Phase 1 realignment (April 2026).
 
 IMPORTANT: app.mount("/", StaticFiles(...)) MUST be the LAST line.
 """
+import csv
+import io
 import json
 import os
 import tempfile
@@ -18,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import auth
 from backend import database as db
 from backend import metrics as mtx
+from backend import pioneers as pioneers_mod
 from backend.pioneers import PioneerInUseError
 from backend.models import (
     ActivityLogEntry,
@@ -1393,6 +1396,47 @@ async def download_export_file(
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Export file not found")
     return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
+@app.get("/api/export/pioneers.csv")
+def export_pioneers_csv(
+    practice: Optional[List[str]] = Query(None),
+    role: Optional[List[str]] = Query(None),
+    status: Optional[List[str]] = Query(None),
+    search: Optional[str] = Query(None),
+    user=Depends(auth.get_current_user),
+):
+    rows = pioneers_mod.filter_pioneers_for_export(
+        practice=practice, role=role, status=status, search=search,
+    )
+
+    # Flatten lists into joined strings for CSV.
+    flattened = []
+    for r in rows:
+        flat = dict(r)
+        flat["practices"] = ", ".join(
+            f"{p['code']}({p['count']})" for p in r.get("practices", [])
+        )
+        flat["roles"] = ", ".join(
+            f"{x['role_name']}×{x['count']}" for x in r.get("roles", [])
+        )
+        flat.pop("portfolio", None)  # detail-only field, not in list export
+        flattened.append(flat)
+
+    if not flattened:
+        return Response(content="", media_type="text/csv")
+
+    # Build CSV.
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(flattened[0].keys()))
+    writer.writeheader()
+    writer.writerows(flattened)
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=pioneers.csv"},
+    )
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────

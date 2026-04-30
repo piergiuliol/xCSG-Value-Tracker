@@ -245,6 +245,50 @@ def list_pioneers_with_metrics() -> list[dict]:
     return result
 
 
+def filter_pioneers_for_export(
+    practice: Optional[list[str]] = None,
+    role: Optional[list[str]] = None,
+    status: Optional[list[str]] = None,
+    search: Optional[str] = None,
+) -> list[dict]:
+    """Return list_pioneers_with_metrics() filtered by the given query params.
+    Used by the CSV export endpoint and the index-page server-side filtering
+    if we ever add it. Multi-valued filters use OR semantics (a pioneer
+    matches if any of its practices/roles/statuses match any selected value).
+
+    `search` is a single string matched (case-insensitive) against name and email.
+    """
+    rows = list_pioneers_with_metrics()
+
+    if status:
+        status_set = set(status)
+        rows = [r for r in rows if r.get("status") in status_set]
+
+    if practice:
+        practice_set = set(practice)
+        rows = [
+            r for r in rows
+            if any(p["code"] in practice_set for p in r.get("practices", []))
+        ]
+
+    if role:
+        role_set = set(role)
+        rows = [
+            r for r in rows
+            if any(rr["role_name"] in role_set for rr in r.get("roles", []))
+        ]
+
+    if search:
+        s = search.lower().strip()
+        rows = [
+            r for r in rows
+            if (r.get("name") or "").lower().find(s) >= 0
+            or (r.get("email") or "").lower().find(s) >= 0
+        ]
+
+    return rows
+
+
 def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
     """Same shape as list_pioneers_with_metrics()'s items, plus a `portfolio`
     field listing each project the pioneer is on. Returns None if the pioneer

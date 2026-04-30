@@ -2400,6 +2400,64 @@ def test_update_pioneer_clears_role_name():
         requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
 
 
+def test_export_pioneers_csv():
+    """GET /api/export/pioneers.csv returns CSV of pioneer rows.
+    Honors filter query params (multi-valued for practice/role/status)."""
+    import csv
+    import io
+
+    headers = auth_h(admin_token())
+
+    # Make sure at least one pioneer exists.
+    p = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "CSV Test", "email": "csv-test@example.com",
+    }).json()
+
+    try:
+        r = requests.get(f"{BASE}/api/export/pioneers.csv", headers=headers)
+        assert r.status_code == 200
+        assert "text/csv" in r.headers.get("content-type", "")
+
+        # Parse the CSV.
+        reader = csv.DictReader(io.StringIO(r.text))
+        rows = list(reader)
+        assert len(rows) >= 1
+        # Required columns.
+        for col in ("id", "name", "email", "project_count", "status",
+                    "completion_rate", "avg_value_gain", "practices", "roles"):
+            assert col in rows[0], f"missing column {col}"
+
+        # Our test pioneer should be in there.
+        names = [row["name"] for row in rows]
+        assert "CSV Test" in names
+
+        # Status filter — single value.
+        r2 = requests.get(f"{BASE}/api/export/pioneers.csv?status=never", headers=headers)
+        assert r2.status_code == 200
+        rows2 = list(csv.DictReader(io.StringIO(r2.text)))
+        # Test pioneer is `never` (no project assignments).
+        assert any(row["name"] == "CSV Test" and row["status"] == "never" for row in rows2)
+
+        # Multi-valued status filter (e.g. status=never&status=pending).
+        r3 = requests.get(
+            f"{BASE}/api/export/pioneers.csv?status=never&status=pending",
+            headers=headers,
+        )
+        assert r3.status_code == 200
+        # CSV should still parse cleanly.
+        list(csv.DictReader(io.StringIO(r3.text)))
+
+        # Search filter.
+        r4 = requests.get(
+            f"{BASE}/api/export/pioneers.csv?search=csv-test",
+            headers=headers,
+        )
+        rows4 = list(csv.DictReader(io.StringIO(r4.text)))
+        assert any(row["name"] == "CSV Test" for row in rows4)
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+
 def main():
     global passed, failed, failures
 
@@ -2482,6 +2540,7 @@ def main():
     test_notes_feed_endpoint()
     test_notes_excel_sheet()
     test_dashboard_export_sheets()
+    test_export_pioneers_csv()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
