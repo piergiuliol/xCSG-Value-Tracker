@@ -249,6 +249,35 @@ async function apiCall(method, endpoint, body = null) {
   return json;
 }
 
+// Variant of apiCall that returns {status, body} so callers can distinguish
+// 200 (matched existing) from 201 (created new). Mirrors apiCall's error
+// shape for parity.
+async function apiCallWithStatus(method, endpoint, body = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + endpoint, opts);
+  if (res.status === 401) { handleLogout(); throw new Error('Session expired'); }
+  if (res.status === 204) return { status: 204, body: null };
+  const json = await res.json();
+  if (!res.ok) {
+    let msg;
+    if (typeof json.detail === 'string') {
+      msg = json.detail;
+    } else if (json.detail && typeof json.detail === 'object') {
+      msg = json.detail.message || `Error ${res.status}`;
+    } else {
+      msg = json.message || `Error ${res.status}`;
+    }
+    const err = new Error(msg);
+    err.status = res.status;
+    err.detail = json.detail;
+    throw err;
+  }
+  return { status: res.status, body: json };
+}
+
 function showToast(msg, type = 'success') {
   const c = document.getElementById('toastContainer');
   if (!c) return;
@@ -1161,17 +1190,20 @@ async function handlePioneerInlineSave(rowEl) {
     return;
   }
   try {
-    const result = await apiCall('POST', '/pioneers', {
+    const { status, body: result } = await apiCallWithStatus('POST', '/pioneers', {
       name,
       email: email || null,
     });
     // Refresh module-level pioneer cache.
     window._allPioneers = await loadAllPioneers();
-    // Re-render the picker with the new pioneer selected.
+    // Re-render the picker with the new/matched pioneer selected.
     const newSelect = document.createElement('span');
     newSelect.innerHTML = renderPioneerPickerSelect(result.id, window._allPioneers);
     wrapper.replaceWith(newSelect.firstElementChild);
     wirePioneerPickerEvents(rowEl);
+    if (typeof showToast === 'function') {
+      showToast(status === 200 ? 'Pioneer already existed — selected' : 'Pioneer added');
+    }
   } catch (e) {
     if (typeof showToast === 'function') showToast('Failed to create pioneer: ' + (e?.message || e));
     else alert('Failed to create pioneer: ' + (e?.message || e));
@@ -4754,12 +4786,13 @@ async function submitAddPioneerToIndex() {
   const email = emailEl ? emailEl.value.trim() : '';
   const notes = notesEl ? notesEl.value.trim() : '';
   try {
-    await apiCall('POST', '/pioneers', { name, email: email || null, notes: notes || null });
+    const { status } = await apiCallWithStatus('POST', '/pioneers', { name, email: email || null, notes: notes || null });
     hideModal();
-    // Reset filter state so the new pioneer is visible.
+    // Reset filter state so the new/matched pioneer is visible.
     window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: null, sort_dir: 'asc' };
     await renderPioneersIndex();
-    showToast('Pioneer added');
+    // 200 = find-or-create matched an existing pioneer; 201 = newly created.
+    showToast(status === 200 ? 'Pioneer already existed — selected' : 'Pioneer added');
   } catch (e) {
     showToast('Failed to create pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
   }
