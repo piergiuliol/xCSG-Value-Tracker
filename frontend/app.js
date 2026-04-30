@@ -479,7 +479,8 @@ async function route() {
 
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
-    projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log',
+    projects: 'Projects', pioneers: 'Pioneers', pioneer: 'Pioneer',
+    settings: 'Settings', norms: 'Norms', activity: 'Activity Log',
     monitoring: 'Monitoring', methodology: 'How Scores Work', notes: 'Notes'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
@@ -491,6 +492,8 @@ async function route() {
   else if (hash === '#new') { if (canWrite()) renderNewProject(); else { document.getElementById('mainContent').innerHTML = '<div class="error-state">You do not have permission to create projects.</div>'; } }
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
+  else if (hash === '#pioneers') renderPioneersIndex();
+  else if (hash.startsWith('#pioneer/')) { const id = parseInt(hash.split('/')[1]); if (id) renderPioneerDetail(id); }
   else if (hash === '#monitoring') renderMonitoring();
   else if (hash === '#settings') renderSettings();
   else if (hash === '#norms') renderNormsPage();
@@ -4398,6 +4401,16 @@ function toggleMethodAccordion(header) {
   const item = header.closest('.meth-accordion-item');
   if (!item) return;
   item.classList.toggle('meth-open');
+}
+
+async function renderPioneersIndex() {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<h1>Pioneers</h1><p>Index page (Phase 3b Task 5)</p>';
+}
+
+async function renderPioneerDetail(id) {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = `<h1>Pioneer ${id}</h1><p>Detail page (Phase 3b Task 6)</p>`;
 }
 
 function renderMethodology() {
