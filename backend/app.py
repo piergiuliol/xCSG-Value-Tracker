@@ -30,8 +30,8 @@ from backend.models import (
     LoginRequest,
     LoginResponse,
     MetricsSummary,
-    PioneerCreate,
-    PioneerUpdate,
+    ProjectPioneerEntry,
+    ProjectPioneerUpdate,
     PracticeCreate,
     PracticeUpdate,
     PracticeRoleEntry,
@@ -587,7 +587,7 @@ async def list_project_pioneers(
 @app.post("/api/projects/{project_id}/pioneers", status_code=201)
 async def add_project_pioneer(
     project_id: int,
-    body: PioneerCreate,
+    body: ProjectPioneerEntry,
     current_user: dict = Depends(auth.get_current_user_analyst),
 ):
     row = db.get_project(project_id)
@@ -612,7 +612,7 @@ async def add_project_pioneer(
 async def update_project_pioneer(
     project_id: int,
     pioneer_id: int,
-    body: PioneerUpdate,
+    body: ProjectPioneerUpdate,
     current_user: dict = Depends(auth.get_current_user_analyst),
 ):
     row = db.get_project(project_id)

@@ -1478,11 +1478,11 @@ def test_legacy_team_schema():
 
 
 def test_economics_models():
-    """ProjectCreate, PioneerCreate, PracticeUpdate accept and validate economics fields."""
+    """ProjectCreate, ProjectPioneerEntry, PracticeUpdate accept and validate economics fields."""
     import pytest
     from pydantic import ValidationError
     from backend.models import (
-        ProjectCreate, ProjectUpdate, PioneerCreate, PracticeUpdate,
+        ProjectCreate, ProjectUpdate, ProjectPioneerEntry, PracticeUpdate,
         AppSettings, AppSettingsUpdate,
     )
 
@@ -1510,7 +1510,7 @@ def test_economics_models():
         with pytest.raises(ValidationError):
             ProjectCreate(**{**base, bad_field: -1})
     with pytest.raises(ValidationError):
-        PioneerCreate(name="Pia", day_rate=-50)
+        ProjectPioneerEntry(name="Pia", day_rate=-50)
 
     # Invalid currency / pricing model are rejected.
     with pytest.raises(ValidationError):
@@ -2260,22 +2260,22 @@ def test_legacy_team_persistence():
 
 
 def test_pioneer_role_name_in_models():
-    """PioneerCreate and PioneerUpdate accept optional role_name."""
-    from backend.models import PioneerCreate, PioneerUpdate
+    """ProjectPioneerEntry and ProjectPioneerUpdate accept optional role_name."""
+    from backend.models import ProjectPioneerEntry, ProjectPioneerUpdate
 
     # Happy path with role_name.
-    p = PioneerCreate(name="Pia", email="pia@example.com", day_rate=1500, role_name="Senior")
+    p = ProjectPioneerEntry(name="Pia", email="pia@example.com", day_rate=1500, role_name="Senior")
     assert p.role_name == "Senior"
     assert p.day_rate == 1500
 
     # role_name optional — None is fine.
-    p2 = PioneerCreate(name="Bob", email="bob@example.com")
+    p2 = ProjectPioneerEntry(name="Bob", email="bob@example.com")
     assert p2.role_name is None
 
-    # PioneerUpdate also accepts role_name.
-    u = PioneerUpdate(role_name="Manager")
+    # ProjectPioneerUpdate also accepts role_name.
+    u = ProjectPioneerUpdate(role_name="Manager")
     assert u.role_name == "Manager"
-    u2 = PioneerUpdate()
+    u2 = ProjectPioneerUpdate()
     assert u2.role_name is None
 
 
@@ -2426,6 +2426,7 @@ def main():
     test_practice_roles_schema()
     test_legacy_team_schema()
     test_pioneer_schema()
+    test_pioneer_models()
     test_migrate_v19_destructive_creates_pioneers_table()
     test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v15_idempotent()
@@ -2591,6 +2592,81 @@ def test_migrate_v19_email_unique_case_insensitive():
         # Cleanup
         conn.execute("DELETE FROM pioneers")
         conn.commit()
+
+
+def test_pioneer_models():
+    """Top-level PioneerCreate / PioneerUpdate / PioneerSummary validate.
+    Nested ProjectPioneerEntry (inside ProjectCreate.pioneers) accepts either
+    pioneer_id OR name+email."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        PioneerCreate, PioneerUpdate, PioneerSummary,
+        ProjectCreate, ProjectPioneerEntry,
+    )
+
+    # Top-level PioneerCreate (for POST /api/pioneers).
+    p = PioneerCreate(name="Pia P.", email="pia@example.com", notes="Senior expert")
+    assert p.name == "Pia P."
+    assert p.email == "pia@example.com"
+    assert p.notes == "Senior expert"
+
+    # Email is optional, notes optional.
+    p2 = PioneerCreate(name="Bob")
+    assert p2.email is None
+    assert p2.notes is None
+
+    # Empty name rejected.
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="")
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="   ")
+
+    # Name > 120 chars rejected.
+    with pytest.raises(ValidationError):
+        PioneerCreate(name="x" * 121)
+
+    # PioneerUpdate — all fields optional.
+    u = PioneerUpdate(name="Pia New Name")
+    assert u.name == "Pia New Name"
+    u2 = PioneerUpdate()
+    assert u2.name is None and u2.email is None and u2.notes is None
+
+    # PioneerSummary minimal shape (used as response model).
+    s = PioneerSummary(
+        id=1, name="Pia", email="pia@example.com", notes=None,
+        project_count=3, rounds_completed=4, rounds_expected=6,
+        completion_rate=0.667, last_activity_at="2026-04-26",
+        status="pending",
+        avg_quality_score=0.78, avg_value_gain=1.6,
+        avg_machine_first=1.4, avg_senior_led=2.1, avg_knowledge=1.8,
+        practices=[{"code": "RWE", "count": 3}],
+        roles=[{"role_name": "Senior", "count": 2}],
+    )
+    assert s.id == 1
+    assert s.status == "pending"
+    assert len(s.practices) == 1
+
+    # Nested ProjectPioneerEntry (inside ProjectCreate.pioneers) — accepts pioneer_id.
+    base = {
+        "project_name": "T", "category_id": 1,
+        "xcsg_team_size": "1", "xcsg_revision_rounds": "1",
+    }
+    p_with_id = ProjectCreate(**base, pioneers=[{"pioneer_id": 7}])
+    assert p_with_id.pioneers[0].pioneer_id == 7
+    assert p_with_id.pioneers[0].name is None  # not provided
+
+    # Nested ProjectPioneerEntry — accepts name+email (inline create path).
+    p_with_inline = ProjectCreate(**base, pioneers=[
+        {"name": "New Pia", "email": "newpia@example.com"},
+    ])
+    assert p_with_inline.pioneers[0].pioneer_id is None
+    assert p_with_inline.pioneers[0].name == "New Pia"
+    assert p_with_inline.pioneers[0].email == "newpia@example.com"
+
+    # Nested — must have at least pioneer_id OR name (validator rejects neither).
+    with pytest.raises(ValidationError):
+        ProjectCreate(**base, pioneers=[{}])  # no id, no name
 
 
 if __name__ == "__main__":
