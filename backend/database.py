@@ -11,6 +11,17 @@ from typing import Optional
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "./data/tracker.db")
 
 
+class PioneerInUseError(Exception):
+    """Raised when delete_pioneer is called on a pioneer assigned to projects."""
+    def __init__(self, pioneer_id: int, project_count: int):
+        self.pioneer_id = pioneer_id
+        self.project_count = project_count
+        super().__init__(
+            f"Pioneer {pioneer_id} is assigned to {project_count} project(s); "
+            "remove from all projects before deleting."
+        )
+
+
 def get_connection() -> sqlite3.Connection:
     """Open a connection with WAL mode and foreign keys enabled."""
     os.makedirs(os.path.dirname(os.path.abspath(DATABASE_PATH)), exist_ok=True)
@@ -1591,6 +1602,69 @@ def add_pioneer(project_id: int, name: str, email: str = None, total_rounds: int
         )
         conn.commit()
         return pioneer_id
+
+
+def create_pioneer(name: str, email: Optional[str], notes: Optional[str],
+                   created_by: Optional[int]) -> int:
+    """Insert a new pioneer row; return the new id. Email uniqueness enforced
+    by the partial index — caller should call find_pioneer_by_email first
+    when find-or-create semantics are desired."""
+    with _db() as conn:
+        cur = conn.execute(
+            """INSERT INTO pioneers (name, email, notes, created_by)
+               VALUES (?, ?, ?, ?)""",
+            (name.strip(), email.strip() if email else None, notes, created_by),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def find_pioneer_by_email(email: Optional[str]) -> Optional[dict]:
+    """Case-insensitive lookup. Returns the pioneer row as a dict, or None."""
+    if not email or not email.strip():
+        return None
+    with _db() as conn:
+        row = conn.execute(
+            """SELECT * FROM pioneers
+                WHERE lower(trim(email)) = lower(trim(?))""",
+            (email,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_pioneer_record(pioneer_id: int, name: Optional[str] = None,
+                          email: Optional[str] = None,
+                          notes: Optional[str] = None) -> None:
+    """Update only the provided fields. None means 'leave unchanged'."""
+    fields = {}
+    if name is not None:
+        fields["name"] = name.strip()
+    if email is not None:
+        fields["email"] = email.strip() if email else None
+    if notes is not None:
+        fields["notes"] = notes
+    if not fields:
+        return
+    with _db() as conn:
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(
+            f"UPDATE pioneers SET {cols} WHERE id = ?",
+            (*fields.values(), pioneer_id),
+        )
+        conn.commit()
+
+
+def delete_pioneer(pioneer_id: int) -> None:
+    """Hard delete. Raises PioneerInUseError if assigned to any project."""
+    with _db() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM project_pioneers WHERE pioneer_id = ?",
+            (pioneer_id,),
+        ).fetchone()["n"]
+        if n > 0:
+            raise PioneerInUseError(pioneer_id, n)
+        conn.execute("DELETE FROM pioneers WHERE id = ?", (pioneer_id,))
+        conn.commit()
 
 
 def remove_pioneer(pioneer_id: int) -> bool:

@@ -2427,6 +2427,8 @@ def main():
     test_legacy_team_schema()
     test_pioneer_schema()
     test_pioneer_models()
+    test_pioneer_db_helpers_crud()
+    test_delete_pioneer_assigned_to_project_raises()
     test_migrate_v19_destructive_creates_pioneers_table()
     test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v15_idempotent()
@@ -2667,6 +2669,86 @@ def test_pioneer_models():
     # Nested — must have at least pioneer_id OR name (validator rejects neither).
     with pytest.raises(ValidationError):
         ProjectCreate(**base, pioneers=[{}])  # no id, no name
+
+
+def test_pioneer_db_helpers_crud():
+    """create_pioneer / find_pioneer_by_email / update_pioneer_record / delete_pioneer."""
+    from backend import database
+
+    database.init_db()
+
+    # Cleanup any leftover pioneers from prior tests.
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    # Create a pioneer.
+    pid = database.create_pioneer(name="Pia P.", email="pia@example.com", notes=None, created_by=1)
+    assert isinstance(pid, int) and pid > 0
+
+    # find_pioneer_by_email — case-insensitive.
+    found = database.find_pioneer_by_email("PIA@EXAMPLE.COM")
+    assert found is not None
+    assert found["id"] == pid
+
+    # find_pioneer_by_email — None when not found.
+    assert database.find_pioneer_by_email("nobody@nowhere.com") is None
+    assert database.find_pioneer_by_email(None) is None
+
+    # update_pioneer_record.
+    database.update_pioneer_record(pid, name="Pia Pio", email="pia@example.com", notes="Senior")
+    with database._db() as conn:
+        row = conn.execute("SELECT * FROM pioneers WHERE id = ?", (pid,)).fetchone()
+    assert row["name"] == "Pia Pio"
+    assert row["notes"] == "Senior"
+
+    # delete_pioneer — succeeds when not on any project.
+    database.delete_pioneer(pid)
+    assert database.find_pioneer_by_email("pia@example.com") is None
+
+
+def test_delete_pioneer_assigned_to_project_raises():
+    """delete_pioneer raises a specific exception when the pioneer is on a project."""
+    import pytest as _pytest
+    from backend import database
+
+    database.init_db()
+
+    with database._db() as conn:
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+    pid = database.create_pioneer(name="Bob", email="bob@example.com", notes=None, created_by=1)
+
+    # Manually create a project + assign pioneer.
+    with database._db() as conn:
+        cur = conn.execute(
+            "INSERT INTO projects (created_by, project_name, category_id, "
+            "xcsg_team_size, xcsg_revision_rounds, "
+            "legacy_calendar_days, legacy_revision_rounds, "
+            "expert_token, status) "
+            "VALUES (1, 'P', 1, '1', '1', '10', '1', 'tok-del-test', 'pending')"
+        )
+        proj_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO project_pioneers (project_id, pioneer_id, expert_token) "
+            "VALUES (?, ?, ?)",
+            (proj_id, pid, "tok-pp-del-test"),
+        )
+        conn.commit()
+
+    # Delete should raise.
+    try:
+        with _pytest.raises(database.PioneerInUseError):
+            database.delete_pioneer(pid)
+    finally:
+        with database._db() as conn:
+            conn.execute("DELETE FROM project_pioneers WHERE project_id = ?", (proj_id,))
+            conn.execute("DELETE FROM projects WHERE id = ?", (proj_id,))
+            conn.execute("DELETE FROM pioneers WHERE id = ?", (pid,))
+            conn.commit()
 
 
 if __name__ == "__main__":
