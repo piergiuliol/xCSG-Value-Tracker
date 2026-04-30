@@ -383,6 +383,15 @@ async function loadProjectPracticeRoles(practiceId, currency) {
   }
 }
 
+async function loadAllPioneers() {
+  try {
+    const list = await apiCall('GET', '/pioneers');
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 async function loadTaxonomy() {
   await Promise.all([loadCategories(), loadPractices()]);
 }
@@ -1051,6 +1060,89 @@ function wirePioneerRoleSelectEvents(rowEl) {
   });
 }
 
+function renderPioneerPickerSelect(currentPioneerId, pioneers) {
+  const opts = ['<option value="">—</option>'];
+  let foundCurrent = false;
+  (pioneers || []).forEach(p => {
+    const sel = (currentPioneerId != null && p.id === currentPioneerId) ? 'selected' : '';
+    if (sel) foundCurrent = true;
+    const emailPart = p.email ? ` (${p.email})` : '';
+    opts.push(`<option value="${p.id}" ${sel}>${esc(p.name)}${esc(emailPart)}</option>`);
+  });
+  opts.push('<option value="__new__">+ New pioneer…</option>');
+  return `<select class="pioneer-picker">${opts.join('')}</select>`;
+}
+
+function renderInlinePioneerCreate(rowEl) {
+  const sel = rowEl.querySelector('.pioneer-picker');
+  if (!sel) return;
+  const wrapper = document.createElement('span');
+  wrapper.className = 'pioneer-inline-create';
+  wrapper.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
+  wrapper.innerHTML = `
+    <input type="text" class="pioneer-inline-name" placeholder="Name" maxlength="120" style="min-width:120px">
+    <input type="email" class="pioneer-inline-email" placeholder="email@example.com" style="min-width:160px">
+    <button type="button" class="btn btn-sm btn-primary pioneer-inline-save">Save</button>
+    <button type="button" class="btn btn-sm pioneer-inline-cancel">Cancel</button>
+  `;
+  sel.replaceWith(wrapper);
+  wrapper.querySelector('.pioneer-inline-name').focus();
+}
+
+async function handlePioneerInlineSave(rowEl) {
+  const wrapper = rowEl.querySelector('.pioneer-inline-create');
+  if (!wrapper) return;
+  const name = wrapper.querySelector('.pioneer-inline-name').value.trim();
+  const email = wrapper.querySelector('.pioneer-inline-email').value.trim();
+  if (!name) {
+    if (typeof showToast === 'function') showToast('Name is required');
+    else alert('Name is required');
+    return;
+  }
+  try {
+    const result = await apiCall('POST', '/pioneers', {
+      name,
+      email: email || null,
+    });
+    // Refresh module-level pioneer cache.
+    window._allPioneers = await loadAllPioneers();
+    // Re-render the picker with the new pioneer selected.
+    const newSelect = document.createElement('span');
+    newSelect.innerHTML = renderPioneerPickerSelect(result.id, window._allPioneers);
+    wrapper.replaceWith(newSelect.firstElementChild);
+    wirePioneerPickerEvents(rowEl);
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Failed to create pioneer: ' + (e?.message || e));
+    else alert('Failed to create pioneer: ' + (e?.message || e));
+  }
+}
+
+function handlePioneerInlineCancel(rowEl) {
+  const wrapper = rowEl.querySelector('.pioneer-inline-create');
+  if (!wrapper) return;
+  const newSelect = document.createElement('span');
+  newSelect.innerHTML = renderPioneerPickerSelect(null, window._allPioneers || []);
+  wrapper.replaceWith(newSelect.firstElementChild);
+  wirePioneerPickerEvents(rowEl);
+}
+
+function wirePioneerPickerEvents(rowEl) {
+  const sel = rowEl.querySelector('.pioneer-picker');
+  if (sel) {
+    sel.addEventListener('change', () => {
+      if (sel.value === '__new__') {
+        renderInlinePioneerCreate(rowEl);
+      }
+    });
+  }
+  rowEl.querySelectorAll('.pioneer-inline-save').forEach(btn => {
+    btn.addEventListener('click', () => handlePioneerInlineSave(rowEl));
+  });
+  rowEl.querySelectorAll('.pioneer-inline-cancel').forEach(btn => {
+    btn.addEventListener('click', () => handlePioneerInlineCancel(rowEl));
+  });
+}
+
 async function refreshPioneerRoleSelects() {
   const practiceSel = document.getElementById('fPractice') || document.getElementById('fPracticeId');
   const currencySel = document.getElementById('fCurrency');
@@ -1366,10 +1458,13 @@ async function renderNewProject(existing) {
       </div>
     </form>`;
 
-  // Load role catalog before populating pioneer rows
+  // Load role catalog and pioneer list before populating pioneer rows
   const _practiceIdForRoles = p.practice_id || null;
   const _currencyForRoles = p.currency || window._defaultCurrency || 'EUR';
-  window._availableRoles = await loadProjectPracticeRoles(_practiceIdForRoles, _currencyForRoles);
+  [window._availableRoles, window._allPioneers] = await Promise.all([
+    loadProjectPracticeRoles(_practiceIdForRoles, _currencyForRoles),
+    loadAllPioneers(),
+  ]);
 
   // Wire legacy team mix (re-populates role pickers now that _availableRoles is loaded)
   wireLegacyTeamEvents();
@@ -1379,20 +1474,20 @@ async function renderNewProject(existing) {
 
   // Pioneer row management
   let pioneerIndex = 0;
-  function addPioneerRow(name, email, rounds, dayRate, roleName) {
+  function addPioneerRow(pioneerId, rounds, dayRate, roleName) {
     const container = document.getElementById('pioneersContainer');
     const idx = pioneerIndex++;
     const row = document.createElement('div');
     row.className = 'pioneer-row';
     row.dataset.idx = idx;
     const currentCurrency = document.getElementById('fCurrency')?.value || window._defaultCurrency || 'EUR';
-    row.innerHTML = `<div class="form-group"><label>Name *</label><input type="text" class="pioneer-name" value="${esc(name || '')}" required placeholder="Pioneer name"></div>`
-      + `<div class="form-group"><label>Email</label><input type="email" class="pioneer-email" value="${esc(email || '')}" placeholder="Email (optional)"></div>`
+    row.innerHTML = `<div class="form-group"><label>Pioneer *</label>${renderPioneerPickerSelect(pioneerId || null, window._allPioneers || [])}</div>`
       + `<div class="form-group" style="flex:0 0 120px"><label>Rounds <span class="field-hint" data-hint="Override the project default for this pioneer. Leave blank to use the Default Rounds setting.">&#9432;</span></label><input type="number" class="pioneer-rounds" min="1" max="10" value="${rounds || ''}" placeholder="Default" style="width:110px"></div>`
       + `<div class="form-group" style="flex:0 0 160px"><label>Role</label>${renderPioneerRoleSelect(roleName || null, window._availableRoles || [])}</div>`
       + `<div class="form-group" style="flex:0 0 160px"><label>Day rate <span class="field-hint" data-hint="Pioneer day rate for cost calculations. Optional.">&#9432;</span></label><div style="display:flex;align-items:center;gap:4px"><input type="number" class="pioneer-day-rate" min="0" step="0.01" value="${esc(dayRate ?? '')}" placeholder="Day rate (optional)" style="width:110px"><span class="field-help" data-suffix style="white-space:nowrap">${esc(currentCurrency)}</span></div></div>`
       + `<button type="button" class="btn btn-sm btn-danger pioneer-remove-btn" style="align-self:flex-end;margin-bottom:2px" title="Remove pioneer">&times;</button>`;
     container.appendChild(row);
+    wirePioneerPickerEvents(row);
     wirePioneerRoleSelectEvents(row);
     row.querySelector('.pioneer-remove-btn').addEventListener('click', function() {
       if (container.querySelectorAll('.pioneer-row').length <= 1) {
@@ -1406,17 +1501,17 @@ async function renderNewProject(existing) {
   // Populate pioneers: edit mode uses p.pioneers, new mode starts with one empty row
   if (isEdit && p.pioneers && p.pioneers.length) {
     for (const pi of p.pioneers) {
-      addPioneerRow(pi.name || pi.pioneer_name, pi.email || pi.pioneer_email, pi.total_rounds, pi.day_rate, pi.role_name);
+      addPioneerRow(pi.pioneer_id, pi.total_rounds, pi.day_rate, pi.role_name);
     }
   } else if (!isEdit) {
-    addPioneerRow('', '', '', '', null);
+    addPioneerRow(null, '', '', null);
   } else {
     // Edit mode fallback: use legacy pioneer_name if no pioneers array
-    addPioneerRow(p.pioneer_name || '', p.pioneer_email || '', '', '', null);
+    addPioneerRow(null, '', '', null);
   }
 
   document.getElementById('addPioneerBtn').addEventListener('click', function() {
-    addPioneerRow('', '', '', '', null);
+    addPioneerRow(null, '', '', null);
   });
 
   // Re-populate role pickers when practice changes
@@ -1511,13 +1606,18 @@ async function renderNewProject(existing) {
     const pioneerRows = document.querySelectorAll('#pioneersContainer .pioneer-row');
     const pioneers = [];
     for (const row of pioneerRows) {
-      const name = row.querySelector('.pioneer-name').value.trim();
-      const email = row.querySelector('.pioneer-email').value.trim() || null;
+      const pickerVal = row.querySelector('.pioneer-picker')?.value || '';
+      if (!pickerVal || pickerVal === '__new__') {
+        showToast('Please pick a pioneer (or save the inline form) for each row', 'error');
+        btn.disabled = false;
+        btn.textContent = isEdit ? 'Save Changes' : 'Create Project';
+        return;
+      }
       const roundsVal = row.querySelector('.pioneer-rounds').value;
       const total_rounds = roundsVal ? parseInt(roundsVal) : null;
       const day_rate = parseOptionalNumber(row.querySelector('.pioneer-day-rate')?.value);
       const role_name = row.querySelector('.pioneer-role')?.value || null;
-      if (name) pioneers.push({ name, email, total_rounds, day_rate, role_name });
+      pioneers.push({ pioneer_id: parseInt(pickerVal), total_rounds, day_rate, role_name });
     }
     if (pioneers.length === 0) {
       showToast('At least one pioneer is required', 'error');
@@ -1540,8 +1640,6 @@ async function renderNewProject(existing) {
       project_name: document.getElementById('fName').value,
       category_id: parseInt(document.getElementById('fCategory').value),
       practice_id: practiceVal ? parseInt(practiceVal) : null,
-      pioneer_name: pioneers[0].name,
-      pioneer_email: pioneers[0].email,
       pioneers: pioneers,
       default_rounds: parseInt(document.getElementById('fDefaultRounds').value) || 1,
       show_previous_answers: document.getElementById('fShowPrevious').value === '1',
