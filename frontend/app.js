@@ -1132,6 +1132,8 @@ function wirePioneerPickerEvents(rowEl) {
     sel.addEventListener('change', () => {
       if (sel.value === '__new__') {
         renderInlinePioneerCreate(rowEl);
+        // Re-wire so the newly-created Save/Cancel buttons get their click listeners.
+        wirePioneerPickerEvents(rowEl);
       }
     });
   }
