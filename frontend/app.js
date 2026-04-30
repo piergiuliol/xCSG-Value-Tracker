@@ -4775,8 +4775,8 @@ function openAddPioneerModal() {
         <textarea id="addPioneerNotes" maxlength="2000" rows="3" style="width:100%;box-sizing:border-box"></textarea>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn btn-primary" onclick="submitAddPioneerToIndex()">Save</button>
-        <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+        <button class="btn btn-primary" data-testid="add-pioneer-save" onclick="submitAddPioneerToIndex()">Save</button>
+        <button class="btn btn-secondary" data-testid="add-pioneer-cancel" onclick="hideModal()">Cancel</button>
       </div>
     </div>
   `);
@@ -4846,8 +4846,8 @@ async function renderPioneerDetail(id) {
     : 'Never';
 
   const adminActions = isAdmin() ? `
-    <button class="btn btn-secondary btn-sm" onclick="openEditPioneerModal(${id})">Edit</button>
-    <button class="btn btn-secondary btn-sm" style="color:#dc2626;border-color:#dc2626" onclick="deletePioneer(${id})">Delete</button>
+    <button class="btn btn-secondary btn-sm" data-testid="pioneer-detail-edit" onclick="openEditPioneerModal(${id})">Edit</button>
+    <button class="btn btn-secondary btn-sm" data-testid="pioneer-detail-delete" style="color:#dc2626;border-color:#dc2626" onclick="deletePioneer(${id})">Delete</button>
   ` : '';
 
   let html = `
@@ -5137,8 +5137,8 @@ async function openEditPioneerModal(id) {
         <textarea id="editPioneerNotes" maxlength="2000" rows="3" style="width:100%;box-sizing:border-box">${esc(pioneer.notes || '')}</textarea>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn btn-primary" onclick="submitEditPioneer(${id})">Save</button>
-        <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+        <button class="btn btn-primary" data-testid="edit-pioneer-save" onclick="submitEditPioneer(${id})">Save</button>
+        <button class="btn btn-secondary" data-testid="edit-pioneer-cancel" onclick="hideModal()">Cancel</button>
       </div>
     </div>
   `);
