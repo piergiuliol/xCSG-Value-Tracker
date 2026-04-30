@@ -2541,6 +2541,8 @@ def main():
     test_notes_excel_sheet()
     test_dashboard_export_sheets()
     test_export_pioneers_csv()
+    test_export_pioneer_xlsx()
+    test_export_pioneer_xlsx_404_for_unknown()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
@@ -3164,6 +3166,50 @@ def test_dashboard_pioneer_filter():
         requests.delete(f"{BASE}/api/projects/{proj2['id']}", headers=headers)
         requests.delete(f"{BASE}/api/pioneers/{p1['id']}", headers=headers)
         requests.delete(f"{BASE}/api/pioneers/{p2['id']}", headers=headers)
+
+
+def test_export_pioneer_xlsx():
+    """GET /api/export/pioneer/{id}.xlsx returns XLSX with summary + portfolio sheets."""
+    import io
+    from openpyxl import load_workbook
+
+    headers = auth_h(admin_token())
+
+    p = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "XLSX Test", "email": "xlsx-test@example.com",
+    }).json()
+
+    try:
+        r = requests.get(f"{BASE}/api/export/pioneer/{p['id']}.xlsx", headers=headers)
+        assert r.status_code == 200
+        assert "spreadsheetml" in r.headers.get("content-type", "")
+
+        # Load XLSX.
+        wb = load_workbook(io.BytesIO(r.content))
+        assert "summary" in wb.sheetnames
+        assert "portfolio" in wb.sheetnames
+
+        summary = wb["summary"]
+        # Header row + 1 data row.
+        assert summary.max_row == 2
+        # Find the name column and verify our pioneer.
+        header_row = [c.value for c in summary[1]]
+        name_col_idx = header_row.index("name")
+        assert summary.cell(row=2, column=name_col_idx + 1).value == "XLSX Test"
+
+        # Empty portfolio (no project assignments).
+        portfolio = wb["portfolio"]
+        # Header row only (no data rows).
+        assert portfolio.max_row == 1
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+
+def test_export_pioneer_xlsx_404_for_unknown():
+    """Unknown pioneer_id returns 404."""
+    headers = auth_h(admin_token())
+    r = requests.get(f"{BASE}/api/export/pioneer/99999.xlsx", headers=headers)
+    assert r.status_code == 404
 
 
 if __name__ == "__main__":

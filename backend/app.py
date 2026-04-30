@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import auth
@@ -1436,6 +1436,68 @@ def export_pioneers_csv(
         content=output.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=pioneers.csv"},
+    )
+
+
+@app.get("/api/export/pioneer/{pioneer_id}.xlsx")
+def export_pioneer_xlsx(
+    pioneer_id: int,
+    user=Depends(auth.get_current_user),
+):
+    pioneer = pioneers_mod.get_pioneer_with_metrics(pioneer_id)
+    if not pioneer:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+
+    from openpyxl import Workbook
+    wb = Workbook()
+
+    # summary sheet
+    summary = wb.active
+    summary.title = "summary"
+    summary_cols = [
+        "id", "name", "email", "notes", "status",
+        "project_count", "rounds_completed", "rounds_expected", "completion_rate",
+        "last_activity_at",
+        "avg_quality_score", "avg_value_gain",
+        "avg_machine_first", "avg_senior_led", "avg_knowledge",
+        "practices", "roles",
+    ]
+    summary.append(summary_cols)
+    practices_str = ", ".join(
+        f"{p['code']}({p['count']})" for p in pioneer.get("practices", [])
+    )
+    roles_str = ", ".join(
+        f"{x['role_name']}×{x['count']}" for x in pioneer.get("roles", [])
+    )
+    summary.append([
+        pioneer["id"], pioneer["name"], pioneer["email"], pioneer.get("notes"),
+        pioneer["status"],
+        pioneer["project_count"], pioneer["rounds_completed"], pioneer["rounds_expected"],
+        pioneer.get("completion_rate"), pioneer.get("last_activity_at"),
+        pioneer.get("avg_quality_score"), pioneer.get("avg_value_gain"),
+        pioneer.get("avg_machine_first"), pioneer.get("avg_senior_led"),
+        pioneer.get("avg_knowledge"),
+        practices_str, roles_str,
+    ])
+
+    # portfolio sheet
+    portfolio = wb.create_sheet("portfolio")
+    portfolio_cols = [
+        "project_id", "project_name", "practice_code", "role_name", "day_rate",
+        "rounds_completed", "rounds_expected", "status", "last_activity_at",
+    ]
+    portfolio.append(portfolio_cols)
+    for entry in pioneer.get("portfolio") or []:
+        portfolio.append([entry.get(c) for c in portfolio_cols])
+
+    # Stream the workbook as a response.
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=pioneer-{pioneer_id}.xlsx"},
     )
 
 
