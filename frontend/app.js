@@ -553,17 +553,11 @@ function _computeLocalMetrics(projects) {
   };
 }
 
-// Returns the pioneer IDs corresponding to the names currently in filterState.pioneers.
-// Relies on window._allPioneers being loaded; returns [] if mapping cannot be done.
+// filterState.pioneers stores pioneer_id integers. This returns them as a plain
+// array for query-string building. Names can collide and renames silently
+// orphan filter entries, so IDs are the canonical key.
 function _getSelectedPioneerIds() {
-  const names = filterState.pioneers;
-  if (!names.size) return [];
-  const all = window._allPioneers || [];
-  const ids = [];
-  for (const p of all) {
-    if (names.has(p.name)) ids.push(p.id);
-  }
-  return ids;
+  return [...filterState.pioneers];
 }
 
 // Builds the query-string suffix for dashboard API calls, appending any selected pioneer_id values.
@@ -622,10 +616,13 @@ function _loadFilters() {
     const raw = localStorage.getItem(DASHBOARD.filterStorageKey);
     if (!raw) return DEFAULT_FILTERS();
     const j = JSON.parse(raw);
+    // pioneers is a Set<number> (pioneer_id). Old persisted state may carry
+    // strings (names) — they get pruned in renderFilterBar() against the
+    // current pioneer list before any query runs.
     return {
       practices:  new Set(j.practices  || []),
       categories: new Set(j.categories || []),
-      pioneers:   new Set(j.pioneers   || []),
+      pioneers:   new Set((j.pioneers  || []).map(v => typeof v === 'number' ? v : Number(v)).filter(v => Number.isFinite(v))),
       projects:   new Set((j.projects  || []).map(Number)),
       delivered_from: j.delivered_from || null,
       delivered_to:   j.delivered_to   || null,
@@ -655,8 +652,8 @@ function applyFilters(allProjects, state) {
     if (state.practices.size   && !state.practices.has(p.practice_code || '—')) return false;
     if (state.categories.size  && !state.categories.has(p.category_name || '—')) return false;
     if (state.pioneers.size) {
-      const names = (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || '');
-      const any = names.some(n => state.pioneers.has(n)) || state.pioneers.has(p.pioneer_name);
+      const ids = (p.pioneers || []).map(pi => pi.pioneer_id).filter(v => v != null);
+      const any = ids.some(id => state.pioneers.has(id));
       if (!any) return false;
     }
     if (state.projects.size    && !state.projects.has(p.id)) return false;
@@ -675,21 +672,44 @@ function renderFilterBar(allProjects) {
 
   const practices  = uniq(allProjects.map(p => p.practice_code || '—')).sort();
   const categories = uniq(allProjects.map(p => p.category_name || '—')).sort();
-  const pioneers   = uniq(allProjects.flatMap(p => (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || ''))).filter(Boolean).sort();
+  // Pioneers come as {id, name} pairs. The canonical pioneer list (used to
+  // resolve IDs in the popover and chip summary) is window._allPioneers; if
+  // unavailable, we synthesize from project rows.
+  const pioneerById = new Map();
+  for (const pi of (window._allPioneers || [])) pioneerById.set(pi.id, pi.name || '');
+  for (const proj of allProjects) {
+    for (const pi of (proj.pioneers || [])) {
+      if (pi.pioneer_id != null && !pioneerById.has(pi.pioneer_id)) {
+        pioneerById.set(pi.pioneer_id, pi.name || pi.pioneer_name || '');
+      }
+    }
+  }
+  const pioneers = [...pioneerById.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-  // Prune any persisted filter values that reference taxonomy/projects which no
-  // longer exist. Without this, a deleted category/practice silently filters
-  // out all projects and the user sees a blank dashboard.
+  // Prune any persisted filter values that reference taxonomy/projects/pioneers
+  // which no longer exist. Without this, a deleted entry silently filters out
+  // all projects and the user sees a blank dashboard.
   let pruned = false;
   for (const v of [...filterState.practices])  if (!practices.includes(v))   { filterState.practices.delete(v);  pruned = true; }
   for (const v of [...filterState.categories]) if (!categories.includes(v))  { filterState.categories.delete(v); pruned = true; }
-  for (const v of [...filterState.pioneers])   if (!pioneers.includes(v))    { filterState.pioneers.delete(v);   pruned = true; }
+  for (const id of [...filterState.pioneers])  if (!pioneerById.has(id))     { filterState.pioneers.delete(id);  pruned = true; }
   const validIds = new Set(allProjects.map(p => p.id));
   for (const id of [...filterState.projects])  if (!validIds.has(id))        { filterState.projects.delete(id);  pruned = true; }
   if (pruned) _saveFilters();
 
   const summary = (setRef, total) =>
     !setRef.size ? 'All' : setRef.size === 1 ? [...setRef][0] : `${setRef.size} of ${total}`;
+  // Pioneer chip summary needs id→name resolution.
+  const pioneerSummary = () => {
+    if (!filterState.pioneers.size) return 'All';
+    if (filterState.pioneers.size === 1) {
+      const [id] = filterState.pioneers;
+      return pioneerById.get(id) || `#${id}`;
+    }
+    return `${filterState.pioneers.size} of ${pioneers.length}`;
+  };
 
   const btn = (key, label, sum) =>
     `<button class="filter-chip ${sum === 'All' ? '' : 'active'}" data-filter="${key}">${label}: ${esc(sum)} ▾</button>`;
@@ -698,7 +718,7 @@ function renderFilterBar(allProjects) {
   el.innerHTML =
       btn('practices',  'Practice',  summary(filterState.practices,  practices.length))
     + btn('categories', 'Category',  summary(filterState.categories, categories.length))
-    + btn('pioneers',   'Pioneer',   summary(filterState.pioneers,   pioneers.length))
+    + btn('pioneers',   'Pioneer',   pioneerSummary())
     + btn('projects',   'Projects',  filterState.projects.size ? `${filterState.projects.size} of ${allProjects.length}` : 'All')
     + btn('delivered',  'Delivered', (filterState.delivered_from || filterState.delivered_to) ? `${filterState.delivered_from || '…'} → ${filterState.delivered_to || '…'}` : 'all time')
     + `<button class="filter-chip" data-filter="clear">Clear</button>`;
@@ -723,7 +743,9 @@ function _openFilterPopover(key, anchor, lists) {
 
   if (key === 'practices')  pop.innerHTML = renderMulti(filterState.practices,  lists.practices);
   if (key === 'categories') pop.innerHTML = renderMulti(filterState.categories, lists.categories);
-  if (key === 'pioneers')   pop.innerHTML = renderMulti(filterState.pioneers,   lists.pioneers);
+  if (key === 'pioneers')   pop.innerHTML = lists.pioneers.map(pi =>
+    `<label><input type="checkbox" data-id="${pi.id}" ${filterState.pioneers.has(pi.id) ? 'checked' : ''}> ${esc(pi.name || '')}</label>`
+  ).join('');
   if (key === 'projects')   pop.innerHTML = lists.allProjects.map(p =>
     `<label><input type="checkbox" data-id="${p.id}" ${!filterState.projects.size || filterState.projects.has(p.id) ? 'checked' : ''}> ${esc(p.project_name)}</label>`
   ).join('');
@@ -734,9 +756,13 @@ function _openFilterPopover(key, anchor, lists) {
   document.body.appendChild(pop);
 
   pop.addEventListener('change', e => {
-    if (key === 'practices' || key === 'categories' || key === 'pioneers') {
+    if (key === 'practices' || key === 'categories') {
       const set = filterState[key];
       if (e.target.checked) set.add(e.target.value); else set.delete(e.target.value);
+    } else if (key === 'pioneers') {
+      const id = Number(e.target.dataset.id);
+      if (!Number.isFinite(id)) return;
+      if (e.target.checked) filterState.pioneers.add(id); else filterState.pioneers.delete(id);
     } else if (key === 'projects') {
       const id = Number(e.target.dataset.id);
       if (e.target.checked) filterState.projects.add(id); else filterState.projects.delete(id);
