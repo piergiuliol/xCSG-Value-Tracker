@@ -4825,6 +4825,89 @@ async function renderPioneerDetail(id) {
   `;
 
   mc.innerHTML = html;
+
+  // Task 7: populate pioneer-scoped charts now that the DOM is ready.
+  await renderPioneerCharts(pioneer);
+}
+
+async function renderPioneerCharts(pioneer) {
+  const cont = document.getElementById('pioneerCharts');
+  if (!cont) return;
+
+  // Build four chart containers in a 2×2 grid.
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:8px">
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Gains Radar</h3>
+        <div id="pioneerChartRadar" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Disprove Matrix</h3>
+        <div id="pioneerChartDisprove" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Per-project Timeline</h3>
+        <div id="pioneerChartTimeline" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Quarterly Trend</h3>
+        <div id="pioneerChartQuarterly" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+    </div>
+  `;
+
+  if (typeof echarts === 'undefined') {
+    cont.innerHTML += '<p style="color:var(--gray-500,#6b7280);font-size:13px">Charts library not loaded.</p>';
+    return;
+  }
+
+  // Fetch or reuse the project list.  We need each project's metrics array
+  // to feed the chart renderers.  Use the cached list if it covers all projects,
+  // otherwise fetch directly.
+  let allProjects;
+  try {
+    allProjects = _projectsCache && _projectsCache.length
+      ? _projectsCache
+      : await apiCall('GET', '/projects');
+  } catch (e) {
+    cont.innerHTML += '<p style="color:var(--gray-500,#6b7280);font-size:13px">Could not load project data: ' + esc(e && e.message ? e.message : String(e)) + '</p>';
+    return;
+  }
+
+  // Filter to projects that include this pioneer.
+  const pioneerId = pioneer.id;
+  const filtered = allProjects.filter(function(p) {
+    return (p.pioneers || []).some(function(pi) { return pi.pioneer_id === pioneerId; });
+  });
+
+  // Compute aggregated metrics from the filtered list (same logic as the dashboard).
+  const localMetrics = _computeLocalMetrics(filtered);
+
+  // The registered renderers take (cfg, filtered, localMetrics, dashboard).
+  // cfg only needs an `id` field pointing to the container div.
+  // The `dashboard` argument is only used by track_scaling_gates; pass localMetrics
+  // as a safe fallback so the other four renderers (which ignore it) still work.
+  function safeRender(rendererKey, divId) {
+    const fn = CHART_RENDERERS[rendererKey];
+    if (!fn) return;
+    const cfg = { id: divId };
+    try { fn(cfg, filtered, localMetrics, localMetrics); }
+    catch (err) { console.error('Pioneer chart render error [' + rendererKey + ']:', err); }
+  }
+
+  safeRender('radar_gains',          'pioneerChartRadar');
+  safeRender('scatter_disprove',     'pioneerChartDisprove');
+  safeRender('timeline_per_project', 'pioneerChartTimeline');
+  safeRender('timeline_quarterly',   'pioneerChartQuarterly');
+
+  // Show a gentle empty-state message when the pioneer has no assessed projects.
+  const done = filtered.filter(function(p) { return p.metrics && (p.status === 'complete' || p.status === 'partial'); });
+  if (!done.length) {
+    const msgEl = document.createElement('p');
+    msgEl.style.cssText = 'color:var(--gray-500,#6b7280);font-size:13px;margin-top:8px';
+    msgEl.textContent = 'No assessed projects yet — charts will populate once expert surveys are submitted.';
+    cont.appendChild(msgEl);
+  }
 }
 
 function pioneerChip(label, value, kind) {
