@@ -480,6 +480,11 @@ async function route() {
   const thisRoute = ++_routeCounter;
   const hash = window.location.hash || '#portfolio';
 
+  // Dispose any charts left over from the previous route (pioneer detail,
+  // dashboard, norms, etc.) so we don't leak ECharts instances or
+  // ResizeObservers when navigating away.
+  if (typeof disposeAllCharts === 'function') disposeAllCharts();
+
   if (hash.startsWith('#expert/') || hash.startsWith('#assess/')) {
     const token = hash.slice(hash.indexOf('/') + 1);
     showScreen('expert');
@@ -2264,10 +2269,10 @@ const CHART_RENDERERS = {};
 
 function registerChart(type, fn) { CHART_RENDERERS[type] = fn; }
 
-function renderDashboardCharts(dashboard, filtered) {
-  if (typeof echarts === 'undefined') return;
-  // Dispose all existing ECharts instances and their ResizeObservers so
-  // charts from the previous tab don't linger in memory.
+// Tear down every tracked ECharts instance and its ResizeObserver so charts
+// from the previous tab/route don't linger in memory or keep observing
+// detached DOM nodes.
+function disposeAllCharts() {
   Object.keys(chartInstances).forEach(k => {
     try { chartInstances[k].dispose(); } catch (_) {}
     if (chartInstances[k] && chartInstances[k].__resizeObserver) {
@@ -2275,6 +2280,11 @@ function renderDashboardCharts(dashboard, filtered) {
     }
     delete chartInstances[k];
   });
+}
+
+function renderDashboardCharts(dashboard, filtered) {
+  if (typeof echarts === 'undefined') return;
+  disposeAllCharts();
 
   const localMetrics = (filtered && _projectsCache && filtered.length === _projectsCache.length) ? dashboard : _computeLocalMetrics(filtered || []);
   const activeCharts = schema.dashboard.charts.filter(c => c.tab === _activeTab);
