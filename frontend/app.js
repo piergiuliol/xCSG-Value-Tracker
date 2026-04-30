@@ -4707,9 +4707,318 @@ async function submitAddPioneerToIndex() {
   }
 }
 
+// ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
+
 async function renderPioneerDetail(id) {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = `<h1>Pioneer ${id}</h1><p>Detail page (Phase 3b Task 6)</p>`;
+  mc.innerHTML = '<div class="loading">Loading pioneer…</div>';
+
+  let pioneer;
+  try {
+    pioneer = await apiCall('GET', '/pioneers/' + id);
+  } catch (e) {
+    mc.innerHTML = '<p class="empty-state">Failed to load pioneer: ' + esc(e.message || String(e)) + '</p>';
+    return;
+  }
+
+  const statusBadgeStyle = {
+    pending: 'background:#fef3c7;color:#92400e;',
+    pending_overdue: 'background:#fee2e2;color:#991b1b;',
+    completed: 'background:#d1fae5;color:#065f46;',
+    never: 'background:#f3f4f6;color:#6b7280;',
+  };
+  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : [];
+  function statusLabel(val) {
+    const opt = statusOpts.find(function(o) { return o.value === val; });
+    return opt ? opt.label : (val || 'Unknown');
+  }
+
+  const badgeStyle = statusBadgeStyle[pioneer.status] || statusBadgeStyle.never;
+  const roundsText = pioneer.rounds_expected > 0
+    ? pioneer.rounds_completed + '/' + pioneer.rounds_expected + ' rounds'
+    : '—';
+  const completionPct = pioneer.completion_rate != null
+    ? Math.round(pioneer.completion_rate * 100) + '%'
+    : '—';
+  const lastActivity = pioneer.last_activity_at
+    ? pioneer.last_activity_at.split('T')[0]
+    : 'Never';
+
+  const adminActions = isAdmin() ? `
+    <button class="btn btn-secondary btn-sm" onclick="openEditPioneerModal(${id})">Edit</button>
+    <button class="btn btn-secondary btn-sm" style="color:#dc2626;border-color:#dc2626" onclick="deletePioneer(${id})">Delete</button>
+  ` : '';
+
+  let html = `
+    <div style="max-width:1100px">
+      <!-- Header strip -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+        <div>
+          <a href="#" onclick="window.location.hash='#pioneers';return false;"
+             style="font-size:13px;color:var(--brand-blue,#6EC1E4);text-decoration:none;display:inline-block;margin-bottom:6px">
+            ← Pioneers
+          </a>
+          <h1 style="margin:0 0 4px">${esc(pioneer.name)}</h1>
+          ${pioneer.email ? '<div style="color:#6b7280;font-size:14px">' + esc(pioneer.email) + '</div>' : ''}
+          ${pioneer.notes ? '<div style="color:#374151;font-size:13px;margin-top:6px;white-space:pre-wrap;max-width:600px">' + esc(pioneer.notes) + '</div>' : ''}
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+          ${adminActions}
+          <button class="btn btn-secondary btn-sm" onclick="downloadPioneerXlsx(${id})">Download XLSX ↓</button>
+        </div>
+      </div>
+
+      <!-- Activity strip -->
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;padding:12px 16px;background:var(--gray-50,#f9fafb);border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;margin-bottom:20px">
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Status</span>
+          <span style="${badgeStyle}border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600">${esc(statusLabel(pioneer.status))}</span>
+        </div>
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Projects</span>
+          <span style="font-size:14px;font-weight:600">${pioneer.project_count || 0}</span>
+        </div>
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Completion</span>
+          <span style="font-size:14px;font-weight:600">${completionPct}</span>
+          <span style="font-size:12px;color:#6b7280;margin-left:4px">${roundsText}</span>
+        </div>
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Last Activity</span>
+          <span style="font-size:14px">${esc(lastActivity)}</span>
+        </div>
+      </div>
+
+      <!-- Flywheel chips -->
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Performance</h2>
+        <div class="metric-chips-grid" style="display:flex;gap:8px;flex-wrap:wrap">
+          ${renderPioneerFlywheelChips(pioneer)}
+        </div>
+      </div>
+
+      <!-- Specialization + Roles (side-by-side) -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+          <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Specialization</h2>
+          ${renderPioneerSpecialization(pioneer)}
+        </div>
+        <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+          <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Roles Played</h2>
+          ${renderPioneerRoles(pioneer)}
+        </div>
+      </div>
+
+      <!-- Portfolio table -->
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Portfolio</h2>
+        ${renderPioneerPortfolio(pioneer)}
+      </div>
+
+      <!-- Charts (placeholder for Task 7) -->
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Charts</h2>
+        <div id="pioneerCharts"></div>
+        <!-- Task 7 will call renderPioneerCharts(pioneer) to populate this div -->
+      </div>
+    </div>
+  `;
+
+  mc.innerHTML = html;
+}
+
+function pioneerChip(label, value, kind) {
+  // kind: 'ratio' | 'pct'
+  const tone = kind === 'pct' ? pctTone(value) : ratioTone(value);
+  const formatted = kind === 'pct' ? fmtPctMaybe(value) : fmtRatioMaybe(value);
+  return `<div class="assessment-metric-chip ${tone}">
+    <span class="chip-value">${formatted}</span>
+    <span class="chip-label">${esc(label)}</span>
+  </div>`;
+}
+
+function renderPioneerFlywheelChips(pioneer) {
+  return [
+    pioneerChip('Machine-First', pioneer.avg_machine_first, 'ratio'),
+    pioneerChip('Senior-Led', pioneer.avg_senior_led, 'ratio'),
+    pioneerChip('Knowledge', pioneer.avg_knowledge, 'ratio'),
+    pioneerChip('Quality', pioneer.avg_quality_score, 'pct'),
+    pioneerChip('Value Gain', pioneer.avg_value_gain, 'ratio'),
+  ].join('');
+}
+
+function renderPioneerSpecialization(pioneer) {
+  const practices = pioneer.practices || [];
+  if (practices.length === 0) {
+    return '<p style="color:#9ca3af;font-size:13px;margin:0">No projects yet.</p>';
+  }
+  const maxCount = Math.max.apply(null, practices.map(function(p) { return p.count || 0; }));
+  let html = '';
+  practices.forEach(function(pr) {
+    const pct = maxCount > 0 ? Math.round((pr.count / maxCount) * 100) : 0;
+    html += '<div style="margin-bottom:10px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">'
+      + '<code style="font-size:12px;background:var(--gray-100,#f3f4f6);padding:1px 5px;border-radius:3px">'
+      + esc(pr.code) + ' (' + pr.count + ' project' + (pr.count !== 1 ? 's' : '') + ')</code>'
+      + '</div>'
+      + '<div style="background:var(--gray-100,#f3f4f6);border-radius:3px;height:14px;position:relative">'
+      + '<div style="background:var(--brand-blue,#6EC1E4);width:' + pct + '%;height:100%;border-radius:3px"></div>'
+      + '</div>'
+      + '</div>';
+  });
+  return html;
+}
+
+function renderPioneerRoles(pioneer) {
+  const roles = pioneer.roles || [];
+  if (roles.length === 0) {
+    return '<p style="color:#9ca3af;font-size:13px;margin:0">No roles assigned yet.</p>';
+  }
+  let html = '<div style="display:flex;flex-direction:column;gap:6px">';
+  roles.forEach(function(r) {
+    html += '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span style="font-size:13px;color:#374151">' + esc(r.role_name) + '</span>'
+      + '<span style="font-size:11px;color:#9ca3af;background:var(--gray-100,#f3f4f6);border-radius:10px;padding:1px 7px">'
+      + '×' + r.count + '</span>'
+      + '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderPioneerPortfolio(pioneer) {
+  const portfolio = pioneer.portfolio || [];
+  if (portfolio.length === 0) {
+    return '<p style="color:#9ca3af;font-size:13px">No projects in portfolio yet.</p>';
+  }
+
+  const statusBadgeStyle = {
+    draft: 'background:#f3f4f6;color:#374151;',
+    active: 'background:#dbeafe;color:#1e40af;',
+    complete: 'background:#d1fae5;color:#065f46;',
+    archived: 'background:#f3f4f6;color:#6b7280;',
+  };
+
+  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:700px;width:100%"><thead><tr>'
+    + '<th>ID</th><th>Project</th><th>Practice</th><th>Role</th>'
+    + '<th>Day Rate</th><th>Rounds</th><th>Status</th><th>Last Activity</th>'
+    + '</tr></thead><tbody>';
+
+  portfolio.forEach(function(row) {
+    const rounds = row.rounds_expected > 0
+      ? (row.rounds_completed || 0) + '/' + row.rounds_expected
+      : (row.rounds_completed || 0) + '/—';
+    const dayRate = row.day_rate != null ? row.day_rate.toLocaleString() : '—';
+    const lastAct = row.last_activity_at ? row.last_activity_at.split('T')[0] : '—';
+    const badgeSt = statusBadgeStyle[row.status] || 'background:#f3f4f6;color:#6b7280;';
+    html += '<tr style="cursor:pointer" onclick="window.location.hash=\'#project/' + row.project_id + '\'">'
+      + '<td style="font-size:12px;color:#6b7280">' + row.project_id + '</td>'
+      + '<td><strong>' + esc(row.project_name || '') + '</strong></td>'
+      + '<td>' + esc(row.practice_code || '—') + '</td>'
+      + '<td>' + esc(row.role_name || '—') + '</td>'
+      + '<td style="text-align:right">' + dayRate + '</td>'
+      + '<td style="text-align:center">' + rounds + '</td>'
+      + '<td><span style="' + badgeSt + 'border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">'
+        + esc(row.status || '—') + '</span></td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + lastAct + '</td>'
+      + '</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  return html;
+}
+
+async function openEditPioneerModal(id) {
+  let pioneer;
+  try {
+    pioneer = await apiCall('GET', '/pioneers/' + id);
+  } catch (e) {
+    showToast('Failed to load pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+    return;
+  }
+
+  showModal(`
+    <div style="padding:8px">
+      <h2 style="margin-top:0">Edit Pioneer</h2>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Name *</label>
+        <input type="text" id="editPioneerName" maxlength="120" value="${esc(pioneer.name || '')}" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
+        <input type="email" id="editPioneerEmail" maxlength="200" value="${esc(pioneer.email || '')}" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Notes</label>
+        <textarea id="editPioneerNotes" maxlength="2000" rows="3" style="width:100%;box-sizing:border-box">${esc(pioneer.notes || '')}</textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-primary" onclick="submitEditPioneer(${id})">Save</button>
+        <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+      </div>
+    </div>
+  `);
+  setTimeout(function() {
+    const el = document.getElementById('editPioneerName');
+    if (el) el.focus();
+  }, 50);
+}
+
+async function submitEditPioneer(id) {
+  const nameEl = document.getElementById('editPioneerName');
+  const emailEl = document.getElementById('editPioneerEmail');
+  const notesEl = document.getElementById('editPioneerNotes');
+  if (!nameEl) return;
+  const name = nameEl.value.trim();
+  if (!name) { showToast('Name is required', 'error'); nameEl.focus(); return; }
+  const email = emailEl ? emailEl.value.trim() : '';
+  const notes = notesEl ? notesEl.value.trim() : '';
+  try {
+    await apiCall('PUT', '/pioneers/' + id, { name, email: email || null, notes: notes || null });
+    hideModal();
+    showToast('Pioneer updated');
+    await renderPioneerDetail(id);
+  } catch (e) {
+    showToast('Failed to update pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+  }
+}
+
+async function deletePioneer(id) {
+  if (!confirm('Delete this pioneer? This cannot be undone.')) return;
+  try {
+    await apiCall('DELETE', '/pioneers/' + id);
+    showToast('Pioneer deleted');
+    window.location.hash = '#pioneers';
+  } catch (e) {
+    if (e && e.status === 409) {
+      // Pioneer is still assigned to projects — show helpful detail message.
+      const detail = (e.detail && typeof e.detail === 'object') ? e.detail.message : (e.message || 'Pioneer is assigned to projects.');
+      alert('Cannot delete: ' + detail);
+    } else {
+      showToast('Failed to delete pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+    }
+  }
+}
+
+function downloadPioneerXlsx(id) {
+  const headers = {};
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  fetch('/api/export/pioneer/' + id + '.xlsx', { headers })
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.blob();
+    })
+    .then(function(blob) {
+      const a = document.createElement('a');
+      const objUrl = URL.createObjectURL(blob);
+      a.href = objUrl;
+      a.download = 'pioneer-' + id + '.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    })
+    .catch(function(e) { showToast('Download failed: ' + (e && e.message ? e.message : String(e)), 'error'); });
 }
 
 function renderMethodology() {
