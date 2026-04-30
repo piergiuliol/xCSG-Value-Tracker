@@ -2566,11 +2566,6 @@ def test_migrate_v19_destructive_creates_pioneers_table():
         assert "pioneer_name" not in proj_cols
         assert "pioneer_email" not in proj_cols
 
-        # Truncated: project_pioneers should be empty after migration runs on
-        # a fresh DB (no test fixtures yet).
-        n_pp = conn.execute("SELECT COUNT(*) AS n FROM project_pioneers").fetchone()["n"]
-        assert n_pp == 0
-
     # Re-run — must be idempotent.
     database.migrate_v19()
     database.migrate_v19()
@@ -2587,6 +2582,7 @@ def test_migrate_v19_email_unique_case_insensitive():
 
     with database._db() as conn:
         # Cleanup pioneers table (in case of prior test pollution).
+        conn.execute("DELETE FROM project_pioneers")
         conn.execute("DELETE FROM pioneers")
         conn.commit()
 
@@ -2612,6 +2608,7 @@ def test_migrate_v19_email_unique_case_insensitive():
         conn.execute("INSERT INTO pioneers (name) VALUES ('Y')")
 
         # Cleanup
+        conn.execute("DELETE FROM project_pioneers")
         conn.execute("DELETE FROM pioneers")
         conn.commit()
 

@@ -71,7 +71,6 @@ class ProjectPioneerUpdate(BaseModel):
     pioneer_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
-    show_previous: Optional[bool] = None
     day_rate: Optional[float] = None
     role_name: Optional[str] = None
 
@@ -196,8 +195,6 @@ class ProjectUpdate(BaseModel):
     category_id: Optional[int] = None
     practice_id: Optional[int] = None
     client_name: Optional[str] = None
-    pioneer_name: Optional[str] = None
-    pioneer_email: Optional[EmailStr] = None
     default_rounds: Optional[int] = None
     show_previous_answers: Optional[bool] = None
     show_other_pioneers_answers: Optional[bool] = None

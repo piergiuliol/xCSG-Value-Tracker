@@ -1727,6 +1727,7 @@ def list_pioneers_with_metrics() -> list[dict]:
         join_rows = conn.execute(
             """SELECT pp.pioneer_id, pp.id AS pp_id, pp.project_id, pp.role_name,
                       pp.day_rate, pp.total_rounds AS expected,
+                      p.default_rounds AS project_default_rounds,
                       p.project_name, p.status AS project_status,
                       pr.code AS practice_code,
                       (SELECT COUNT(*) FROM expert_responses er
@@ -1778,8 +1779,11 @@ def list_pioneers_with_metrics() -> list[dict]:
     for p in pioneers:
         pid = p["id"]
         recs = by_pioneer.get(pid, [])
+        def _expected_for_row(r):
+            return r.get("expected") or r.get("project_default_rounds") or 1
+
         rounds_completed = sum((r["rounds_done"] or 0) for r in recs)
-        rounds_expected = sum((r["expected"] or 0) for r in recs)
+        rounds_expected = sum(_expected_for_row(r) for r in recs) if recs else 0
         completion_rate = (rounds_completed / rounds_expected) if rounds_expected else None
         last_activity_at = max(
             (r["last_response_at"] for r in recs if r.get("last_response_at")),
@@ -1922,7 +1926,7 @@ def remove_pioneer(pioneer_id: int) -> bool:
 
 def update_pioneer(pioneer_id: int, data: dict) -> bool:
     """Update allowed fields on a project_pioneers row."""
-    allowed = {"total_rounds", "show_previous", "day_rate", "role_name"}
+    allowed = {"total_rounds", "day_rate", "role_name"}
     fields = {}
     for k, v in data.items():
         if k not in allowed:
