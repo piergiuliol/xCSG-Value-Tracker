@@ -4558,13 +4558,17 @@ async function renderPioneersIndex() {
   renderPioneersTable();
 
   let _searchTimer = null;
+  const debounceMs = (schema && schema.dashboard && schema.dashboard.thresholds
+    && Number.isFinite(schema.dashboard.thresholds.search_debounce_ms))
+    ? schema.dashboard.thresholds.search_debounce_ms
+    : 250;
   document.getElementById('pioneersSearch').addEventListener('input', function(e) {
     clearTimeout(_searchTimer);
     const val = e.target.value;
     _searchTimer = setTimeout(function() {
       window._pioneersFilters.search = val;
       renderPioneersTable();
-    }, 250);
+    }, debounceMs);
   });
 }
 
