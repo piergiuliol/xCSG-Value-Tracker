@@ -553,16 +553,42 @@ function _computeLocalMetrics(projects) {
   };
 }
 
+// Returns the pioneer IDs corresponding to the names currently in filterState.pioneers.
+// Relies on window._allPioneers being loaded; returns [] if mapping cannot be done.
+function _getSelectedPioneerIds() {
+  const names = filterState.pioneers;
+  if (!names.size) return [];
+  const all = window._allPioneers || [];
+  const ids = [];
+  for (const p of all) {
+    if (names.has(p.name)) ids.push(p.id);
+  }
+  return ids;
+}
+
+// Builds the query-string suffix for dashboard API calls, appending any selected pioneer_id values.
+function _buildDashboardQS() {
+  const ids = _getSelectedPioneerIds();
+  if (!ids.length) return '';
+  return '?' + ids.map(id => `pioneer_id=${encodeURIComponent(id)}`).join('&');
+}
+
 async function renderPortfolio() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading portfolio\u2026</div>';
   const myRoute = _routeCounter;
 
+  // Ensure pioneer list is available for filter wiring and query-string building.
+  if (!window._allPioneers || window._allPioneers.length === 0) {
+    window._allPioneers = await loadAllPioneers();
+  }
+
   try {
+    const qs = _buildDashboardQS();
     const [dashboard, allProjects, takeaways] = await Promise.all([
-      apiCall('GET', '/dashboard/metrics'),
+      apiCall('GET', `/dashboard/metrics${qs}`),
       apiCall('GET', '/projects'),
-      apiCall('GET', '/dashboard/takeaways').catch(() => ({})),
+      apiCall('GET', `/dashboard/takeaways${qs}`).catch(() => ({})),
     ]);
     if (myRoute !== _routeCounter) return; // stale — user navigated away
 
@@ -867,7 +893,13 @@ function _renderDashboardView(allProjects, dashboard) {
 function _reapplyFilters() {
   if (!_projectsCache || !_dashboardCache) return;
   _saveFilters();
-  _renderDashboardView(_projectsCache, _dashboardCache);
+  // When a pioneer filter is active, re-fetch server-side aggregates so KPI tiles
+  // and chart data reflect the pioneer-scoped dataset returned by the backend.
+  if (filterState.pioneers.size) {
+    renderPortfolio();
+  } else {
+    _renderDashboardView(_projectsCache, _dashboardCache);
+  }
 }
 
 function barHTML(score, label) {
