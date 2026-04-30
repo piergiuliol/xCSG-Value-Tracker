@@ -249,6 +249,35 @@ async function apiCall(method, endpoint, body = null) {
   return json;
 }
 
+// Variant of apiCall that returns {status, body} so callers can distinguish
+// 200 (matched existing) from 201 (created new). Mirrors apiCall's error
+// shape for parity.
+async function apiCallWithStatus(method, endpoint, body = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + endpoint, opts);
+  if (res.status === 401) { handleLogout(); throw new Error('Session expired'); }
+  if (res.status === 204) return { status: 204, body: null };
+  const json = await res.json();
+  if (!res.ok) {
+    let msg;
+    if (typeof json.detail === 'string') {
+      msg = json.detail;
+    } else if (json.detail && typeof json.detail === 'object') {
+      msg = json.detail.message || `Error ${res.status}`;
+    } else {
+      msg = json.message || `Error ${res.status}`;
+    }
+    const err = new Error(msg);
+    err.status = res.status;
+    err.detail = json.detail;
+    throw err;
+  }
+  return { status: res.status, body: json };
+}
+
 function showToast(msg, type = 'success') {
   const c = document.getElementById('toastContainer');
   if (!c) return;
@@ -451,6 +480,11 @@ async function route() {
   const thisRoute = ++_routeCounter;
   const hash = window.location.hash || '#portfolio';
 
+  // Dispose any charts left over from the previous route (pioneer detail,
+  // dashboard, norms, etc.) so we don't leak ECharts instances or
+  // ResizeObservers when navigating away.
+  if (typeof disposeAllCharts === 'function') disposeAllCharts();
+
   if (hash.startsWith('#expert/') || hash.startsWith('#assess/')) {
     const token = hash.slice(hash.indexOf('/') + 1);
     showScreen('expert');
@@ -479,7 +513,8 @@ async function route() {
 
   const titles = {
     portfolio: 'Portfolio', new: 'New Project', edit: 'Edit Project',
-    projects: 'Projects', settings: 'Settings', norms: 'Norms', activity: 'Activity Log',
+    projects: 'Projects', pioneers: 'Pioneers', pioneer: 'Pioneer',
+    settings: 'Settings', norms: 'Norms', activity: 'Activity Log',
     monitoring: 'Monitoring', methodology: 'How Scores Work', notes: 'Notes'
   };
   document.getElementById('topbarTitle').textContent = titles[routeName] || 'Portfolio';
@@ -491,6 +526,8 @@ async function route() {
   else if (hash === '#new') { if (canWrite()) renderNewProject(); else { document.getElementById('mainContent').innerHTML = '<div class="error-state">You do not have permission to create projects.</div>'; } }
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
+  else if (hash === '#pioneers') renderPioneersIndex();
+  else if (hash.startsWith('#pioneer/')) { const id = parseInt(hash.split('/')[1]); if (id) renderPioneerDetail(id); }
   else if (hash === '#monitoring') renderMonitoring();
   else if (hash === '#settings') renderSettings();
   else if (hash === '#norms') renderNormsPage();
@@ -550,16 +587,36 @@ function _computeLocalMetrics(projects) {
   };
 }
 
+// filterState.pioneers stores pioneer_id integers. This returns them as a plain
+// array for query-string building. Names can collide and renames silently
+// orphan filter entries, so IDs are the canonical key.
+function _getSelectedPioneerIds() {
+  return [...filterState.pioneers];
+}
+
+// Builds the query-string suffix for dashboard API calls, appending any selected pioneer_id values.
+function _buildDashboardQS() {
+  const ids = _getSelectedPioneerIds();
+  if (!ids.length) return '';
+  return '?' + ids.map(id => `pioneer_id=${encodeURIComponent(id)}`).join('&');
+}
+
 async function renderPortfolio() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading portfolio\u2026</div>';
   const myRoute = _routeCounter;
 
+  // Ensure pioneer list is available for filter wiring and query-string building.
+  if (!window._allPioneers || window._allPioneers.length === 0) {
+    window._allPioneers = await loadAllPioneers();
+  }
+
   try {
+    const qs = _buildDashboardQS();
     const [dashboard, allProjects, takeaways] = await Promise.all([
-      apiCall('GET', '/dashboard/metrics'),
+      apiCall('GET', `/dashboard/metrics${qs}`),
       apiCall('GET', '/projects'),
-      apiCall('GET', '/dashboard/takeaways').catch(() => ({})),
+      apiCall('GET', `/dashboard/takeaways${qs}`).catch(() => ({})),
     ]);
     if (myRoute !== _routeCounter) return; // stale — user navigated away
 
@@ -593,10 +650,13 @@ function _loadFilters() {
     const raw = localStorage.getItem(DASHBOARD.filterStorageKey);
     if (!raw) return DEFAULT_FILTERS();
     const j = JSON.parse(raw);
+    // pioneers is a Set<number> (pioneer_id). Old persisted state may carry
+    // strings (names) — they get pruned in renderFilterBar() against the
+    // current pioneer list before any query runs.
     return {
       practices:  new Set(j.practices  || []),
       categories: new Set(j.categories || []),
-      pioneers:   new Set(j.pioneers   || []),
+      pioneers:   new Set((j.pioneers  || []).map(v => typeof v === 'number' ? v : Number(v)).filter(v => Number.isFinite(v))),
       projects:   new Set((j.projects  || []).map(Number)),
       delivered_from: j.delivered_from || null,
       delivered_to:   j.delivered_to   || null,
@@ -626,8 +686,8 @@ function applyFilters(allProjects, state) {
     if (state.practices.size   && !state.practices.has(p.practice_code || '—')) return false;
     if (state.categories.size  && !state.categories.has(p.category_name || '—')) return false;
     if (state.pioneers.size) {
-      const names = (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || '');
-      const any = names.some(n => state.pioneers.has(n)) || state.pioneers.has(p.pioneer_name);
+      const ids = (p.pioneers || []).map(pi => pi.pioneer_id).filter(v => v != null);
+      const any = ids.some(id => state.pioneers.has(id));
       if (!any) return false;
     }
     if (state.projects.size    && !state.projects.has(p.id)) return false;
@@ -646,21 +706,44 @@ function renderFilterBar(allProjects) {
 
   const practices  = uniq(allProjects.map(p => p.practice_code || '—')).sort();
   const categories = uniq(allProjects.map(p => p.category_name || '—')).sort();
-  const pioneers   = uniq(allProjects.flatMap(p => (p.pioneers || []).map(pi => pi.name || pi.pioneer_name || ''))).filter(Boolean).sort();
+  // Pioneers come as {id, name} pairs. The canonical pioneer list (used to
+  // resolve IDs in the popover and chip summary) is window._allPioneers; if
+  // unavailable, we synthesize from project rows.
+  const pioneerById = new Map();
+  for (const pi of (window._allPioneers || [])) pioneerById.set(pi.id, pi.name || '');
+  for (const proj of allProjects) {
+    for (const pi of (proj.pioneers || [])) {
+      if (pi.pioneer_id != null && !pioneerById.has(pi.pioneer_id)) {
+        pioneerById.set(pi.pioneer_id, pi.name || pi.pioneer_name || '');
+      }
+    }
+  }
+  const pioneers = [...pioneerById.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-  // Prune any persisted filter values that reference taxonomy/projects which no
-  // longer exist. Without this, a deleted category/practice silently filters
-  // out all projects and the user sees a blank dashboard.
+  // Prune any persisted filter values that reference taxonomy/projects/pioneers
+  // which no longer exist. Without this, a deleted entry silently filters out
+  // all projects and the user sees a blank dashboard.
   let pruned = false;
   for (const v of [...filterState.practices])  if (!practices.includes(v))   { filterState.practices.delete(v);  pruned = true; }
   for (const v of [...filterState.categories]) if (!categories.includes(v))  { filterState.categories.delete(v); pruned = true; }
-  for (const v of [...filterState.pioneers])   if (!pioneers.includes(v))    { filterState.pioneers.delete(v);   pruned = true; }
+  for (const id of [...filterState.pioneers])  if (!pioneerById.has(id))     { filterState.pioneers.delete(id);  pruned = true; }
   const validIds = new Set(allProjects.map(p => p.id));
   for (const id of [...filterState.projects])  if (!validIds.has(id))        { filterState.projects.delete(id);  pruned = true; }
   if (pruned) _saveFilters();
 
   const summary = (setRef, total) =>
     !setRef.size ? 'All' : setRef.size === 1 ? [...setRef][0] : `${setRef.size} of ${total}`;
+  // Pioneer chip summary needs id→name resolution.
+  const pioneerSummary = () => {
+    if (!filterState.pioneers.size) return 'All';
+    if (filterState.pioneers.size === 1) {
+      const [id] = filterState.pioneers;
+      return pioneerById.get(id) || `#${id}`;
+    }
+    return `${filterState.pioneers.size} of ${pioneers.length}`;
+  };
 
   const btn = (key, label, sum) =>
     `<button class="filter-chip ${sum === 'All' ? '' : 'active'}" data-filter="${key}">${label}: ${esc(sum)} ▾</button>`;
@@ -669,7 +752,7 @@ function renderFilterBar(allProjects) {
   el.innerHTML =
       btn('practices',  'Practice',  summary(filterState.practices,  practices.length))
     + btn('categories', 'Category',  summary(filterState.categories, categories.length))
-    + btn('pioneers',   'Pioneer',   summary(filterState.pioneers,   pioneers.length))
+    + btn('pioneers',   'Pioneer',   pioneerSummary())
     + btn('projects',   'Projects',  filterState.projects.size ? `${filterState.projects.size} of ${allProjects.length}` : 'All')
     + btn('delivered',  'Delivered', (filterState.delivered_from || filterState.delivered_to) ? `${filterState.delivered_from || '…'} → ${filterState.delivered_to || '…'}` : 'all time')
     + `<button class="filter-chip" data-filter="clear">Clear</button>`;
@@ -694,7 +777,9 @@ function _openFilterPopover(key, anchor, lists) {
 
   if (key === 'practices')  pop.innerHTML = renderMulti(filterState.practices,  lists.practices);
   if (key === 'categories') pop.innerHTML = renderMulti(filterState.categories, lists.categories);
-  if (key === 'pioneers')   pop.innerHTML = renderMulti(filterState.pioneers,   lists.pioneers);
+  if (key === 'pioneers')   pop.innerHTML = lists.pioneers.map(pi =>
+    `<label><input type="checkbox" data-id="${pi.id}" ${filterState.pioneers.has(pi.id) ? 'checked' : ''}> ${esc(pi.name || '')}</label>`
+  ).join('');
   if (key === 'projects')   pop.innerHTML = lists.allProjects.map(p =>
     `<label><input type="checkbox" data-id="${p.id}" ${!filterState.projects.size || filterState.projects.has(p.id) ? 'checked' : ''}> ${esc(p.project_name)}</label>`
   ).join('');
@@ -705,9 +790,13 @@ function _openFilterPopover(key, anchor, lists) {
   document.body.appendChild(pop);
 
   pop.addEventListener('change', e => {
-    if (key === 'practices' || key === 'categories' || key === 'pioneers') {
+    if (key === 'practices' || key === 'categories') {
       const set = filterState[key];
       if (e.target.checked) set.add(e.target.value); else set.delete(e.target.value);
+    } else if (key === 'pioneers') {
+      const id = Number(e.target.dataset.id);
+      if (!Number.isFinite(id)) return;
+      if (e.target.checked) filterState.pioneers.add(id); else filterState.pioneers.delete(id);
     } else if (key === 'projects') {
       const id = Number(e.target.dataset.id);
       if (e.target.checked) filterState.projects.add(id); else filterState.projects.delete(id);
@@ -864,7 +953,13 @@ function _renderDashboardView(allProjects, dashboard) {
 function _reapplyFilters() {
   if (!_projectsCache || !_dashboardCache) return;
   _saveFilters();
-  _renderDashboardView(_projectsCache, _dashboardCache);
+  // When a pioneer filter is active, re-fetch server-side aggregates so KPI tiles
+  // and chart data reflect the pioneer-scoped dataset returned by the backend.
+  if (filterState.pioneers.size) {
+    renderPortfolio();
+  } else {
+    _renderDashboardView(_projectsCache, _dashboardCache);
+  }
 }
 
 function barHTML(score, label) {
@@ -1100,17 +1195,20 @@ async function handlePioneerInlineSave(rowEl) {
     return;
   }
   try {
-    const result = await apiCall('POST', '/pioneers', {
+    const { status, body: result } = await apiCallWithStatus('POST', '/pioneers', {
       name,
       email: email || null,
     });
     // Refresh module-level pioneer cache.
     window._allPioneers = await loadAllPioneers();
-    // Re-render the picker with the new pioneer selected.
+    // Re-render the picker with the new/matched pioneer selected.
     const newSelect = document.createElement('span');
     newSelect.innerHTML = renderPioneerPickerSelect(result.id, window._allPioneers);
     wrapper.replaceWith(newSelect.firstElementChild);
     wirePioneerPickerEvents(rowEl);
+    if (typeof showToast === 'function') {
+      showToast(status === 200 ? 'Pioneer already existed — selected' : 'Pioneer added');
+    }
   } catch (e) {
     if (typeof showToast === 'function') showToast('Failed to create pioneer: ' + (e?.message || e));
     else alert('Failed to create pioneer: ' + (e?.message || e));
@@ -2171,10 +2269,10 @@ const CHART_RENDERERS = {};
 
 function registerChart(type, fn) { CHART_RENDERERS[type] = fn; }
 
-function renderDashboardCharts(dashboard, filtered) {
-  if (typeof echarts === 'undefined') return;
-  // Dispose all existing ECharts instances and their ResizeObservers so
-  // charts from the previous tab don't linger in memory.
+// Tear down every tracked ECharts instance and its ResizeObserver so charts
+// from the previous tab/route don't linger in memory or keep observing
+// detached DOM nodes.
+function disposeAllCharts() {
   Object.keys(chartInstances).forEach(k => {
     try { chartInstances[k].dispose(); } catch (_) {}
     if (chartInstances[k] && chartInstances[k].__resizeObserver) {
@@ -2182,6 +2280,11 @@ function renderDashboardCharts(dashboard, filtered) {
     }
     delete chartInstances[k];
   });
+}
+
+function renderDashboardCharts(dashboard, filtered) {
+  if (typeof echarts === 'undefined') return;
+  disposeAllCharts();
 
   const localMetrics = (filtered && _projectsCache && filtered.length === _projectsCache.length) ? dashboard : _computeLocalMetrics(filtered || []);
   const activeCharts = schema.dashboard.charts.filter(c => c.tab === _activeTab);
@@ -4398,6 +4501,730 @@ function toggleMethodAccordion(header) {
   const item = header.closest('.meth-accordion-item');
   if (!item) return;
   item.classList.toggle('meth-open');
+}
+
+// ── Pioneer status constants (shared by index/table/detail renderers) ───────
+// Fallback used when /api/schema hasn't populated pioneer_status_options yet.
+const PIONEER_STATUS_FALLBACK = [
+  { value: 'pending',          label: 'Pending' },
+  { value: 'pending_overdue',  label: 'Overdue' },
+  { value: 'completed',        label: 'Completed' },
+  { value: 'never',            label: 'Never assigned' },
+];
+// CSS strings (background+color) keyed by status value. Used in the
+// pioneers table row, the chip filter, and the detail-page activity strip.
+const PIONEER_STATUS_BADGE_STYLES = {
+  pending:         'background:#fef3c7;color:#92400e;',
+  pending_overdue: 'background:#fee2e2;color:#991b1b;',
+  completed:       'background:#d1fae5;color:#065f46;',
+  never:           'background:#f3f4f6;color:#6b7280;',
+};
+
+async function renderPioneersIndex() {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Loading pioneers…</div>';
+
+  let pioneers;
+  try {
+    pioneers = await apiCall('GET', '/pioneers');
+  } catch (e) {
+    mc.innerHTML = '<p class="empty-state">Failed to load pioneers: ' + esc(e.message || String(e)) + '</p>';
+    return;
+  }
+  window._pioneersCache = pioneers;
+  if (!window._pioneersFilters) {
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: null, sort_dir: 'asc' };
+  }
+
+  mc.innerHTML = `
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h1 style="margin:0">Pioneers</h1>
+      <div style="display:flex;gap:8px">
+        ${canWrite() ? '<button class="btn btn-primary btn-sm" onclick="openAddPioneerModal()">+ Add Pioneer</button>' : ''}
+        <button class="btn btn-secondary btn-sm" onclick="downloadPioneersCsv()">Download CSV ↓</button>
+      </div>
+    </div>
+    <div id="pioneersFilterBar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <input type="search" id="pioneersSearch" placeholder="Search name or email…" value="${esc(window._pioneersFilters.search)}"
+        style="min-width:200px;padding:5px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:13px">
+      <span id="pioneersPracticeFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+      <span id="pioneersRoleFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+      <span id="pioneersStatusFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+    </div>
+    <div id="pioneersTableContainer"></div>
+  `;
+
+  renderPioneersFilterChips();
+  renderPioneersTable();
+
+  let _searchTimer = null;
+  const debounceMs = (schema && schema.dashboard && schema.dashboard.thresholds
+    && Number.isFinite(schema.dashboard.thresholds.search_debounce_ms))
+    ? schema.dashboard.thresholds.search_debounce_ms
+    : 250;
+  document.getElementById('pioneersSearch').addEventListener('input', function(e) {
+    clearTimeout(_searchTimer);
+    const val = e.target.value;
+    _searchTimer = setTimeout(function() {
+      window._pioneersFilters.search = val;
+      renderPioneersTable();
+    }, debounceMs);
+  });
+}
+
+function renderPioneersFilterChips() {
+  const allPractices = new Set();
+  const allRoles = new Set();
+  const allStatuses = new Set();
+  (window._pioneersCache || []).forEach(function(p) {
+    (p.practices || []).forEach(function(pr) { allPractices.add(pr.code); });
+    (p.roles || []).forEach(function(r) { allRoles.add(r.role_name); });
+    if (p.status) allStatuses.add(p.status);
+  });
+
+  // Build chips with the value carried in data-* attributes; a delegated
+  // click handler reads them. This avoids string-interpolating the value
+  // into an onclick="..." attribute, where characters like <, >, &, or "
+  // would break the attribute or open an XSS hole.
+  function chipBtn(key, value, label) {
+    const isActive = (window._pioneersFilters[key] || []).includes(value);
+    const activeStyle = isActive
+      ? 'background:#121F6B;color:#fff;border-color:#121F6B;'
+      : 'background:#f3f4f6;color:#374151;border-color:#d1d5db;';
+    return '<button class="pioneers-filter-chip" data-filter-key="' + esc(key) + '" data-filter-value="' + esc(value) + '"'
+      + ' style="' + activeStyle + 'border:1px solid;border-radius:20px;padding:3px 10px;font-size:12px;cursor:pointer">'
+      + esc(label) + '</button>';
+  }
+
+  const practiceEl = document.getElementById('pioneersPracticeFilter');
+  if (practiceEl) {
+    const chips = Array.from(allPractices).sort().map(function(code) { return chipBtn('practice', code, code); });
+    practiceEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Practice:</span> ' + chips.join('')
+      : '';
+  }
+
+  const roleEl = document.getElementById('pioneersRoleFilter');
+  if (roleEl) {
+    const chips = Array.from(allRoles).sort().map(function(name) { return chipBtn('role', name, name); });
+    roleEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Role:</span> ' + chips.join('')
+      : '';
+  }
+
+  const statusEl = document.getElementById('pioneersStatusFilter');
+  if (statusEl) {
+    const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : PIONEER_STATUS_FALLBACK;
+    const chips = statusOpts.map(function(opt) { return chipBtn('status', opt.value, opt.label); });
+    statusEl.innerHTML = '<span style="font-size:12px;color:#6b7280;font-weight:600">Status:</span> ' + chips.join('');
+  }
+
+  // Wire delegated click handlers (idempotent — re-bind every render so the
+  // handlers attach to the freshly-replaced DOM).
+  ['pioneersPracticeFilter', 'pioneersRoleFilter', 'pioneersStatusFilter'].forEach(function(containerId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.querySelectorAll('button.pioneers-filter-chip').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        togglePioneersFilter(btn.dataset.filterKey, btn.dataset.filterValue);
+      });
+    });
+  });
+}
+
+function togglePioneersFilter(key, value) {
+  const arr = window._pioneersFilters[key];
+  if (!Array.isArray(arr)) return;
+  const idx = arr.indexOf(value);
+  if (idx >= 0) arr.splice(idx, 1);
+  else arr.push(value);
+  renderPioneersFilterChips();
+  renderPioneersTable();
+}
+
+function sortPioneers(field) {
+  const f = window._pioneersFilters;
+  if (f.sort_field === field) {
+    f.sort_dir = f.sort_dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    f.sort_field = field;
+    f.sort_dir = 'asc';
+  }
+  renderPioneersTable();
+}
+
+function renderPioneersTable() {
+  const filters = window._pioneersFilters;
+  const all = window._pioneersCache || [];
+
+  let filtered = all.filter(function(p) {
+    if (filters.search) {
+      const s = filters.search.toLowerCase();
+      if (!(p.name || '').toLowerCase().includes(s) && !(p.email || '').toLowerCase().includes(s)) return false;
+    }
+    if (filters.practice && filters.practice.length > 0) {
+      const codes = (p.practices || []).map(function(pr) { return pr.code; });
+      if (!filters.practice.some(function(c) { return codes.includes(c); })) return false;
+    }
+    if (filters.role && filters.role.length > 0) {
+      const names = (p.roles || []).map(function(r) { return r.role_name; });
+      if (!filters.role.some(function(n) { return names.includes(n); })) return false;
+    }
+    if (filters.status && filters.status.length > 0 && !filters.status.includes(p.status)) return false;
+    return true;
+  });
+
+  if (filters.sort_field) {
+    const sf = filters.sort_field;
+    const dir = filters.sort_dir === 'desc' ? -1 : 1;
+    filtered = filtered.slice().sort(function(a, b) {
+      const av = a[sf] == null ? '' : a[sf];
+      const bv = b[sf] == null ? '' : b[sf];
+      if (typeof av === 'number' && typeof bv === 'number') return dir * (av - bv);
+      return dir * String(av).localeCompare(String(bv));
+    });
+  }
+
+  const cont = document.getElementById('pioneersTableContainer');
+  if (!cont) return;
+
+  if (filtered.length === 0) {
+    cont.innerHTML = '<p class="empty-state" style="color:#6b7280;padding:24px 0;text-align:center">No pioneers match the current filters.</p>';
+    return;
+  }
+
+  const statusBadgeStyle = PIONEER_STATUS_BADGE_STYLES;
+
+  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : PIONEER_STATUS_FALLBACK;
+  function statusLabel(val) {
+    const opt = statusOpts.find(function(o) { return o.value === val; });
+    return opt ? opt.label : (val || '—');
+  }
+
+  function fmt(v) { return v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) + '×' : String(v)); }
+  function fmtPct(v) { return v == null ? '—' : (v * 100).toFixed(0) + '%'; }
+  function fmtDate(v) { return v ? v.split('T')[0] : '—'; }
+
+  function thCell(label, field) {
+    const isSorted = filters.sort_field === field;
+    const arrow = isSorted ? (filters.sort_dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return '<th style="cursor:pointer;white-space:nowrap;user-select:none" onclick="sortPioneers(\'' + field + '\')">'
+      + esc(label) + arrow + '</th>';
+  }
+
+  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:900px;width:100%"><thead><tr>'
+    + thCell('Name', 'name')
+    + thCell('Email', 'email')
+    + thCell('# Projects', 'project_count')
+    + '<th>Practices</th>'
+    + '<th>Roles</th>'
+    + thCell('Status', 'status')
+    + thCell('Completion', 'completion_rate')
+    + thCell('Last Activity', 'last_activity_at')
+    + thCell('Avg Value Gain', 'avg_value_gain')
+    + thCell('Machine-First', 'avg_machine_first')
+    + thCell('Senior-Led', 'avg_senior_led')
+    + thCell('Knowledge', 'avg_knowledge')
+    + '</tr></thead><tbody>';
+
+  for (let i = 0; i < filtered.length; i++) {
+    const p = filtered[i];
+    const practiceChips = (p.practices || []).map(function(pr) {
+      return '<span style="display:inline-block;background:#e0e7ff;color:#3730a3;border-radius:10px;padding:1px 7px;font-size:11px;margin:1px">'
+        + esc(pr.code) + '&nbsp;(' + pr.count + ')</span>';
+    }).join(' ');
+    const roleChips = (p.roles || []).map(function(r) {
+      return '<span style="display:inline-block;background:#f0fdf4;color:#166534;border-radius:10px;padding:1px 7px;font-size:11px;margin:1px">'
+        + esc(r.role_name) + '&nbsp;×' + r.count + '</span>';
+    }).join(' ');
+    const badgeStyle = statusBadgeStyle[p.status] || statusBadgeStyle.never;
+
+    html += '<tr style="cursor:pointer" onclick="window.location.hash=\'#pioneer/' + p.id + '\'">'
+      + '<td><strong>' + esc(p.name || '') + '</strong></td>'
+      + '<td style="color:#6b7280;font-size:13px">' + esc(p.email || '') + '</td>'
+      + '<td style="text-align:center">' + (p.project_count || 0) + '</td>'
+      + '<td>' + (practiceChips || '—') + '</td>'
+      + '<td>' + (roleChips || '—') + '</td>'
+      + '<td><span style="' + badgeStyle + 'border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600">'
+        + esc(statusLabel(p.status)) + '</span></td>'
+      + '<td style="text-align:center">' + fmtPct(p.completion_rate) + '</td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + fmtDate(p.last_activity_at) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_value_gain) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_machine_first) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_senior_led) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_knowledge) + '</td>'
+      + '</tr>';
+  }
+  html += '</tbody></table></div>';
+  cont.innerHTML = html;
+}
+
+function downloadPioneersCsv() {
+  const filters = window._pioneersFilters || {};
+  const params = new URLSearchParams();
+  if (filters.search) params.append('search', filters.search);
+  (filters.practice || []).forEach(function(p) { params.append('practice', p); });
+  (filters.role || []).forEach(function(r) { params.append('role', r); });
+  (filters.status || []).forEach(function(s) { params.append('status', s); });
+  const qs = params.toString();
+  const url = '/api/export/pioneers.csv' + (qs ? '?' + qs : '');
+  const headers = {};
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  fetch(url, { headers: headers })
+    .then(function(r) { return r.blob(); })
+    .then(function(blob) {
+      const a = document.createElement('a');
+      const objUrl = URL.createObjectURL(blob);
+      a.href = objUrl;
+      a.download = 'pioneers.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    })
+    .catch(function(e) { showToast('Download failed: ' + (e && e.message ? e.message : String(e)), 'error'); });
+}
+
+function openAddPioneerModal() {
+  showModal(`
+    <div style="padding:8px">
+      <h2 style="margin-top:0">Add Pioneer</h2>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Name *</label>
+        <input type="text" id="addPioneerName" maxlength="120" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
+        <input type="email" id="addPioneerEmail" maxlength="200" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Notes</label>
+        <textarea id="addPioneerNotes" maxlength="2000" rows="3" style="width:100%;box-sizing:border-box"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-primary" data-testid="add-pioneer-save" onclick="submitAddPioneerToIndex()">Save</button>
+        <button class="btn btn-secondary" data-testid="add-pioneer-cancel" onclick="hideModal()">Cancel</button>
+      </div>
+    </div>
+  `);
+  setTimeout(function() {
+    const el = document.getElementById('addPioneerName');
+    if (el) el.focus();
+  }, 50);
+}
+
+async function submitAddPioneerToIndex() {
+  const nameEl = document.getElementById('addPioneerName');
+  const emailEl = document.getElementById('addPioneerEmail');
+  const notesEl = document.getElementById('addPioneerNotes');
+  if (!nameEl) return;
+  const name = nameEl.value.trim();
+  if (!name) { showToast('Name is required', 'error'); nameEl.focus(); return; }
+  const email = emailEl ? emailEl.value.trim() : '';
+  const notes = notesEl ? notesEl.value.trim() : '';
+  try {
+    const { status } = await apiCallWithStatus('POST', '/pioneers', { name, email: email || null, notes: notes || null });
+    hideModal();
+    // Reset filter state so the new/matched pioneer is visible.
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: null, sort_dir: 'asc' };
+    await renderPioneersIndex();
+    // 200 = find-or-create matched an existing pioneer; 201 = newly created.
+    showToast(status === 200 ? 'Pioneer already existed — selected' : 'Pioneer added');
+  } catch (e) {
+    showToast('Failed to create pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+  }
+}
+
+// ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
+
+async function renderPioneerDetail(id) {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Loading pioneer…</div>';
+
+  let pioneer;
+  try {
+    pioneer = await apiCall('GET', '/pioneers/' + id);
+  } catch (e) {
+    mc.innerHTML = '<p class="empty-state">Failed to load pioneer: ' + esc(e.message || String(e)) + '</p>';
+    return;
+  }
+
+  const statusBadgeStyle = PIONEER_STATUS_BADGE_STYLES;
+  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : PIONEER_STATUS_FALLBACK;
+  function statusLabel(val) {
+    const opt = statusOpts.find(function(o) { return o.value === val; });
+    return opt ? opt.label : (val || 'Unknown');
+  }
+
+  const badgeStyle = statusBadgeStyle[pioneer.status] || statusBadgeStyle.never;
+  const roundsText = pioneer.rounds_expected > 0
+    ? pioneer.rounds_completed + '/' + pioneer.rounds_expected + ' rounds'
+    : '—';
+  const completionPct = pioneer.completion_rate != null
+    ? Math.round(pioneer.completion_rate * 100) + '%'
+    : '—';
+  const lastActivity = pioneer.last_activity_at
+    ? pioneer.last_activity_at.split('T')[0]
+    : 'Never';
+
+  const adminActions = isAdmin() ? `
+    <button class="btn btn-secondary btn-sm" data-testid="pioneer-detail-edit" onclick="openEditPioneerModal(${id})">Edit</button>
+    <button class="btn btn-secondary btn-sm" data-testid="pioneer-detail-delete" style="color:#dc2626;border-color:#dc2626" onclick="deletePioneer(${id})">Delete</button>
+  ` : '';
+
+  let html = `
+    <div style="max-width:1100px">
+      <!-- Header strip -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+        <div>
+          <a href="#" onclick="window.location.hash='#pioneers';return false;"
+             style="font-size:13px;color:var(--brand-blue,#6EC1E4);text-decoration:none;display:inline-block;margin-bottom:6px">
+            ← Pioneers
+          </a>
+          <h1 style="margin:0 0 4px">${esc(pioneer.name)}</h1>
+          ${pioneer.email ? '<div style="color:#6b7280;font-size:14px">' + esc(pioneer.email) + '</div>' : ''}
+          ${pioneer.notes ? '<div style="color:#374151;font-size:13px;margin-top:6px;white-space:pre-wrap;max-width:600px">' + esc(pioneer.notes) + '</div>' : ''}
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+          ${adminActions}
+          <button class="btn btn-secondary btn-sm" onclick="downloadPioneerXlsx(${id})">Download XLSX ↓</button>
+        </div>
+      </div>
+
+      <!-- Activity strip -->
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;padding:12px 16px;background:var(--gray-50,#f9fafb);border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;margin-bottom:20px">
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Status</span>
+          <span style="${badgeStyle}border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600">${esc(statusLabel(pioneer.status))}</span>
+        </div>
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Projects</span>
+          <span style="font-size:14px;font-weight:600">${pioneer.project_count || 0}</span>
+        </div>
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Completion</span>
+          <span style="font-size:14px;font-weight:600">${completionPct}</span>
+          <span style="font-size:12px;color:#6b7280;margin-left:4px">${roundsText}</span>
+        </div>
+        <div>
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Last Activity</span>
+          <span style="font-size:14px">${esc(lastActivity)}</span>
+        </div>
+      </div>
+
+      <!-- Flywheel chips -->
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Performance</h2>
+        <div class="metric-chips-grid" style="display:flex;gap:8px;flex-wrap:wrap">
+          ${renderPioneerFlywheelChips(pioneer)}
+        </div>
+      </div>
+
+      <!-- Specialization + Roles (side-by-side) -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+          <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Specialization</h2>
+          ${renderPioneerSpecialization(pioneer)}
+        </div>
+        <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+          <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Roles Played</h2>
+          ${renderPioneerRoles(pioneer)}
+        </div>
+      </div>
+
+      <!-- Portfolio table -->
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Portfolio</h2>
+        ${renderPioneerPortfolio(pioneer)}
+      </div>
+
+      <!-- Charts (placeholder for Task 7) -->
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Charts</h2>
+        <div id="pioneerCharts"></div>
+        <!-- Task 7 will call renderPioneerCharts(pioneer) to populate this div -->
+      </div>
+    </div>
+  `;
+
+  mc.innerHTML = html;
+
+  // Task 7: populate pioneer-scoped charts now that the DOM is ready.
+  await renderPioneerCharts(pioneer);
+}
+
+async function renderPioneerCharts(pioneer) {
+  const cont = document.getElementById('pioneerCharts');
+  if (!cont) return;
+
+  // Build four chart containers in a 2×2 grid.
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:8px">
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Gains Radar</h3>
+        <div id="pioneerChartRadar" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Disprove Matrix</h3>
+        <div id="pioneerChartDisprove" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Per-project Timeline</h3>
+        <div id="pioneerChartTimeline" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Quarterly Trend</h3>
+        <div id="pioneerChartQuarterly" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+    </div>
+  `;
+
+  if (typeof echarts === 'undefined') {
+    cont.innerHTML += '<p style="color:var(--gray-500,#6b7280);font-size:13px">Charts library not loaded.</p>';
+    return;
+  }
+
+  // Fetch or reuse the project list.  We need each project's metrics array
+  // to feed the chart renderers.  Use the cached list if it covers all projects,
+  // otherwise fetch directly.
+  let allProjects;
+  try {
+    allProjects = _projectsCache && _projectsCache.length
+      ? _projectsCache
+      : await apiCall('GET', '/projects');
+  } catch (e) {
+    cont.innerHTML += '<p style="color:var(--gray-500,#6b7280);font-size:13px">Could not load project data: ' + esc(e && e.message ? e.message : String(e)) + '</p>';
+    return;
+  }
+
+  // Filter to projects that include this pioneer.
+  const pioneerId = pioneer.id;
+  const filtered = allProjects.filter(function(p) {
+    return (p.pioneers || []).some(function(pi) { return pi.pioneer_id === pioneerId; });
+  });
+
+  // Compute aggregated metrics from the filtered list (same logic as the dashboard).
+  const localMetrics = _computeLocalMetrics(filtered);
+
+  // The registered renderers take (cfg, filtered, localMetrics, dashboard).
+  // cfg only needs an `id` field pointing to the container div.
+  // The `dashboard` argument is only used by track_scaling_gates; pass localMetrics
+  // as a safe fallback so the other four renderers (which ignore it) still work.
+  function safeRender(rendererKey, divId) {
+    const fn = CHART_RENDERERS[rendererKey];
+    if (!fn) return;
+    const cfg = { id: divId };
+    try { fn(cfg, filtered, localMetrics, localMetrics); }
+    catch (err) { console.error('Pioneer chart render error [' + rendererKey + ']:', err); }
+  }
+
+  safeRender('radar_gains',          'pioneerChartRadar');
+  safeRender('scatter_disprove',     'pioneerChartDisprove');
+  safeRender('timeline_per_project', 'pioneerChartTimeline');
+  safeRender('timeline_quarterly',   'pioneerChartQuarterly');
+
+  // Show a gentle empty-state message when the pioneer has no assessed projects.
+  const done = filtered.filter(function(p) { return p.metrics && (p.status === 'complete' || p.status === 'partial'); });
+  if (!done.length) {
+    const msgEl = document.createElement('p');
+    msgEl.style.cssText = 'color:var(--gray-500,#6b7280);font-size:13px;margin-top:8px';
+    msgEl.textContent = 'No assessed projects yet — charts will populate once expert surveys are submitted.';
+    cont.appendChild(msgEl);
+  }
+}
+
+function pioneerChip(label, value, kind) {
+  // kind: 'ratio' | 'pct'
+  const tone = kind === 'pct' ? pctTone(value) : ratioTone(value);
+  const formatted = kind === 'pct' ? fmtPctMaybe(value) : fmtRatioMaybe(value);
+  return `<div class="assessment-metric-chip ${tone}">
+    <span class="chip-value">${formatted}</span>
+    <span class="chip-label">${esc(label)}</span>
+  </div>`;
+}
+
+function renderPioneerFlywheelChips(pioneer) {
+  return [
+    pioneerChip('Machine-First', pioneer.avg_machine_first, 'ratio'),
+    pioneerChip('Senior-Led', pioneer.avg_senior_led, 'ratio'),
+    pioneerChip('Knowledge', pioneer.avg_knowledge, 'ratio'),
+    pioneerChip('Quality', pioneer.avg_quality_score, 'pct'),
+    pioneerChip('Value Gain', pioneer.avg_value_gain, 'ratio'),
+  ].join('');
+}
+
+function renderPioneerSpecialization(pioneer) {
+  const practices = pioneer.practices || [];
+  if (practices.length === 0) {
+    return '<p style="color:#9ca3af;font-size:13px;margin:0">No projects yet.</p>';
+  }
+  const maxCount = Math.max.apply(null, practices.map(function(p) { return p.count || 0; }));
+  let html = '';
+  practices.forEach(function(pr) {
+    const pct = maxCount > 0 ? Math.round((pr.count / maxCount) * 100) : 0;
+    html += '<div style="margin-bottom:10px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">'
+      + '<code style="font-size:12px;background:var(--gray-100,#f3f4f6);padding:1px 5px;border-radius:3px">'
+      + esc(pr.code) + ' (' + pr.count + ' project' + (pr.count !== 1 ? 's' : '') + ')</code>'
+      + '</div>'
+      + '<div style="background:var(--gray-100,#f3f4f6);border-radius:3px;height:14px;position:relative">'
+      + '<div style="background:var(--brand-blue,#6EC1E4);width:' + pct + '%;height:100%;border-radius:3px"></div>'
+      + '</div>'
+      + '</div>';
+  });
+  return html;
+}
+
+function renderPioneerRoles(pioneer) {
+  const roles = pioneer.roles || [];
+  if (roles.length === 0) {
+    return '<p style="color:#9ca3af;font-size:13px;margin:0">No roles assigned yet.</p>';
+  }
+  let html = '<div style="display:flex;flex-direction:column;gap:6px">';
+  roles.forEach(function(r) {
+    html += '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span style="font-size:13px;color:#374151">' + esc(r.role_name) + '</span>'
+      + '<span style="font-size:11px;color:#9ca3af;background:var(--gray-100,#f3f4f6);border-radius:10px;padding:1px 7px">'
+      + '×' + r.count + '</span>'
+      + '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderPioneerPortfolio(pioneer) {
+  const portfolio = pioneer.portfolio || [];
+  if (portfolio.length === 0) {
+    return '<p style="color:#9ca3af;font-size:13px">No projects in portfolio yet.</p>';
+  }
+
+  const statusBadgeStyle = {
+    draft: 'background:#f3f4f6;color:#374151;',
+    active: 'background:#dbeafe;color:#1e40af;',
+    complete: 'background:#d1fae5;color:#065f46;',
+    archived: 'background:#f3f4f6;color:#6b7280;',
+  };
+
+  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:700px;width:100%"><thead><tr>'
+    + '<th>ID</th><th>Project</th><th>Practice</th><th>Role</th>'
+    + '<th>Day Rate</th><th>Rounds</th><th>Status</th><th>Last Activity</th>'
+    + '</tr></thead><tbody>';
+
+  portfolio.forEach(function(row) {
+    const rounds = row.rounds_expected > 0
+      ? (row.rounds_completed || 0) + '/' + row.rounds_expected
+      : (row.rounds_completed || 0) + '/—';
+    const dayRate = row.day_rate != null ? row.day_rate.toLocaleString() : '—';
+    const lastAct = row.last_activity_at ? row.last_activity_at.split('T')[0] : '—';
+    const badgeSt = statusBadgeStyle[row.status] || 'background:#f3f4f6;color:#6b7280;';
+    html += '<tr style="cursor:pointer" onclick="window.location.hash=\'#project/' + row.project_id + '\'">'
+      + '<td style="font-size:12px;color:#6b7280">' + row.project_id + '</td>'
+      + '<td><strong>' + esc(row.project_name || '') + '</strong></td>'
+      + '<td>' + esc(row.practice_code || '—') + '</td>'
+      + '<td>' + esc(row.role_name || '—') + '</td>'
+      + '<td style="text-align:right">' + dayRate + '</td>'
+      + '<td style="text-align:center">' + rounds + '</td>'
+      + '<td><span style="' + badgeSt + 'border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">'
+        + esc(row.status || '—') + '</span></td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + lastAct + '</td>'
+      + '</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  return html;
+}
+
+async function openEditPioneerModal(id) {
+  let pioneer;
+  try {
+    pioneer = await apiCall('GET', '/pioneers/' + id);
+  } catch (e) {
+    showToast('Failed to load pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+    return;
+  }
+
+  showModal(`
+    <div style="padding:8px">
+      <h2 style="margin-top:0">Edit Pioneer</h2>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Name *</label>
+        <input type="text" id="editPioneerName" maxlength="120" value="${esc(pioneer.name || '')}" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
+        <input type="email" id="editPioneerEmail" maxlength="200" value="${esc(pioneer.email || '')}" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Notes</label>
+        <textarea id="editPioneerNotes" maxlength="2000" rows="3" style="width:100%;box-sizing:border-box">${esc(pioneer.notes || '')}</textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-primary" data-testid="edit-pioneer-save" onclick="submitEditPioneer(${id})">Save</button>
+        <button class="btn btn-secondary" data-testid="edit-pioneer-cancel" onclick="hideModal()">Cancel</button>
+      </div>
+    </div>
+  `);
+  setTimeout(function() {
+    const el = document.getElementById('editPioneerName');
+    if (el) el.focus();
+  }, 50);
+}
+
+async function submitEditPioneer(id) {
+  const nameEl = document.getElementById('editPioneerName');
+  const emailEl = document.getElementById('editPioneerEmail');
+  const notesEl = document.getElementById('editPioneerNotes');
+  if (!nameEl) return;
+  const name = nameEl.value.trim();
+  if (!name) { showToast('Name is required', 'error'); nameEl.focus(); return; }
+  const email = emailEl ? emailEl.value.trim() : '';
+  const notes = notesEl ? notesEl.value.trim() : '';
+  try {
+    await apiCall('PUT', '/pioneers/' + id, { name, email: email || null, notes: notes || null });
+    hideModal();
+    showToast('Pioneer updated');
+    await renderPioneerDetail(id);
+  } catch (e) {
+    showToast('Failed to update pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+  }
+}
+
+async function deletePioneer(id) {
+  if (!confirm('Delete this pioneer? This cannot be undone.')) return;
+  try {
+    await apiCall('DELETE', '/pioneers/' + id);
+    showToast('Pioneer deleted');
+    window.location.hash = '#pioneers';
+  } catch (e) {
+    if (e && e.status === 409) {
+      // Pioneer is still assigned to projects — show helpful detail message.
+      const detail = (e.detail && typeof e.detail === 'object') ? e.detail.message : (e.message || 'Pioneer is assigned to projects.');
+      alert('Cannot delete: ' + detail);
+    } else {
+      showToast('Failed to delete pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+    }
+  }
+}
+
+function downloadPioneerXlsx(id) {
+  const headers = {};
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  fetch('/api/export/pioneer/' + id + '.xlsx', { headers })
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.blob();
+    })
+    .then(function(blob) {
+      const a = document.createElement('a');
+      const objUrl = URL.createObjectURL(blob);
+      a.href = objUrl;
+      a.download = 'pioneer-' + id + '.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    })
+    .catch(function(e) { showToast('Download failed: ' + (e && e.message ? e.message : String(e)), 'error'); });
 }
 
 function renderMethodology() {

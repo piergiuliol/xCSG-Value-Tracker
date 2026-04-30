@@ -4,20 +4,23 @@ Phase 1 realignment (April 2026).
 
 IMPORTANT: app.mount("/", StaticFiles(...)) MUST be the LAST line.
 """
+import csv
+import io
 import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import auth
 from backend import database as db
 from backend import metrics as mtx
+from backend import pioneers as pioneers_mod
 from backend.pioneers import PioneerInUseError
 from backend.models import (
     ActivityLogEntry,
@@ -964,21 +967,52 @@ async def list_norm_aggregates(current_user: dict = Depends(auth.get_current_use
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
+def _filter_project_ids_by_pioneer(pioneer_ids: Optional[List[int]]) -> Optional[set]:
+    """Return the set of project ids that have any of the given pioneer_ids
+    assigned. Returns None if pioneer_ids is None/empty (no filter).
+    Returns an empty set when pioneer_ids has values but none match — the
+    caller must treat this as 'filter all projects out'."""
+    if not pioneer_ids:
+        return None
+    placeholders = ",".join("?" for _ in pioneer_ids)
+    with db._db() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT project_id FROM project_pioneers WHERE pioneer_id IN ({placeholders})",
+            tuple(pioneer_ids),
+        ).fetchall()
+    return {r["project_id"] for r in rows}
+
+
 @app.get("/api/dashboard/metrics")
-async def dashboard_metrics(current_user: dict = Depends(auth.get_current_user)):
-    complete = _build_averaged_complete_projects()
+async def dashboard_metrics(
+    pioneer_id: Optional[List[int]] = Query(None),
+    current_user: dict = Depends(auth.get_current_user),
+):
+    project_id_filter = _filter_project_ids_by_pioneer(pioneer_id)
     all_projects = db.list_projects()
+    if project_id_filter is not None:
+        all_projects = [p for p in all_projects if p["id"] in project_id_filter]
+    complete = _build_averaged_complete_projects()
+    if project_id_filter is not None:
+        complete = [p for p in complete if p["id"] in project_id_filter]
     return mtx.compute_dashboard_metrics(complete, all_projects)
 
 
 @app.get("/api/dashboard/takeaways")
-async def dashboard_takeaways(current_user: dict = Depends(auth.get_current_user)):
+async def dashboard_takeaways(
+    pioneer_id: Optional[List[int]] = Query(None),
+    current_user: dict = Depends(auth.get_current_user),
+):
     """Return {chart_id: takeaway_string} for each dashboard chart."""
     from backend.takeaways import compute_takeaways
     from backend.schema import DASHBOARD_CONFIG
 
+    project_id_filter = _filter_project_ids_by_pioneer(pioneer_id)
     complete = _build_averaged_complete_projects()
     all_p = db.list_projects()
+    if project_id_filter is not None:
+        complete = [p for p in complete if p["id"] in project_id_filter]
+        all_p = [p for p in all_p if p["id"] in project_id_filter]
     aggregates = mtx.compute_summary(complete, all_p)
     scaling_gates = mtx.compute_scaling_gates(complete)
     return compute_takeaways(complete, aggregates, scaling_gates, DASHBOARD_CONFIG["charts"])
@@ -1362,6 +1396,134 @@ async def download_export_file(
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Export file not found")
     return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
+PIONEERS_CSV_FIELDS = [
+    "id",
+    "name",
+    "email",
+    "notes",
+    "project_count",
+    "rounds_completed",
+    "rounds_expected",
+    "completion_rate",
+    "last_activity_at",
+    "status",
+    "avg_quality_score",
+    "avg_value_gain",
+    "avg_machine_first",
+    "avg_senior_led",
+    "avg_knowledge",
+    "practices",
+    "roles",
+]
+
+
+@app.get("/api/export/pioneers.csv")
+def export_pioneers_csv(
+    practice: Optional[List[str]] = Query(None),
+    role: Optional[List[str]] = Query(None),
+    status: Optional[List[str]] = Query(None),
+    search: Optional[str] = Query(None),
+    user=Depends(auth.get_current_user),
+):
+    rows = pioneers_mod.filter_pioneers_for_export(
+        practice=practice, role=role, status=status, search=search,
+    )
+
+    # Flatten lists into joined strings for CSV.
+    flattened = []
+    for r in rows:
+        flat = dict(r)
+        flat["practices"] = ", ".join(
+            f"{p['code']}({p['count']})" for p in r.get("practices", [])
+        )
+        flat["roles"] = ", ".join(
+            f"{x['role_name']}×{x['count']}" for x in r.get("roles", [])
+        )
+        flat.pop("portfolio", None)  # detail-only field, not in list export
+        flattened.append(flat)
+
+    # Always emit the header row (even when filter matches nothing) so consumers
+    # can rely on the columns. Fieldnames come from a fixed list — not derived
+    # from the first row — so an empty result still has a parseable header.
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output, fieldnames=PIONEERS_CSV_FIELDS, extrasaction="ignore"
+    )
+    writer.writeheader()
+    writer.writerows(flattened)
+
+    # Prepend UTF-8 BOM so Excel on Windows opens accented characters correctly.
+    body = "﻿" + output.getvalue()
+
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=pioneers.csv"},
+    )
+
+
+@app.get("/api/export/pioneer/{pioneer_id}.xlsx")
+def export_pioneer_xlsx(
+    pioneer_id: int,
+    user=Depends(auth.get_current_user),
+):
+    pioneer = pioneers_mod.get_pioneer_with_metrics(pioneer_id)
+    if not pioneer:
+        raise HTTPException(status_code=404, detail="Pioneer not found")
+
+    from openpyxl import Workbook
+    wb = Workbook()
+
+    # summary sheet
+    summary = wb.active
+    summary.title = "summary"
+    summary_cols = [
+        "id", "name", "email", "notes", "status",
+        "project_count", "rounds_completed", "rounds_expected", "completion_rate",
+        "last_activity_at",
+        "avg_quality_score", "avg_value_gain",
+        "avg_machine_first", "avg_senior_led", "avg_knowledge",
+        "practices", "roles",
+    ]
+    summary.append(summary_cols)
+    practices_str = ", ".join(
+        f"{p['code']}({p['count']})" for p in pioneer.get("practices", [])
+    )
+    roles_str = ", ".join(
+        f"{x['role_name']}×{x['count']}" for x in pioneer.get("roles", [])
+    )
+    summary.append([
+        pioneer["id"], pioneer["name"], pioneer["email"], pioneer.get("notes"),
+        pioneer["status"],
+        pioneer["project_count"], pioneer["rounds_completed"], pioneer["rounds_expected"],
+        pioneer.get("completion_rate"), pioneer.get("last_activity_at"),
+        pioneer.get("avg_quality_score"), pioneer.get("avg_value_gain"),
+        pioneer.get("avg_machine_first"), pioneer.get("avg_senior_led"),
+        pioneer.get("avg_knowledge"),
+        practices_str, roles_str,
+    ])
+
+    # portfolio sheet
+    portfolio = wb.create_sheet("portfolio")
+    portfolio_cols = [
+        "project_id", "project_name", "practice_code", "role_name", "day_rate",
+        "rounds_completed", "rounds_expected", "status", "last_activity_at",
+    ]
+    portfolio.append(portfolio_cols)
+    for entry in pioneer.get("portfolio") or []:
+        portfolio.append([entry.get(c) for c in portfolio_cols])
+
+    # Stream the workbook as a response.
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=pioneer-{pioneer_id}.xlsx"},
+    )
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────

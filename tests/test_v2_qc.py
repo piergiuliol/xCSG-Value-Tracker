@@ -2400,6 +2400,100 @@ def test_update_pioneer_clears_role_name():
         requests.delete(f"{BASE}/api/projects/{pid}", headers=headers)
 
 
+def test_export_pioneers_csv():
+    """GET /api/export/pioneers.csv returns CSV of pioneer rows.
+    Honors filter query params (multi-valued for practice/role/status)."""
+    import csv
+    import io
+
+    headers = auth_h(admin_token())
+
+    # Make sure at least one pioneer exists.
+    p = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "CSV Test", "email": "csv-test@example.com",
+    }).json()
+
+    # `csv.DictReader` doesn't strip a leading BOM on its own — decoding the
+    # response bytes with utf-8-sig drops it before parsing.
+    def _csv_text(resp):
+        return resp.content.decode("utf-8-sig")
+
+    try:
+        r = requests.get(f"{BASE}/api/export/pioneers.csv", headers=headers)
+        assert r.status_code == 200
+        assert "text/csv" in r.headers.get("content-type", "")
+
+        # Parse the CSV (after stripping the BOM).
+        reader = csv.DictReader(io.StringIO(_csv_text(r)))
+        rows = list(reader)
+        assert len(rows) >= 1
+        # Required columns.
+        for col in ("id", "name", "email", "project_count", "status",
+                    "completion_rate", "avg_value_gain", "practices", "roles"):
+            assert col in rows[0], f"missing column {col}"
+
+        # Our test pioneer should be in there.
+        names = [row["name"] for row in rows]
+        assert "CSV Test" in names
+
+        # Status filter — single value.
+        r2 = requests.get(f"{BASE}/api/export/pioneers.csv?status=never", headers=headers)
+        assert r2.status_code == 200
+        rows2 = list(csv.DictReader(io.StringIO(_csv_text(r2))))
+        # Test pioneer is `never` (no project assignments).
+        assert any(row["name"] == "CSV Test" and row["status"] == "never" for row in rows2)
+
+        # Multi-valued status filter (e.g. status=never&status=pending).
+        r3 = requests.get(
+            f"{BASE}/api/export/pioneers.csv?status=never&status=pending",
+            headers=headers,
+        )
+        assert r3.status_code == 200
+        # CSV should still parse cleanly.
+        list(csv.DictReader(io.StringIO(_csv_text(r3))))
+
+        # Search filter.
+        r4 = requests.get(
+            f"{BASE}/api/export/pioneers.csv?search=csv-test",
+            headers=headers,
+        )
+        rows4 = list(csv.DictReader(io.StringIO(_csv_text(r4))))
+        assert any(row["name"] == "CSV Test" for row in rows4)
+
+        # UTF-8 BOM is prepended so Excel on Windows reads it correctly.
+        # Inspect the raw bytes so the assertion is unambiguous.
+        assert r.content.startswith(b"\xef\xbb\xbf"), "CSV should start with UTF-8 BOM"
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+
+def test_export_pioneers_csv_empty_filter():
+    """When the filter matches no pioneers, the CSV must still emit a header
+    row (consumers crash on empty bodies). BOM stays in place."""
+    import csv
+    import io
+
+    headers = auth_h(admin_token())
+    # Use a search string that cannot possibly match any name/email.
+    r = requests.get(
+        f"{BASE}/api/export/pioneers.csv?search=__definitely_no_match_zzz_xxx_999__",
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert "text/csv" in r.headers.get("content-type", "")
+    # Body starts with BOM (raw bytes — most reliable check).
+    assert r.content.startswith(b"\xef\xbb\xbf"), "empty CSV should still start with BOM"
+    # Header row is present and parseable; row list is empty.
+    text = r.content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    assert rows == [], f"expected no rows, got {len(rows)}"
+    # Header includes the canonical fixed columns.
+    for col in ("id", "name", "email", "project_count", "status",
+                "completion_rate", "avg_value_gain", "practices", "roles"):
+        assert col in (reader.fieldnames or []), f"missing header column {col}"
+
+
 def main():
     global passed, failed, failures
 
@@ -2477,10 +2571,15 @@ def main():
     test_show_other_pioneers_flag()
     test_auto_issue_next_round()
     test_dashboard_takeaways()
+    test_dashboard_pioneer_filter()
     test_expert_notes()
     test_notes_feed_endpoint()
     test_notes_excel_sheet()
     test_dashboard_export_sheets()
+    test_export_pioneers_csv()
+    test_export_pioneers_csv_empty_filter()
+    test_export_pioneer_xlsx()
+    test_export_pioneer_xlsx_404_for_unknown()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
@@ -3045,6 +3144,109 @@ def test_project_create_with_inline_pioneer():
         requests.delete(f"{BASE}/api/projects/{proj_id}", headers=headers)
         if new_pioneer:
             requests.delete(f"{BASE}/api/pioneers/{new_pioneer['id']}", headers=headers)
+
+
+def test_dashboard_pioneer_filter():
+    """GET /api/dashboard/metrics with pioneer_id query param scopes to that
+    pioneer's projects only."""
+    headers = auth_h(admin_token())
+
+    # Create two pioneers and two projects, each with a different pioneer.
+    p1 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Filter A", "email": "filter-a@example.com",
+    }).json()
+    p2 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "Filter B", "email": "filter-b@example.com",
+    }).json()
+
+    proj1 = requests.post(f"{BASE}/api/projects", headers=headers, json={
+        "project_name": "filter-test-1",
+        "category_id": 1,
+        "pioneers": [{"pioneer_id": p1["id"], "total_rounds": 1}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }).json()
+    proj2 = requests.post(f"{BASE}/api/projects", headers=headers, json={
+        "project_name": "filter-test-2",
+        "category_id": 1,
+        "pioneers": [{"pioneer_id": p2["id"], "total_rounds": 1}],
+        "xcsg_team_size": "1",
+        "xcsg_revision_rounds": "1",
+    }).json()
+
+    try:
+        # Without filter — both projects counted.
+        all_metrics = requests.get(f"{BASE}/api/dashboard/metrics", headers=headers).json()
+        assert all_metrics["total_projects"] >= 2
+
+        # With pioneer_id=p1 — proj1 included, proj2 excluded.
+        p1_metrics = requests.get(
+            f"{BASE}/api/dashboard/metrics?pioneer_id={p1['id']}", headers=headers
+        ).json()
+        assert p1_metrics["total_projects"] <= all_metrics["total_projects"]
+        assert p1_metrics["total_projects"] >= 1  # at least proj1
+
+        # With both pioneer_ids — both included.
+        both_metrics = requests.get(
+            f"{BASE}/api/dashboard/metrics?pioneer_id={p1['id']}&pioneer_id={p2['id']}",
+            headers=headers,
+        ).json()
+        assert both_metrics["total_projects"] >= 2  # at least proj1 and proj2
+
+        # Unknown pioneer_id — no projects matched (empty filter).
+        unknown_metrics = requests.get(
+            f"{BASE}/api/dashboard/metrics?pioneer_id=999999", headers=headers
+        ).json()
+        assert unknown_metrics["total_projects"] == 0
+    finally:
+        requests.delete(f"{BASE}/api/projects/{proj1['id']}", headers=headers)
+        requests.delete(f"{BASE}/api/projects/{proj2['id']}", headers=headers)
+        requests.delete(f"{BASE}/api/pioneers/{p1['id']}", headers=headers)
+        requests.delete(f"{BASE}/api/pioneers/{p2['id']}", headers=headers)
+
+
+def test_export_pioneer_xlsx():
+    """GET /api/export/pioneer/{id}.xlsx returns XLSX with summary + portfolio sheets."""
+    import io
+    from openpyxl import load_workbook
+
+    headers = auth_h(admin_token())
+
+    p = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
+        "name": "XLSX Test", "email": "xlsx-test@example.com",
+    }).json()
+
+    try:
+        r = requests.get(f"{BASE}/api/export/pioneer/{p['id']}.xlsx", headers=headers)
+        assert r.status_code == 200
+        assert "spreadsheetml" in r.headers.get("content-type", "")
+
+        # Load XLSX.
+        wb = load_workbook(io.BytesIO(r.content))
+        assert "summary" in wb.sheetnames
+        assert "portfolio" in wb.sheetnames
+
+        summary = wb["summary"]
+        # Header row + 1 data row.
+        assert summary.max_row == 2
+        # Find the name column and verify our pioneer.
+        header_row = [c.value for c in summary[1]]
+        name_col_idx = header_row.index("name")
+        assert summary.cell(row=2, column=name_col_idx + 1).value == "XLSX Test"
+
+        # Empty portfolio (no project assignments).
+        portfolio = wb["portfolio"]
+        # Header row only (no data rows).
+        assert portfolio.max_row == 1
+    finally:
+        requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=headers)
+
+
+def test_export_pioneer_xlsx_404_for_unknown():
+    """Unknown pioneer_id returns 404."""
+    headers = auth_h(admin_token())
+    r = requests.get(f"{BASE}/api/export/pioneer/99999.xlsx", headers=headers)
+    assert r.status_code == 404
 
 
 if __name__ == "__main__":
