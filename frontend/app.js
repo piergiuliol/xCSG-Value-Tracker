@@ -4405,7 +4405,306 @@ function toggleMethodAccordion(header) {
 
 async function renderPioneersIndex() {
   const mc = document.getElementById('mainContent');
-  mc.innerHTML = '<h1>Pioneers</h1><p>Index page (Phase 3b Task 5)</p>';
+  mc.innerHTML = '<div class="loading">Loading pioneers…</div>';
+
+  let pioneers;
+  try {
+    pioneers = await apiCall('GET', '/pioneers');
+  } catch (e) {
+    mc.innerHTML = '<p class="empty-state">Failed to load pioneers: ' + esc(e.message || String(e)) + '</p>';
+    return;
+  }
+  window._pioneersCache = pioneers;
+  if (!window._pioneersFilters) {
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: null, sort_dir: 'asc' };
+  }
+
+  mc.innerHTML = `
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h1 style="margin:0">Pioneers</h1>
+      <div style="display:flex;gap:8px">
+        ${canWrite() ? '<button class="btn btn-primary btn-sm" onclick="openAddPioneerModal()">+ Add Pioneer</button>' : ''}
+        <button class="btn btn-secondary btn-sm" onclick="downloadPioneersCsv()">Download CSV ↓</button>
+      </div>
+    </div>
+    <div id="pioneersFilterBar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <input type="search" id="pioneersSearch" placeholder="Search name or email…" value="${esc(window._pioneersFilters.search)}"
+        style="min-width:200px;padding:5px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:13px">
+      <span id="pioneersPracticeFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+      <span id="pioneersRoleFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+      <span id="pioneersStatusFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+    </div>
+    <div id="pioneersTableContainer"></div>
+  `;
+
+  renderPioneersFilterChips();
+  renderPioneersTable();
+
+  let _searchTimer = null;
+  document.getElementById('pioneersSearch').addEventListener('input', function(e) {
+    clearTimeout(_searchTimer);
+    const val = e.target.value;
+    _searchTimer = setTimeout(function() {
+      window._pioneersFilters.search = val;
+      renderPioneersTable();
+    }, 250);
+  });
+}
+
+function renderPioneersFilterChips() {
+  const allPractices = new Set();
+  const allRoles = new Set();
+  const allStatuses = new Set();
+  (window._pioneersCache || []).forEach(function(p) {
+    (p.practices || []).forEach(function(pr) { allPractices.add(pr.code); });
+    (p.roles || []).forEach(function(r) { allRoles.add(r.role_name); });
+    if (p.status) allStatuses.add(p.status);
+  });
+
+  function chipBtn(key, value, label) {
+    const isActive = (window._pioneersFilters[key] || []).includes(value);
+    const activeStyle = isActive
+      ? 'background:#121F6B;color:#fff;border-color:#121F6B;'
+      : 'background:#f3f4f6;color:#374151;border-color:#d1d5db;';
+    return '<button style="' + activeStyle + 'border:1px solid;border-radius:20px;padding:3px 10px;font-size:12px;cursor:pointer" '
+      + 'onclick="togglePioneersFilter(\'' + key + '\',\'' + value.replace(/'/g, '\\\'') + '\')">'
+      + esc(label) + '</button>';
+  }
+
+  const practiceEl = document.getElementById('pioneersPracticeFilter');
+  if (practiceEl) {
+    const chips = Array.from(allPractices).sort().map(function(code) { return chipBtn('practice', code, code); });
+    practiceEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Practice:</span> ' + chips.join('')
+      : '';
+  }
+
+  const roleEl = document.getElementById('pioneersRoleFilter');
+  if (roleEl) {
+    const chips = Array.from(allRoles).sort().map(function(name) { return chipBtn('role', name, name); });
+    roleEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Role:</span> ' + chips.join('')
+      : '';
+  }
+
+  const statusEl = document.getElementById('pioneersStatusFilter');
+  if (statusEl) {
+    const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : [
+      { value: 'pending', label: 'Pending' },
+      { value: 'pending_overdue', label: 'Overdue' },
+      { value: 'completed', label: 'Completed' },
+      { value: 'never', label: 'Never assigned' },
+    ];
+    const chips = statusOpts.map(function(opt) { return chipBtn('status', opt.value, opt.label); });
+    statusEl.innerHTML = '<span style="font-size:12px;color:#6b7280;font-weight:600">Status:</span> ' + chips.join('');
+  }
+}
+
+function togglePioneersFilter(key, value) {
+  const arr = window._pioneersFilters[key];
+  if (!Array.isArray(arr)) return;
+  const idx = arr.indexOf(value);
+  if (idx >= 0) arr.splice(idx, 1);
+  else arr.push(value);
+  renderPioneersFilterChips();
+  renderPioneersTable();
+}
+
+function sortPioneers(field) {
+  const f = window._pioneersFilters;
+  if (f.sort_field === field) {
+    f.sort_dir = f.sort_dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    f.sort_field = field;
+    f.sort_dir = 'asc';
+  }
+  renderPioneersTable();
+}
+
+function renderPioneersTable() {
+  const filters = window._pioneersFilters;
+  const all = window._pioneersCache || [];
+
+  let filtered = all.filter(function(p) {
+    if (filters.search) {
+      const s = filters.search.toLowerCase();
+      if (!(p.name || '').toLowerCase().includes(s) && !(p.email || '').toLowerCase().includes(s)) return false;
+    }
+    if (filters.practice && filters.practice.length > 0) {
+      const codes = (p.practices || []).map(function(pr) { return pr.code; });
+      if (!filters.practice.some(function(c) { return codes.includes(c); })) return false;
+    }
+    if (filters.role && filters.role.length > 0) {
+      const names = (p.roles || []).map(function(r) { return r.role_name; });
+      if (!filters.role.some(function(n) { return names.includes(n); })) return false;
+    }
+    if (filters.status && filters.status.length > 0 && !filters.status.includes(p.status)) return false;
+    return true;
+  });
+
+  if (filters.sort_field) {
+    const sf = filters.sort_field;
+    const dir = filters.sort_dir === 'desc' ? -1 : 1;
+    filtered = filtered.slice().sort(function(a, b) {
+      const av = a[sf] == null ? '' : a[sf];
+      const bv = b[sf] == null ? '' : b[sf];
+      if (typeof av === 'number' && typeof bv === 'number') return dir * (av - bv);
+      return dir * String(av).localeCompare(String(bv));
+    });
+  }
+
+  const cont = document.getElementById('pioneersTableContainer');
+  if (!cont) return;
+
+  if (filtered.length === 0) {
+    cont.innerHTML = '<p class="empty-state" style="color:#6b7280;padding:24px 0;text-align:center">No pioneers match the current filters.</p>';
+    return;
+  }
+
+  const statusBadgeStyle = {
+    pending: 'background:#fef3c7;color:#92400e;',
+    pending_overdue: 'background:#fee2e2;color:#991b1b;',
+    completed: 'background:#d1fae5;color:#065f46;',
+    never: 'background:#f3f4f6;color:#6b7280;',
+  };
+
+  const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : [];
+  function statusLabel(val) {
+    const opt = statusOpts.find(function(o) { return o.value === val; });
+    return opt ? opt.label : (val || '—');
+  }
+
+  function fmt(v) { return v == null ? '—' : (typeof v === 'number' ? v.toFixed(2) + '×' : String(v)); }
+  function fmtPct(v) { return v == null ? '—' : (v * 100).toFixed(0) + '%'; }
+  function fmtDate(v) { return v ? v.split('T')[0] : '—'; }
+
+  function thCell(label, field) {
+    const isSorted = filters.sort_field === field;
+    const arrow = isSorted ? (filters.sort_dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return '<th style="cursor:pointer;white-space:nowrap;user-select:none" onclick="sortPioneers(\'' + field + '\')">'
+      + esc(label) + arrow + '</th>';
+  }
+
+  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:900px;width:100%"><thead><tr>'
+    + thCell('Name', 'name')
+    + thCell('Email', 'email')
+    + thCell('# Projects', 'project_count')
+    + '<th>Practices</th>'
+    + '<th>Roles</th>'
+    + thCell('Status', 'status')
+    + thCell('Completion', 'completion_rate')
+    + thCell('Last Activity', 'last_activity_at')
+    + thCell('Avg Value Gain', 'avg_value_gain')
+    + thCell('Machine-First', 'avg_machine_first')
+    + thCell('Senior-Led', 'avg_senior_led')
+    + thCell('Knowledge', 'avg_knowledge')
+    + '</tr></thead><tbody>';
+
+  for (let i = 0; i < filtered.length; i++) {
+    const p = filtered[i];
+    const practiceChips = (p.practices || []).map(function(pr) {
+      return '<span style="display:inline-block;background:#e0e7ff;color:#3730a3;border-radius:10px;padding:1px 7px;font-size:11px;margin:1px">'
+        + esc(pr.code) + '&nbsp;(' + pr.count + ')</span>';
+    }).join(' ');
+    const roleChips = (p.roles || []).map(function(r) {
+      return '<span style="display:inline-block;background:#f0fdf4;color:#166534;border-radius:10px;padding:1px 7px;font-size:11px;margin:1px">'
+        + esc(r.role_name) + '&nbsp;×' + r.count + '</span>';
+    }).join(' ');
+    const badgeStyle = statusBadgeStyle[p.status] || statusBadgeStyle.never;
+
+    html += '<tr style="cursor:pointer" onclick="window.location.hash=\'#pioneer/' + p.id + '\'">'
+      + '<td><strong>' + esc(p.name || '') + '</strong></td>'
+      + '<td style="color:#6b7280;font-size:13px">' + esc(p.email || '') + '</td>'
+      + '<td style="text-align:center">' + (p.project_count || 0) + '</td>'
+      + '<td>' + (practiceChips || '—') + '</td>'
+      + '<td>' + (roleChips || '—') + '</td>'
+      + '<td><span style="' + badgeStyle + 'border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600">'
+        + esc(statusLabel(p.status)) + '</span></td>'
+      + '<td style="text-align:center">' + fmtPct(p.completion_rate) + '</td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + fmtDate(p.last_activity_at) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_value_gain) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_machine_first) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_senior_led) + '</td>'
+      + '<td style="text-align:center">' + fmt(p.avg_knowledge) + '</td>'
+      + '</tr>';
+  }
+  html += '</tbody></table></div>';
+  cont.innerHTML = html;
+}
+
+function downloadPioneersCsv() {
+  const filters = window._pioneersFilters || {};
+  const params = new URLSearchParams();
+  if (filters.search) params.append('search', filters.search);
+  (filters.practice || []).forEach(function(p) { params.append('practice', p); });
+  (filters.role || []).forEach(function(r) { params.append('role', r); });
+  (filters.status || []).forEach(function(s) { params.append('status', s); });
+  const qs = params.toString();
+  const url = '/api/export/pioneers.csv' + (qs ? '?' + qs : '');
+  const headers = {};
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  fetch(url, { headers: headers })
+    .then(function(r) { return r.blob(); })
+    .then(function(blob) {
+      const a = document.createElement('a');
+      const objUrl = URL.createObjectURL(blob);
+      a.href = objUrl;
+      a.download = 'pioneers.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    })
+    .catch(function(e) { showToast('Download failed: ' + (e && e.message ? e.message : String(e)), 'error'); });
+}
+
+function openAddPioneerModal() {
+  showModal(`
+    <div style="padding:8px">
+      <h2 style="margin-top:0">Add Pioneer</h2>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Name *</label>
+        <input type="text" id="addPioneerName" maxlength="120" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
+        <input type="email" id="addPioneerEmail" maxlength="200" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Notes</label>
+        <textarea id="addPioneerNotes" maxlength="2000" rows="3" style="width:100%;box-sizing:border-box"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-primary" onclick="submitAddPioneerToIndex()">Save</button>
+        <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+      </div>
+    </div>
+  `);
+  setTimeout(function() {
+    const el = document.getElementById('addPioneerName');
+    if (el) el.focus();
+  }, 50);
+}
+
+async function submitAddPioneerToIndex() {
+  const nameEl = document.getElementById('addPioneerName');
+  const emailEl = document.getElementById('addPioneerEmail');
+  const notesEl = document.getElementById('addPioneerNotes');
+  if (!nameEl) return;
+  const name = nameEl.value.trim();
+  if (!name) { showToast('Name is required', 'error'); nameEl.focus(); return; }
+  const email = emailEl ? emailEl.value.trim() : '';
+  const notes = notesEl ? notesEl.value.trim() : '';
+  try {
+    await apiCall('POST', '/pioneers', { name, email: email || null, notes: notes || null });
+    hideModal();
+    // Reset filter state so the new pioneer is visible.
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: null, sort_dir: 'asc' };
+    await renderPioneersIndex();
+    showToast('Pioneer added');
+  } catch (e) {
+    showToast('Failed to create pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
+  }
 }
 
 async function renderPioneerDetail(id) {
