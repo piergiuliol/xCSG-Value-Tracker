@@ -113,11 +113,7 @@ def get_current_user_analyst(payload: dict = Depends(_get_payload)) -> dict:
     return payload
 
 
-def get_current_user_writer(payload: dict = Depends(_get_payload)) -> dict:
-    """Admin or analyst — required for write operations like creating pioneers."""
-    if payload.get("role") not in ("admin", "analyst"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin or analyst required",
-        )
-    return payload
+# get_current_user_writer is an alias for get_current_user_analyst — both
+# names are used in different parts of the codebase. They have identical
+# semantics: admin or analyst required.
+get_current_user_writer = get_current_user_analyst

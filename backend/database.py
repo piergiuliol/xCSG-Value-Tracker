@@ -1497,14 +1497,8 @@ def delete_project(project_id: int) -> bool:
             "UPDATE activity_log SET project_id = NULL WHERE project_id = ?",
             (project_id,),
         )
-        conn.execute(
-            "DELETE FROM expert_responses WHERE project_id = ?",
-            (project_id,),
-        )
-        conn.execute(
-            "DELETE FROM project_pioneers WHERE project_id = ?",
-            (project_id,),
-        )
+        # expert_responses and project_pioneers both have ON DELETE CASCADE from
+        # projects — the DB handles them; no need to delete them explicitly.
         conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return True
@@ -1839,27 +1833,50 @@ def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
     """Same shape as list_pioneers_with_metrics()'s items, plus a `portfolio`
     field listing each project the pioneer is on. Returns None if the pioneer
     does not exist."""
+    # Fast path: if the pioneer exists but has no project_pioneers rows,
+    # skip the full aggregation.
+    with _db() as conn:
+        pioneer_row = conn.execute(
+            "SELECT id, name, email, notes FROM pioneers WHERE id = ?",
+            (pioneer_id,),
+        ).fetchone()
+        if not pioneer_row:
+            return None
+        pp_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM project_pioneers WHERE pioneer_id = ?",
+            (pioneer_id,),
+        ).fetchone()["n"]
+
+    if pp_count == 0:
+        return {
+            "id": pioneer_row["id"],
+            "name": pioneer_row["name"],
+            "email": pioneer_row["email"],
+            "notes": pioneer_row["notes"],
+            "project_count": 0,
+            "rounds_completed": 0,
+            "rounds_expected": 0,
+            "completion_rate": None,
+            "last_activity_at": None,
+            "status": "never",
+            "avg_quality_score": None,
+            "avg_value_gain": None,
+            "avg_machine_first": None,
+            "avg_senior_led": None,
+            "avg_knowledge": None,
+            "practices": [],
+            "roles": [],
+            "portfolio": [],
+        }
+
+    # Pioneer has assignments — go through the full aggregation.
     summary = next(
         (p for p in list_pioneers_with_metrics() if p["id"] == pioneer_id),
         None,
     )
     if summary is None:
-        # Pioneer record exists but with no project_pioneers rows — re-fetch directly.
-        with _db() as conn:
-            row = conn.execute(
-                "SELECT id, name, email, notes FROM pioneers WHERE id = ?",
-                (pioneer_id,),
-            ).fetchone()
-            if not row:
-                return None
-            summary = {
-                "id": row["id"], "name": row["name"], "email": row["email"], "notes": row["notes"],
-                "project_count": 0, "rounds_completed": 0, "rounds_expected": 0,
-                "completion_rate": None, "last_activity_at": None, "status": "never",
-                "avg_quality_score": None, "avg_value_gain": None,
-                "avg_machine_first": None, "avg_senior_led": None, "avg_knowledge": None,
-                "practices": [], "roles": [],
-            }
+        # Defensive: the pioneer was just deleted between the COUNT and the loop.
+        return None
 
     # Build portfolio.
     with _db() as conn:

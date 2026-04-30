@@ -14,19 +14,22 @@ export async function inlineCreatePioneer(
   name: string,
   email: string,
 ): Promise<void> {
-  await page.locator(`${rowSelector} .pioneer-picker`).selectOption('__new__');
-  await page.locator(`${rowSelector} .pioneer-inline-name`).fill(name);
+  // Resolve to the first matching row to handle multi-row forms predictably.
+  const row = page.locator(rowSelector).first();
+  await row.locator('.pioneer-picker').selectOption('__new__');
+  await row.locator('.pioneer-inline-name').fill(name);
   if (email) {
-    await page.locator(`${rowSelector} .pioneer-inline-email`).fill(email);
+    await row.locator('.pioneer-inline-email').fill(email);
   }
-  await page.locator(`${rowSelector} .pioneer-inline-save`).click();
+  await row.locator('.pioneer-inline-save').click();
   // Wait for the picker to come back with a non-empty, non-__new__ value.
   await page.waitForFunction(
     (sel) => {
-      const s = document.querySelector(`${sel} .pioneer-picker`) as HTMLSelectElement | null;
+      const r = document.querySelectorAll(sel)[0];
+      const s = r?.querySelector('.pioneer-picker') as HTMLSelectElement | null;
       return !!s && !!s.value && s.value !== '__new__';
     },
     rowSelector,
-    { timeout: 15000 },
+    { timeout: 10000 },
   );
 }
