@@ -120,6 +120,95 @@ function pctTone(v) {
   return 'chip-red';
 }
 
+function renderEconomicsTilesGrid(summary, schemaEconomicsTiles) {
+  // schemaEconomicsTiles is window.schema.economics_tiles (or the deep-tab equivalent
+  // in PR3 if we ever differentiate). Each tile entry: { key, label, format }.
+  const baseCurrency = summary.base_currency || 'USD';
+  const fc = (v) => fmtCurrency(v, baseCurrency);
+  const tileFor = (def) => {
+    let raw, formatted;
+    if (def.format === 'currency') {
+      raw = summary[def.key];
+      formatted = fc(raw);
+    } else if (def.format === 'percent') {
+      raw = summary[def.key];
+      formatted = fmtPctMaybe(raw);
+    } else if (def.format === 'fraction') {
+      // Special case: qualifying_project_count is "N of M" against total_complete_count.
+      const num = summary[def.key];
+      const den = summary.total_complete_count;
+      raw = num;
+      formatted = (num == null || den == null) ? '—' : `${num} / ${den}`;
+    } else {
+      raw = summary[def.key];
+      formatted = raw == null ? '—' : String(raw);
+    }
+    // Color tone: percent uses pct_tone, currency/ratio use metric_tone.
+    const toneKey = def.format === 'percent' ? 'pct_tone' : 'metric_tone';
+    return `<div class="metric-tile" title="${esc(def.label)}">
+      <div class="metric-tile-value" style="color:${metricTone(raw, toneKey)}">${formatted}</div>
+      <div class="metric-tile-label">${esc(def.label)}</div>
+    </div>`;
+  };
+  return `<div class="metrics-grid">${schemaEconomicsTiles.map(tileFor).join('')}</div>`;
+}
+
+function renderEconomicsSummaryCard(data) {
+  if (!data || !data.summary) return '';
+  const s = data.summary;
+  const tiles = (schema && schema.economics_tiles) || [];
+  const charts = ((schema && schema.economics_charts) || [])
+    .filter(c => c.surface === 'summary');
+
+  // Empty state.
+  if ((s.qualifying_project_count || 0) === 0) {
+    const denom = s.total_complete_count || 0;
+    const msg = denom === 0
+      ? 'No completed projects yet.'
+      : `0 of ${denom} completed projects have full economics data (revenue + legacy team mix).`;
+    return `<div class="card economics-card" style="margin-top:24px;padding:24px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
+      <h3 style="margin:0 0 8px;color:var(--navy)">Economics</h3>
+      <p style="margin:0;color:var(--gray-500)">${esc(msg)} <a href="#projects" style="color:var(--brand-blue,#6EC1E4)">Edit projects →</a></p>
+    </div>`;
+  }
+
+  // FX-missing banner.
+  const missing = s.currencies_missing_fx || [];
+  const banner = missing.length === 0 ? '' : `
+    <div style="margin:12px 0;padding:8px 12px;background:var(--amber-50,#fffbeb);border-left:3px solid var(--amber-400,#fbbf24);color:var(--gray-700);font-size:12px">
+      Excluded from total: ${missing.map(esc).join(', ')} —
+      <a href="#settings" style="color:var(--brand-blue,#6EC1E4)">set rates in Settings</a>.
+    </div>`;
+
+  // Caveat line under tiles.
+  const caveat = `<div style="margin-top:8px;color:var(--gray-500);font-size:12px">
+    Across ${s.qualifying_project_count} of ${s.total_complete_count} completed projects with full economics data.
+    Converted to ${esc(s.base_currency)} using rates from Settings.
+  </div>`;
+
+  // Chart containers (heights from schema). Only render when there's quarterly
+  // data — otherwise _initEconomicsCharts skips them and we'd be left with
+  // empty 240px-tall boxes.
+  const hasQuarterly = (data.trends && Array.isArray(data.trends.quarterly) && data.trends.quarterly.length > 0);
+  const chartCards = !hasQuarterly ? '' : charts.map(c => `
+    <div class="chart-card" data-chart-id="${c.id}" data-testid="${c.id}">
+      <div class="chart-card-title">${esc(c.title)}</div>
+      <div class="chart-body" style="height:${c.height}px">
+        <div id="${c.id}" style="width:100%;height:100%"></div>
+      </div>
+    </div>`).join('');
+
+  return `<div class="card economics-card" data-testid="economics-summary-card" style="margin-top:24px;padding:24px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
+    <h3 style="margin:0 0 16px;color:var(--navy)">Economics</h3>
+    ${renderEconomicsTilesGrid(s, tiles)}
+    ${caveat}
+    ${banner}
+    ${!hasQuarterly ? '' : `<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px;margin-top:16px">
+      ${chartCards}
+    </div>`}
+  </div>`;
+}
+
 function renderEconomicsCard(project, metrics) {
   if (!project) return '';
   const hasSignal = (
@@ -434,6 +523,10 @@ function handleLogout() {
   state.user = null;
   state.categories = [];
   state.practices = [];
+  _dashboardCache = null;
+  _projectsCache = null;
+  _economicsCache = null;
+  _takeawaysCache = {};
   sessionStorage.removeItem('xcsg_token');
   showScreen('login');
 }
@@ -557,6 +650,7 @@ function toggleCheckpointCard(cpId) {
 let _dashboardCache = null;
 let _projectsCache = null;
 let _takeawaysCache = {};
+let _economicsCache = null;
 
 function _avg(arr) {
   const vals = arr.filter(v => v != null);
@@ -601,6 +695,11 @@ function _buildDashboardQS() {
   return '?' + ids.map(id => `pioneer_id=${encodeURIComponent(id)}`).join('&');
 }
 
+async function loadEconomicsData() {
+  const qs = _buildDashboardQS();
+  return await apiCall('GET', `/dashboard/economics${qs}`);
+}
+
 async function renderPortfolio() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading portfolio\u2026</div>';
@@ -613,16 +712,18 @@ async function renderPortfolio() {
 
   try {
     const qs = _buildDashboardQS();
-    const [dashboard, allProjects, takeaways] = await Promise.all([
+    const [dashboard, allProjects, takeaways, economics] = await Promise.all([
       apiCall('GET', `/dashboard/metrics${qs}`),
       apiCall('GET', '/projects'),
       apiCall('GET', `/dashboard/takeaways${qs}`).catch(() => ({})),
+      loadEconomicsData().catch(err => { console.warn('economics load failed', err); return null; }),
     ]);
     if (myRoute !== _routeCounter) return; // stale — user navigated away
 
     _dashboardCache = dashboard;
     _projectsCache = allProjects;
     _takeawaysCache = takeaways || {};
+    _economicsCache = economics;
 
     if (!allProjects.length) {
       mc.innerHTML = `<div class="empty-state"><h2>Welcome to the xCSG Value Tracker</h2><p>Start by creating your first project to begin measuring xCSG performance.</p>${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a>' : ''}</div>`;
@@ -853,8 +954,11 @@ function _selectTab(id, mountEl) {
   _activeTab = id;
   mountEl.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === id));
   mountEl.querySelectorAll('.tab-panel').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
-  // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes
+  // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes.
+  // disposeAllCharts() inside renderDashboardCharts also wipes our economics charts,
+  // so re-init them when returning to Overview.
   renderDashboardCharts(_dashboardCache, applyFilters(_projectsCache));
+  if (id === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
 }
 
 function _renderDashboardView(allProjects, dashboard) {
@@ -947,7 +1051,20 @@ function _renderDashboardView(allProjects, dashboard) {
   mc.innerHTML = html;
   renderFilterBar(allProjects);
   renderTabShell(document.getElementById('tabContainer'));
-  requestAnimationFrame(() => renderDashboardCharts(localMetrics, filtered));
+
+  // Inject the Economics summary card at the bottom of the Overview tab panel.
+  // The spec calls this the "Summary tab" — internally it's the 'overview' tab.
+  if (_economicsCache) {
+    const overviewPanel = document.querySelector('#tabContainer .tab-panel[data-panel="overview"]');
+    if (overviewPanel) {
+      overviewPanel.insertAdjacentHTML('beforeend', renderEconomicsSummaryCard(_economicsCache));
+    }
+  }
+
+  requestAnimationFrame(() => {
+    renderDashboardCharts(localMetrics, filtered);
+    if (_activeTab === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
+  });
 }
 
 function _reapplyFilters() {
@@ -958,6 +1075,9 @@ function _reapplyFilters() {
   if (filterState.pioneers.size) {
     renderPortfolio();
   } else {
+    // Non-pioneer filters (practice/category/date) only narrow the client-side
+    // visualizations today. /api/dashboard/economics doesn't yet accept those
+    // filters, so the cached _economicsCache is still correct — no re-fetch needed.
     _renderDashboardView(_projectsCache, _dashboardCache);
   }
 }
@@ -2307,6 +2427,72 @@ function renderDashboardCharts(dashboard, filtered) {
     }
     try { fn(cfg, filtered || [], localMetrics, dashboard); }
     catch (err) { console.error('Chart render error for', cfg.id, err); }
+  }
+}
+
+function _initEconomicsCharts(data) {
+  if (typeof echarts === 'undefined') return;
+  if (!data || !data.trends || !Array.isArray(data.trends.quarterly)) return;
+  const quarterly = data.trends.quarterly;
+  const baseCurrency = (data.summary && data.summary.base_currency) || 'USD';
+
+  // Skip if there's nothing to plot — leaves the empty card body without
+  // killing the page (e.g. when projects exist but have no date_delivered).
+  if (quarterly.length === 0) return;
+
+  const quarters = quarterly.map(q => q.quarter);
+  const fmtMoney = (v) => fmtCurrency(v, baseCurrency);
+
+  // ── Chart 1: Quarterly revenue + cost saved (grouped bar) ──
+  const revBar = ecInit('economics_quarterly_revenue');
+  if (revBar) {
+    revBar.setOption({
+      tooltip: {
+        ...tip(),
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params) => {
+          const lines = params.map(p => `${p.marker}${p.seriesName}: <b>${fmtMoney(p.value)}</b>`);
+          return `<div><b>${params[0].axisValueLabel}</b></div>${lines.join('<br/>')}`;
+        },
+      },
+      legend: { top: 0, textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+      grid: { left: 60, right: 16, top: 36, bottom: 32 },
+      xAxis: { type: 'category', data: quarters, axisLabel: axisLbl() },
+      yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+      series: [
+        { name: 'Revenue', type: 'bar', data: quarterly.map(q => q.revenue || 0), itemStyle: { color: '#6EC1E4' } },
+        { name: 'Cost saved', type: 'bar', data: quarterly.map(q => q.cost_saved || 0), itemStyle: { color: '#10B981' } },
+      ],
+    });
+  }
+
+  // ── Chart 2: Margin % over time (line) ──
+  const marginLine = ecInit('economics_margin_trend');
+  if (marginLine) {
+    marginLine.setOption({
+      tooltip: {
+        ...tip(),
+        trigger: 'axis',
+        formatter: (params) => {
+          const p = params[0];
+          return `<div><b>${p.axisValueLabel}</b></div>Margin: <b>${fmtPctMaybe(p.value)}</b>`;
+        },
+      },
+      grid: { left: 50, right: 16, top: 16, bottom: 32 },
+      xAxis: { type: 'category', data: quarters, axisLabel: axisLbl() },
+      yAxis: { type: 'value', min: 0, max: 1, axisLabel: { ...axisLbl(), formatter: (v) => `${Math.round(v * 100)}%` } },
+      series: [{
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 8,
+        data: quarterly.map(q => q.margin_pct),
+        itemStyle: { color: '#121F6B' },
+        lineStyle: { color: '#121F6B', width: 2 },
+        areaStyle: { color: 'rgba(18,31,107,0.1)' },
+      }],
+    });
   }
 }
 
