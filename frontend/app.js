@@ -153,6 +153,59 @@ function renderEconomicsTilesGrid(summary, schemaEconomicsTiles) {
   return `<div class="metrics-grid">${schemaEconomicsTiles.map(tileFor).join('')}</div>`;
 }
 
+function renderEconomicsSummaryCard(data) {
+  if (!data || !data.summary) return '';
+  const s = data.summary;
+  const tiles = (window.schema && window.schema.economics_tiles) || [];
+  const charts = ((window.schema && window.schema.economics_charts) || [])
+    .filter(c => c.surface === 'summary');
+
+  // Empty state.
+  if ((s.qualifying_project_count || 0) === 0) {
+    const denom = s.total_complete_count || 0;
+    const msg = denom === 0
+      ? 'No completed projects yet.'
+      : `0 of ${denom} completed projects have full economics data (revenue + legacy team mix).`;
+    return `<div class="card economics-card" style="margin-top:24px;padding:24px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
+      <h3 style="margin:0 0 8px;color:var(--navy)">Economics</h3>
+      <p style="margin:0;color:var(--gray-500)">${esc(msg)} <a href="#projects" style="color:var(--brand-blue,#6EC1E4)">Edit projects →</a></p>
+    </div>`;
+  }
+
+  // FX-missing banner.
+  const missing = s.currencies_missing_fx || [];
+  const banner = missing.length === 0 ? '' : `
+    <div style="margin:12px 0;padding:8px 12px;background:var(--amber-50,#fffbeb);border-left:3px solid var(--amber-400,#fbbf24);color:var(--gray-700);font-size:12px">
+      Excluded from total: ${missing.map(esc).join(', ')} —
+      <a href="#settings" style="color:var(--brand-blue,#6EC1E4)">set rates in Settings</a>.
+    </div>`;
+
+  // Caveat line under tiles.
+  const caveat = `<div style="margin-top:8px;color:var(--gray-500);font-size:12px">
+    Across ${s.qualifying_project_count} of ${s.total_complete_count} completed projects with full economics data.
+    Converted to ${esc(s.base_currency)} using rates from Settings.
+  </div>`;
+
+  // Chart containers (heights from schema).
+  const chartCards = charts.map(c => `
+    <div class="chart-card" data-chart-id="${c.id}" data-testid="${c.id}">
+      <div class="chart-card-title">${esc(c.title)}</div>
+      <div class="chart-body" style="height:${c.height}px">
+        <div id="${c.id}" style="width:100%;height:100%"></div>
+      </div>
+    </div>`).join('');
+
+  return `<div class="card economics-card" data-testid="economics-summary-card" style="margin-top:24px;padding:24px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50)">
+    <h3 style="margin:0 0 16px;color:var(--navy)">Economics</h3>
+    ${renderEconomicsTilesGrid(s, tiles)}
+    ${caveat}
+    ${banner}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px;margin-top:16px">
+      ${chartCards}
+    </div>
+  </div>`;
+}
+
 function renderEconomicsCard(project, metrics) {
   if (!project) return '';
   const hasSignal = (
