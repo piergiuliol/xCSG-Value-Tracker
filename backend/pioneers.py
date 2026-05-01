@@ -19,24 +19,34 @@ class PioneerInUseError(Exception):
         )
 
 
-def create_pioneer(name: str, email: Optional[str], notes: Optional[str],
+def _display_name(first_name: Optional[str], last_name: Optional[str]) -> str:
+    """Build the canonical display name from first + last. Always trimmed."""
+    fn = (first_name or "").strip()
+    ln = (last_name or "").strip()
+    return (fn + " " + ln).strip()
+
+
+def create_pioneer(first_name: str, last_name: str, email: Optional[str], notes: Optional[str],
                    created_by: Optional[int]) -> int:
     """Insert a new pioneer row; return the new id. Email uniqueness enforced
     by the partial index — caller should call find_pioneer_by_email first
     when find-or-create semantics are desired."""
     from backend.database import _db
+    fn = (first_name or "").strip()
+    ln = (last_name or "").strip()
     with _db() as conn:
         cur = conn.execute(
-            """INSERT INTO pioneers (name, email, notes, created_by)
-               VALUES (?, ?, ?, ?)""",
-            (name.strip(), email.strip() if email else None, notes, created_by),
+            """INSERT INTO pioneers (first_name, last_name, email, notes, created_by)
+               VALUES (?, ?, ?, ?, ?)""",
+            (fn, ln, email.strip() if email else None, notes, created_by),
         )
         conn.commit()
         return cur.lastrowid
 
 
 def find_pioneer_by_email(email: Optional[str]) -> Optional[dict]:
-    """Case-insensitive lookup. Returns the pioneer row as a dict, or None."""
+    """Case-insensitive lookup. Returns the pioneer row as a dict (with
+    `display_name` injected), or None."""
     if not email or not email.strip():
         return None
     from backend.database import _db
@@ -46,16 +56,23 @@ def find_pioneer_by_email(email: Optional[str]) -> Optional[dict]:
                 WHERE lower(trim(email)) = lower(trim(?))""",
             (email,),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        d["display_name"] = _display_name(d.get("first_name"), d.get("last_name"))
+        return d
 
 
-def update_pioneer_record(pioneer_id: int, name: Optional[str] = None,
+def update_pioneer_record(pioneer_id: int, first_name: Optional[str] = None,
+                          last_name: Optional[str] = None,
                           email: Optional[str] = None,
                           notes: Optional[str] = None) -> None:
     """Update only the provided fields. None means 'leave unchanged'."""
     fields = {}
-    if name is not None:
-        fields["name"] = name.strip()
+    if first_name is not None:
+        fields["first_name"] = first_name.strip()
+    if last_name is not None:
+        fields["last_name"] = last_name.strip()
     if email is not None:
         fields["email"] = email.strip() if email else None
     if notes is not None:
@@ -125,9 +142,11 @@ def list_pioneers_with_metrics() -> list[dict]:
     overdue_days = DASHBOARD_CONFIG["thresholds"]["pioneer_overdue_days"]
 
     with _db() as conn:
-        # All pioneers.
+        # All pioneers — sort by last_name then first_name (consulting convention).
         pioneers = conn.execute(
-            "SELECT id, name, email, notes FROM pioneers ORDER BY name COLLATE NOCASE"
+            """SELECT id, first_name, last_name, email, notes
+                 FROM pioneers
+             ORDER BY last_name COLLATE NOCASE, first_name COLLATE NOCASE"""
         ).fetchall()
         if not pioneers:
             return []
@@ -228,7 +247,9 @@ def list_pioneers_with_metrics() -> list[dict]:
 
         result.append({
             "id": pid,
-            "name": p["name"],
+            "first_name": p["first_name"],
+            "last_name": p["last_name"],
+            "display_name": _display_name(p["first_name"], p["last_name"]),
             "email": p["email"],
             "notes": p["notes"],
             "project_count": len({r["project_id"] for r in recs}),
@@ -260,7 +281,8 @@ def filter_pioneers_for_export(
     if we ever add it. Multi-valued filters use OR semantics (a pioneer
     matches if any of its practices/roles/statuses match any selected value).
 
-    `search` is a single string matched (case-insensitive) against name and email.
+    `search` is a single string matched (case-insensitive) against first_name,
+    last_name, the combined display name, and email.
     """
     rows = list_pioneers_with_metrics()
 
@@ -284,11 +306,14 @@ def filter_pioneers_for_export(
 
     if search:
         s = search.lower().strip()
-        rows = [
-            r for r in rows
-            if (r.get("name") or "").lower().find(s) >= 0
-            or (r.get("email") or "").lower().find(s) >= 0
-        ]
+        def _matches(r: dict) -> bool:
+            return (
+                (r.get("first_name") or "").lower().find(s) >= 0
+                or (r.get("last_name") or "").lower().find(s) >= 0
+                or (r.get("display_name") or "").lower().find(s) >= 0
+                or (r.get("email") or "").lower().find(s) >= 0
+            )
+        rows = [r for r in rows if _matches(r)]
 
     return rows
 
@@ -302,7 +327,7 @@ def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
     # skip the full aggregation.
     with _db() as conn:
         pioneer_row = conn.execute(
-            "SELECT id, name, email, notes FROM pioneers WHERE id = ?",
+            "SELECT id, first_name, last_name, email, notes FROM pioneers WHERE id = ?",
             (pioneer_id,),
         ).fetchone()
         if not pioneer_row:
@@ -315,7 +340,9 @@ def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
     if pp_count == 0:
         return {
             "id": pioneer_row["id"],
-            "name": pioneer_row["name"],
+            "first_name": pioneer_row["first_name"],
+            "last_name": pioneer_row["last_name"],
+            "display_name": _display_name(pioneer_row["first_name"], pioneer_row["last_name"]),
             "email": pioneer_row["email"],
             "notes": pioneer_row["notes"],
             "project_count": 0,

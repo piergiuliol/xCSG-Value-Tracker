@@ -229,10 +229,15 @@ LEGACY_TEAM_FIELDS = {
 # ── Pioneers (Phase 3a) ──────────────────────────────────────────────────────
 
 PIONEER_FIELDS = {
-    "name":  {"label": "Name", "type": "text", "max_length": 120, "required": True},
-    "email": {"label": "Email", "type": "email", "max_length": 200},
-    "notes": {"label": "Notes", "type": "textarea", "max_length": 2000},
+    "first_name": {"label": "First name", "type": "text", "max_length": 80, "required": True},
+    "last_name":  {"label": "Last name",  "type": "text", "max_length": 80, "required": True},
+    "email":      {"label": "Email",      "type": "email", "max_length": 200},
+    "notes":      {"label": "Notes",      "type": "textarea", "max_length": 2000},
 }
+
+# Display name is derived: f"{first_name} {last_name}".strip(). Documented here
+# so other code/templates can reference the same convention.
+PIONEER_DISPLAY_NAME_KEY = "display_name"
 
 PIONEER_STATUS_OPTIONS = [
     {"value": "never",            "label": "Not assigned"},

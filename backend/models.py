@@ -44,9 +44,11 @@ class RegisterRequest(BaseModel):
 
 class ProjectPioneerEntry(BaseModel):
     """A pioneer entry inside ProjectCreate.pioneers — either references an
-    existing pioneer by id, OR provides name+email for inline create."""
+    existing pioneer by id, OR provides first_name+last_name (+optional email)
+    for inline create."""
     pioneer_id: Optional[int] = None
-    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
     day_rate: Optional[float] = None
@@ -61,14 +63,20 @@ class ProjectPioneerEntry(BaseModel):
 
     @model_validator(mode="after")
     def _id_or_name_required(self) -> "ProjectPioneerEntry":
-        if self.pioneer_id is None and (not self.name or not self.name.strip()):
-            raise ValueError("pioneer entry must have either pioneer_id or a non-empty name")
+        if self.pioneer_id is None:
+            fn = (self.first_name or "").strip()
+            ln = (self.last_name or "").strip()
+            if not fn and not ln:
+                raise ValueError(
+                    "pioneer entry must have either pioneer_id or a non-empty first_name/last_name"
+                )
         return self
 
 
 class ProjectPioneerUpdate(BaseModel):
     """PUT /api/projects/{id}/pioneers/{id} — per-project pioneer update."""
-    pioneer_name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     pioneer_email: Optional[EmailStr] = None
     total_rounds: Optional[int] = None
     day_rate: Optional[float] = None
@@ -531,19 +539,28 @@ class LegacyTeamRoleEntry(BaseModel):
 
 class PioneerCreate(BaseModel):
     """Top-level POST /api/pioneers — create a standalone pioneer record."""
-    name: str
+    first_name: str
+    last_name: str
     email: Optional[EmailStr] = None
     notes: Optional[str] = None
 
-    @field_validator("name")
+    @field_validator("first_name", "last_name")
     @classmethod
-    def _name_non_empty(cls, v: str) -> str:
+    def _name_part_max_length(cls, v: str) -> str:
         s = v.strip() if isinstance(v, str) else ""
-        if not s:
-            raise ValueError("name must not be empty")
-        if len(s) > 120:
-            raise ValueError("name must be at most 120 characters")
+        # Allow last_name to be empty (single-word names like "Madonna").
+        # The model_validator below enforces "at least one part non-empty".
+        if len(s) > 80:
+            raise ValueError("name parts must be at most 80 characters")
         return s
+
+    @model_validator(mode="after")
+    def _at_least_one_name_part(self) -> "PioneerCreate":
+        fn = (self.first_name or "").strip()
+        ln = (self.last_name or "").strip()
+        if not fn and not ln:
+            raise ValueError("first_name or last_name must be non-empty")
+        return self
 
     @field_validator("notes")
     @classmethod
@@ -552,23 +569,26 @@ class PioneerCreate(BaseModel):
             raise ValueError("notes must be at most 2000 characters")
         return v
 
+    @property
+    def display_name(self) -> str:
+        return ((self.first_name or "").strip() + " " + (self.last_name or "").strip()).strip()
+
 
 class PioneerUpdate(BaseModel):
     """PUT /api/pioneers/{id} — admin edits to identity / notes."""
-    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[EmailStr] = None
     notes: Optional[str] = None
 
-    @field_validator("name")
+    @field_validator("first_name", "last_name")
     @classmethod
-    def _name_non_empty(cls, v):
+    def _name_part_max_length(cls, v):
         if v is None:
             return v
         s = v.strip() if isinstance(v, str) else ""
-        if not s:
-            raise ValueError("name must not be empty")
-        if len(s) > 120:
-            raise ValueError("name must be at most 120 characters")
+        if len(s) > 80:
+            raise ValueError("name parts must be at most 80 characters")
         return s
 
     @field_validator("notes")
@@ -582,7 +602,9 @@ class PioneerUpdate(BaseModel):
 class PioneerSummary(BaseModel):
     """Aggregated shape returned by GET /api/pioneers and /api/pioneers/{id}."""
     id: int
-    name: str
+    first_name: str
+    last_name: str
+    display_name: str = ""
     email: Optional[str] = None
     notes: Optional[str] = None
     project_count: int = 0
@@ -599,3 +621,13 @@ class PioneerSummary(BaseModel):
     practices: List[dict] = []
     roles: List[dict] = []
     portfolio: Optional[List[dict]] = None  # only populated by GET /api/pioneers/{id}
+
+    @model_validator(mode="after")
+    def _fill_display_name(self) -> "PioneerSummary":
+        if not self.display_name:
+            object.__setattr__(
+                self,
+                "display_name",
+                ((self.first_name or "").strip() + " " + (self.last_name or "").strip()).strip(),
+            )
+        return self

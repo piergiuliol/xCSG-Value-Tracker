@@ -224,6 +224,7 @@ def init_db() -> None:
     migrate_v17()
     migrate_v18()
     migrate_v19()
+    migrate_v20()
 
     seed_data()
 
@@ -581,6 +582,93 @@ def migrate_v19() -> None:
         if "pioneer_email" in proj_cols:
             conn.execute("ALTER TABLE projects DROP COLUMN pioneer_email")
 
+        conn.commit()
+
+
+def migrate_v20() -> None:
+    """v2.0: Phase 3c — split pioneers.name into first_name + last_name.
+
+    Destructive but backfills first:
+    1. Adds nullable first_name / last_name columns.
+    2. Backfills via SQLite instr/substr to split on the first whitespace
+       (last_name = '' for single-word names like "Madonna").
+    3. Table-rebuilds pioneers to drop `name` and mark first_name + last_name
+       NOT NULL. Preserves the case-insensitive partial unique email index.
+
+    Idempotent via PRAGMA — once `name` is gone the migration becomes a no-op.
+    """
+    with _db() as conn:
+        cols = {row[1] for row in conn.execute(
+            "PRAGMA table_info(pioneers)"
+        ).fetchall()}
+
+        # If `name` is already gone, the migration has already run.
+        if "name" not in cols:
+            return
+
+        # 1. Add nullable first_name / last_name columns if missing.
+        if "first_name" not in cols:
+            conn.execute("ALTER TABLE pioneers ADD COLUMN first_name TEXT")
+        if "last_name" not in cols:
+            conn.execute("ALTER TABLE pioneers ADD COLUMN last_name TEXT")
+
+        # 2. Backfill: first_name = substring up to first whitespace,
+        #    last_name = remainder (or '' when no whitespace).
+        #    SQLite expression: when instr(name, ' ') > 0:
+        #      first = substr(name, 1, instr(name, ' ') - 1)
+        #      last  = substr(name, instr(name, ' ') + 1)
+        #    else:
+        #      first = name
+        #      last  = ''
+        #    Use TRIM on name first to collapse leading whitespace.
+        conn.execute(
+            """UPDATE pioneers
+                  SET first_name = CASE
+                        WHEN instr(TRIM(name), ' ') > 0
+                          THEN substr(TRIM(name), 1, instr(TRIM(name), ' ') - 1)
+                        ELSE TRIM(name)
+                      END,
+                      last_name = CASE
+                        WHEN instr(TRIM(name), ' ') > 0
+                          THEN TRIM(substr(TRIM(name), instr(TRIM(name), ' ') + 1))
+                        ELSE ''
+                      END
+                WHERE first_name IS NULL OR last_name IS NULL"""
+        )
+        # Defensive: NULL becomes empty for first_name (impossible if name was NOT NULL).
+        conn.execute("UPDATE pioneers SET first_name = '' WHERE first_name IS NULL")
+        conn.execute("UPDATE pioneers SET last_name = '' WHERE last_name IS NULL")
+        conn.commit()
+
+        # 3. Table-rebuild to drop `name` and mark first_name / last_name NOT NULL.
+        #    SQLite cannot ALTER COLUMN, so we copy into a new table.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            """CREATE TABLE pioneers_new (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   first_name TEXT NOT NULL,
+                   last_name TEXT NOT NULL,
+                   email TEXT,
+                   notes TEXT,
+                   created_by INTEGER,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+               )"""
+        )
+        conn.execute(
+            """INSERT INTO pioneers_new
+                   (id, first_name, last_name, email, notes, created_by, created_at)
+                   SELECT id, first_name, last_name, email, notes, created_by, created_at
+                     FROM pioneers"""
+        )
+        conn.execute("DROP TABLE pioneers")
+        conn.execute("ALTER TABLE pioneers_new RENAME TO pioneers")
+        # Recreate the case-insensitive partial unique email index.
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_pioneers_email_lower
+                   ON pioneers(lower(trim(email))) WHERE email IS NOT NULL"""
+        )
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.commit()
 
 
@@ -1320,9 +1408,6 @@ def create_project(data: dict) -> int:
 
     # Determine pioneers list
     pioneers_input = data.get("pioneers")
-    if not pioneers_input and data.get("pioneer_name"):
-        # v1.0 backward compatibility
-        pioneers_input = [{"name": data["pioneer_name"], "email": data.get("pioneer_email")}]
 
     # Generate a legacy token for the project row (backward compat)
     project_token = secrets.token_urlsafe(32)
@@ -1387,7 +1472,8 @@ def create_project(data: dict) -> int:
             add_pioneer(
                 project_id=project_id,
                 pioneer_id=p.get("pioneer_id"),
-                name=p.get("name"),
+                first_name=p.get("first_name"),
+                last_name=p.get("last_name"),
                 email=p.get("email"),
                 total_rounds=p.get("total_rounds"),
                 issued_by=data.get("created_by"),
@@ -1451,7 +1537,8 @@ def list_projects(
             query += " AND p.practice_id = ?"
             params.append(practice_id)
         if pioneer:
-            query += " AND pio.name = ?"
+            # Match against the computed display name (first + space + last, trimmed).
+            query += " AND TRIM(pio.first_name || ' ' || pio.last_name) = ?"
             params.append(pioneer)
         if client:
             query += " AND p.client_name = ?"
@@ -1545,7 +1632,11 @@ def list_pioneers(project_id: int) -> list:
     with _db() as conn:
         rows = conn.execute(
             """SELECT pp.id, pp.project_id, pp.pioneer_id,
-                      pio.name AS pioneer_name, pio.email AS pioneer_email,
+                      pio.first_name AS pioneer_first_name,
+                      pio.last_name  AS pioneer_last_name,
+                      TRIM(pio.first_name || ' ' || pio.last_name) AS pioneer_name,
+                      TRIM(pio.first_name || ' ' || pio.last_name) AS display_name,
+                      pio.email AS pioneer_email,
                       pp.total_rounds, pp.expert_token, pp.day_rate, pp.role_name,
                       COALESCE(stats.response_count, 0) AS response_count,
                       stats.last_round,
@@ -1585,7 +1676,8 @@ def list_pioneers(project_id: int) -> list:
 def add_pioneer(
     project_id: int,
     pioneer_id: Optional[int] = None,
-    name: Optional[str] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
     email: Optional[str] = None,
     total_rounds: Optional[int] = None,
     issued_by: Optional[int] = None,
@@ -1604,10 +1696,12 @@ def add_pioneer(
             if existing:
                 pioneer_id = existing["id"]
         if pioneer_id is None:
-            if not name or not name.strip():
-                raise ValueError("add_pioneer: pioneer_id or name+email required")
+            fn = (first_name or "").strip()
+            ln = (last_name or "").strip()
+            if not fn and not ln:
+                raise ValueError("add_pioneer: pioneer_id or first_name/last_name required")
             pioneer_id = create_pioneer(
-                name=name, email=email, notes=None, created_by=issued_by,
+                first_name=fn, last_name=ln, email=email, notes=None, created_by=issued_by,
             )
 
     token = secrets.token_urlsafe(32)
@@ -1682,7 +1776,10 @@ def get_round_token(token: str) -> Optional[dict]:
         row = conn.execute(
             """SELECT prt.id AS token_row_id, prt.pioneer_id, prt.round_number,
                       prt.token, prt.issued_at, prt.completed_at, prt.response_id,
-                      pio.name AS pioneer_name, pio.email AS pioneer_email,
+                      pio.first_name AS pioneer_first_name,
+                      pio.last_name  AS pioneer_last_name,
+                      TRIM(pio.first_name || ' ' || pio.last_name) AS pioneer_name,
+                      pio.email AS pioneer_email,
                       pp.total_rounds,
                       pp.project_id,
                       p.project_name, p.category_id, p.practice_id, p.client_name,
@@ -1813,14 +1910,17 @@ def get_other_pioneer_responses(project_id: int, exclude_pioneer_id: int) -> lis
     """
     with _db() as conn:
         rows = conn.execute(
-            """SELECT er.*, pio.name AS pioneer_name
+            """SELECT er.*,
+                      pio.first_name AS pioneer_first_name,
+                      pio.last_name  AS pioneer_last_name,
+                      TRIM(pio.first_name || ' ' || pio.last_name) AS pioneer_name
                FROM expert_responses er
                JOIN project_pioneers pp ON pp.id = er.pioneer_id
                JOIN pioneers pio ON pio.id = pp.pioneer_id
                WHERE er.project_id = ?
                  AND er.pioneer_id != ?
                  AND er.submitted_at IS NOT NULL
-               ORDER BY pio.name, er.round_number""",
+               ORDER BY pio.last_name COLLATE NOCASE, pio.first_name COLLATE NOCASE, er.round_number""",
             (project_id, exclude_pioneer_id),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -1947,7 +2047,10 @@ def get_all_project_responses(project_id: int) -> list:
     with _db() as conn:
         rows = conn.execute(
             """SELECT er.*,
-                      pio.name AS pioneer_name, pio.email AS pioneer_email
+                      pio.first_name AS pioneer_first_name,
+                      pio.last_name  AS pioneer_last_name,
+                      TRIM(pio.first_name || ' ' || pio.last_name) AS pioneer_name,
+                      pio.email AS pioneer_email
                FROM expert_responses er
                LEFT JOIN project_pioneers pp ON er.pioneer_id = pp.id
                LEFT JOIN pioneers pio ON pio.id = pp.pioneer_id
@@ -1987,7 +2090,8 @@ def list_all_notes(
           er.id, er.project_id, p.project_name,
           p.category_id, c.name AS category_name,
           pr.code AS practice_code, pr.name AS practice_name,
-          pp.id AS pioneer_id, pio.name AS pioneer_name,
+          pp.id AS pioneer_id,
+          TRIM(pio.first_name || ' ' || pio.last_name) AS pioneer_name,
           er.round_number, er.submitted_at, er.notes,
           p.date_delivered
         FROM expert_responses er
@@ -2000,7 +2104,7 @@ def list_all_notes(
           AND er.notes IS NOT NULL AND TRIM(er.notes) != ''
           AND (? IS NULL OR pr.code = ?)
           AND (? IS NULL OR p.category_id = ?)
-          AND (? IS NULL OR pio.name = ?)
+          AND (? IS NULL OR TRIM(pio.first_name || ' ' || pio.last_name) = ?)
           AND (? IS NULL OR p.date_delivered >= ?)
           AND (? IS NULL OR p.date_delivered <= ?)
           AND (? IS NULL OR LOWER(er.notes) LIKE LOWER(?))

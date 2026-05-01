@@ -478,7 +478,8 @@ async def create_project(
     data["pioneers"] = [
         {
             "pioneer_id": p.pioneer_id,
-            "name": p.name,
+            "first_name": p.first_name,
+            "last_name": p.last_name,
             "email": p.email,
             "total_rounds": p.total_rounds,
             "day_rate": p.day_rate,
@@ -616,7 +617,8 @@ async def add_project_pioneer(
     pioneer_id = db.add_pioneer(
         project_id=project_id,
         pioneer_id=body.pioneer_id,
-        name=body.name,
+        first_name=body.first_name,
+        last_name=body.last_name,
         email=body.email,
         total_rounds=body.total_rounds,
         issued_by=current_user.get("sub"),
@@ -625,11 +627,15 @@ async def add_project_pioneer(
     )
     pioneers = db.list_pioneers(project_id)
     new_pioneer = next((p for p in pioneers if p["id"] == pioneer_id), None)
+    label = (
+        ((body.first_name or "").strip() + " " + (body.last_name or "").strip()).strip()
+        or (new_pioneer.get("display_name") if new_pioneer else "")
+    )
     db.log_activity(
         current_user["sub"],
         "pioneer_added",
         project_id=project_id,
-        details=f"Added pioneer '{body.name}' to project #{project_id}",
+        details=f"Added pioneer '{label}' to project #{project_id}",
     )
     return new_pioneer
 
@@ -732,7 +738,10 @@ async def get_pioneer_round(
 
     with db._db() as conn:
         pp = conn.execute(
-            """SELECT pp.project_id, pio.name AS pioneer_name
+            """SELECT pp.project_id,
+                      pio.first_name AS pioneer_first_name,
+                      pio.last_name  AS pioneer_last_name,
+                      TRIM(pio.first_name || ' ' || pio.last_name) AS pioneer_name
                FROM project_pioneers pp
                JOIN pioneers pio ON pio.id = pp.pioneer_id
                WHERE pp.id = ?""",
@@ -1050,7 +1059,14 @@ def _build_averaged_complete_projects() -> list:
             avg["category_name"] = p["category_name"]
             avg["practice_code"] = p.get("practice_code")
             avg["practice_name"] = p.get("practice_name")
-            avg["pioneer_name"] = p.get("pioneer_name", "")
+            # Pioneer name(s) for charts/exports — fetch from list_pioneers and
+            # join with comma. The projects table no longer carries a
+            # pioneer_name column (dropped in v1.9), so we resolve via JOIN.
+            project_pioneers = db.list_pioneers(p["id"])
+            avg["pioneer_name"] = ", ".join(
+                pp.get("display_name") or pp.get("pioneer_name", "")
+                for pp in project_pioneers
+            )
             avg["date_started"] = p.get("date_started")
             avg["date_delivered"] = p.get("date_delivered")
             result.append(avg)
@@ -1185,10 +1201,10 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
         responses = responses_by_project.get(p["id"], [])
         # Get pioneer names for this project
         project_pioneers = db.list_pioneers(p["id"])
-        pioneer_lookup = {pp["id"]: pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers}
+        pioneer_lookup = {pp["id"]: pp.get("display_name") or pp.get("pioneer_name", "") for pp in project_pioneers}
         if not responses:
             # No responses yet — output one row with project info only
-            pioneer_names_str = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in project_pioneers) if project_pioneers else p.get("pioneer_name", "")
+            pioneer_names_str = ", ".join(pp.get("display_name") or pp.get("pioneer_name", "") for pp in project_pioneers) if project_pioneers else ""
             ws1.append([
                 p["id"], p["project_name"], p.get("category_name", ""),
                 pioneer_names_str, p.get("client_name", ""),
@@ -1204,7 +1220,7 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
             ])
         else:
             for er in responses:
-                pioneer_name = pioneer_lookup.get(er.get("pioneer_id"), p.get("pioneer_name", ""))
+                pioneer_name = pioneer_lookup.get(er.get("pioneer_id"), "")
                 ws1.append([
                     p["id"], p["project_name"], p.get("category_name", ""),
                     pioneer_name, p.get("client_name", ""),
@@ -1263,7 +1279,7 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
             m = mtx.compute_averaged_project_metrics(export_dict, responses)
             # Get pioneer names for this project
             comp_pioneers = db.list_pioneers(p["id"])
-            comp_pioneer_names = ", ".join(pp.get("name", pp.get("pioneer_name", "")) for pp in comp_pioneers) if comp_pioneers else p.get("pioneer_name", "")
+            comp_pioneer_names = ", ".join(pp.get("display_name") or pp.get("pioneer_name", "") for pp in comp_pioneers) if comp_pioneers else ""
             ws2.append([
                 m.get("id", p["id"]), m.get("project_name", p["project_name"]),
                 m.get("category_name", p.get("category_name", "")),
@@ -1400,7 +1416,8 @@ async def download_export_file(
 
 PIONEERS_CSV_FIELDS = [
     "id",
-    "name",
+    "first_name",
+    "last_name",
     "email",
     "notes",
     "project_count",
@@ -1480,7 +1497,7 @@ def export_pioneer_xlsx(
     summary = wb.active
     summary.title = "summary"
     summary_cols = [
-        "id", "name", "email", "notes", "status",
+        "id", "first_name", "last_name", "email", "notes", "status",
         "project_count", "rounds_completed", "rounds_expected", "completion_rate",
         "last_activity_at",
         "avg_quality_score", "avg_value_gain",
@@ -1495,7 +1512,8 @@ def export_pioneer_xlsx(
         f"{x['role_name']}×{x['count']}" for x in pioneer.get("roles", [])
     )
     summary.append([
-        pioneer["id"], pioneer["name"], pioneer["email"], pioneer.get("notes"),
+        pioneer["id"], pioneer.get("first_name"), pioneer.get("last_name"),
+        pioneer["email"], pioneer.get("notes"),
         pioneer["status"],
         pioneer["project_count"], pioneer["rounds_completed"], pioneer["rounds_expected"],
         pioneer.get("completion_rate"), pioneer.get("last_activity_at"),
@@ -1545,8 +1563,15 @@ async def update_settings(
 # ── Pioneer Registry (Phase 3a) ───────────────────────────────────────────────
 
 @app.get("/api/pioneers")
-def list_pioneers_endpoint(user=Depends(auth.get_current_user)):
-    return db.list_pioneers_with_metrics()
+def list_pioneers_endpoint(
+    search: Optional[str] = Query(None),
+    user=Depends(auth.get_current_user),
+):
+    """Optional ?search filter matches first_name, last_name, the combined
+    'first last' display name, OR email (case-insensitive substring)."""
+    if not search:
+        return db.list_pioneers_with_metrics()
+    return pioneers_mod.filter_pioneers_for_export(search=search)
 
 
 @app.get("/api/pioneers/{pioneer_id}")
@@ -1572,7 +1597,8 @@ def create_pioneer_endpoint(
             return db.get_pioneer_with_metrics(existing["id"])
     user_id = user.get("sub")
     pid = db.create_pioneer(
-        name=payload.name,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
         email=payload.email,
         notes=payload.notes,
         created_by=user_id,
@@ -1590,7 +1616,11 @@ def update_pioneer_endpoint(
     if not pioneer:
         raise HTTPException(status_code=404, detail="Pioneer not found")
     db.update_pioneer_record(
-        pioneer_id, name=payload.name, email=payload.email, notes=payload.notes,
+        pioneer_id,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        email=payload.email,
+        notes=payload.notes,
     )
     return db.get_pioneer_with_metrics(pioneer_id)
 
