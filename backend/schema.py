@@ -246,6 +246,16 @@ PIONEER_STATUS_OPTIONS = [
     {"value": "completed",        "label": "Completed"},
 ]
 
+PIONEER_TITLES = [
+    "Partner",
+    "Principal",
+    "Senior Manager",
+    "Engagement Manager",
+    "Senior Consultant",
+    "Consultant",
+    "Analyst",
+]
+
 # ── Dashboard Economics (PR1) ──────────────────────────────────────────────
 
 ECONOMICS_TILES = [
@@ -410,6 +420,7 @@ def build_schema_response() -> dict:
         "legacy_team_fields": LEGACY_TEAM_FIELDS,
         "pioneer_fields": PIONEER_FIELDS,
         "pioneer_status_options": PIONEER_STATUS_OPTIONS,
+        "pioneer_titles": PIONEER_TITLES,
         "economics_tiles": ECONOMICS_TILES,
         "economics_charts": ECONOMICS_CHARTS,
     }

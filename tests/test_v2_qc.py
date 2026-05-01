@@ -3254,6 +3254,7 @@ def main():
     test_migrate_v23_adds_title_and_home_practice_columns()
     test_migrate_v23_auto_parses_seeded_notes()
     test_migrate_v23_leaves_real_notes_alone()
+    test_schema_exposes_pioneer_titles()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3612,6 +3613,18 @@ def test_migrate_v23_leaves_real_notes_alone():
         assert "Lead author" in (row["notes"] or "")
         conn.execute("DELETE FROM pioneers WHERE email='real.bio@alirahealth.com'")
         conn.commit()
+
+
+def test_schema_exposes_pioneer_titles():
+    """schema.py exposes PIONEER_TITLES, surfaced via /api/schema."""
+    r = requests.get(f"{BASE}/api/schema")
+    assert r.status_code == 200
+    s = r.json()
+    titles = s.get("pioneer_titles") or []
+    expected = {"Partner", "Principal", "Senior Manager", "Engagement Manager",
+                "Senior Consultant", "Consultant", "Analyst"}
+    assert expected.issubset(set(titles)), f"missing: {expected - set(titles)}"
+    assert isinstance(titles, list)
 
 
 def test_migrate_v19_email_unique_case_insensitive():
