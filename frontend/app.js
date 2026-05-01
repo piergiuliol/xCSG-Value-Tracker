@@ -120,6 +120,39 @@ function pctTone(v) {
   return 'chip-red';
 }
 
+function renderEconomicsTilesGrid(summary, schemaEconomicsTiles) {
+  // schemaEconomicsTiles is window.schema.economics_tiles (or the deep-tab equivalent
+  // in PR3 if we ever differentiate). Each tile entry: { key, label, format }.
+  const baseCurrency = summary.base_currency || 'USD';
+  const fc = (v) => fmtCurrency(v, baseCurrency);
+  const tileFor = (def) => {
+    let raw, formatted;
+    if (def.format === 'currency') {
+      raw = summary[def.key];
+      formatted = fc(raw);
+    } else if (def.format === 'percent') {
+      raw = summary[def.key];
+      formatted = fmtPctMaybe(raw);
+    } else if (def.format === 'fraction') {
+      // Special case: qualifying_project_count is "N of M" against total_complete_count.
+      const num = summary[def.key];
+      const den = summary.total_complete_count;
+      raw = num;
+      formatted = (num == null || den == null) ? '—' : `${num} / ${den}`;
+    } else {
+      raw = summary[def.key];
+      formatted = raw == null ? '—' : String(raw);
+    }
+    // Color tone: percent uses pct_tone, currency/ratio use metric_tone.
+    const toneKey = def.format === 'percent' ? 'pct_tone' : 'metric_tone';
+    return `<div class="metric-tile" title="${esc(def.label)}">
+      <div class="metric-tile-value" style="color:${metricTone(raw, toneKey)}">${formatted}</div>
+      <div class="metric-tile-label">${esc(def.label)}</div>
+    </div>`;
+  };
+  return `<div class="metrics-grid">${schemaEconomicsTiles.map(tileFor).join('')}</div>`;
+}
+
 function renderEconomicsCard(project, metrics) {
   if (!project) return '';
   const hasSignal = (
