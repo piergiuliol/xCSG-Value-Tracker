@@ -1851,6 +1851,83 @@ def test_create_project_persists_economics():
 
 
 
+def test_fx_rate_models():
+    """FxRate, FxRatesPayload, FxRatesResponse, EconomicsResponse validate correctly.
+    AppSettings/AppSettingsUpdate now include base_currency."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        FxRate, FxRatesPayload, FxRatesResponse,
+        AppSettings, AppSettingsUpdate, EconomicsResponse,
+    )
+
+    # FxRate accepts valid input.
+    fx = FxRate(currency_code="EUR", rate_to_base=1.0850)
+    assert fx.currency_code == "EUR"
+    assert fx.rate_to_base == 1.0850
+
+    # FxRate rejects invalid currency code.
+    with pytest.raises(ValidationError):
+        FxRate(currency_code="XYZ", rate_to_base=1.0)
+    # FxRate rejects negative rate.
+    with pytest.raises(ValidationError):
+        FxRate(currency_code="EUR", rate_to_base=-0.5)
+    # Rate of 0 is allowed (signals "unset").
+    FxRate(currency_code="EUR", rate_to_base=0.0)
+
+    # FxRatesPayload (PUT body) requires base_currency + rates list.
+    payload = FxRatesPayload(base_currency="USD", rates=[
+        FxRate(currency_code="EUR", rate_to_base=1.0850),
+        FxRate(currency_code="GBP", rate_to_base=1.2430),
+    ])
+    assert payload.base_currency == "USD"
+    assert len(payload.rates) == 2
+
+    # FxRatesPayload rejects invalid base currency.
+    with pytest.raises(ValidationError):
+        FxRatesPayload(base_currency="XYZ", rates=[])
+    # Duplicate currency codes rejected.
+    with pytest.raises(ValidationError):
+        FxRatesPayload(base_currency="USD", rates=[
+            FxRate(currency_code="EUR", rate_to_base=1.0),
+            FxRate(currency_code="EUR", rate_to_base=2.0),
+        ])
+
+    # FxRatesResponse (GET body) shape.
+    resp = FxRatesResponse(base_currency="USD", rates=[
+        {"currency_code": "EUR", "rate_to_base": 1.0850, "updated_at": "2026-05-01T12:00:00"},
+    ])
+    assert resp.base_currency == "USD"
+    assert resp.rates[0].currency_code == "EUR"
+
+    # AppSettings includes base_currency now.
+    s = AppSettings(default_currency="EUR", base_currency="USD")
+    assert s.base_currency == "USD"
+
+    # AppSettingsUpdate accepts both fields, both optional.
+    upd = AppSettingsUpdate(base_currency="GBP")
+    assert upd.base_currency == "GBP"
+    assert upd.default_currency is None
+
+    # AppSettingsUpdate rejects invalid currency codes.
+    with pytest.raises(ValidationError):
+        AppSettingsUpdate(base_currency="XYZ")
+
+    # EconomicsResponse skeleton check (the aggregator returns this shape).
+    er = EconomicsResponse(
+        summary={
+            "total_revenue": 0.0, "total_cost_saved": 0.0,
+            "avg_margin_pct": None, "avg_revenue_per_day_xcsg": None,
+            "cost_ratio": None, "qualifying_project_count": 0,
+            "total_complete_count": 0, "base_currency": "USD",
+            "currencies_missing_fx": [],
+        },
+        breakdowns={"by_practice": [], "by_pioneer": [], "by_currency": [], "by_pricing_model": []},
+        trends={"quarterly": []},
+    )
+    assert er.summary["base_currency"] == "USD"
+
+
 def test_app_settings_includes_base_currency():
     """get_app_settings returns base_currency; update_app_settings persists it."""
     from backend import database
@@ -2760,6 +2837,7 @@ def main():
     test_legacy_cost_from_team_mix()
     test_fx_rates_db_helpers()
     test_app_settings_includes_base_currency()
+    test_fx_rate_models()
     test_app_settings_endpoints()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
