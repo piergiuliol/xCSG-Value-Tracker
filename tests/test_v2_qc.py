@@ -2050,6 +2050,119 @@ def test_app_settings_endpoints():
         requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": initial})
 
 
+def test_compute_economics_summary():
+    """Pure aggregator: takes pre-computed per-project metrics dicts +
+    fx_rates dict + base_currency. Returns the 6 hero tile values."""
+    from backend.economics import compute_economics_summary
+
+    # Two USD projects, one EUR — base = USD.
+    # Each project shape mirrors what _build_averaged_complete_projects produces.
+    projects = [
+        # USD project: revenue 100k, xcsg_cost 30k, legacy_cost 200k → margin=70k, margin_pct=0.7
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0,
+            "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0,
+            "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "Senior", "count": 2, "day_rate": 1500}],
+        },
+        # EUR project: revenue 200k EUR (= 220k USD at rate 1.10), cost 60k EUR / 132k legacy
+        {
+            "id": 2, "status": "complete", "currency": "EUR",
+            "engagement_revenue": 200_000.0,
+            "xcsg_cost": 60_000.0, "legacy_cost": 132_000.0,
+            "xcsg_margin": 140_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 8000.0,
+            "xcsg_person_days": 25.0,
+            "legacy_team": [{"role_name": "Senior", "count": 1, "day_rate": 1200}],
+        },
+        # USD project missing legacy_team → does NOT qualify (sum excluded)
+        # but still counted in total_complete_count.
+        {
+            "id": 3, "status": "complete", "currency": "USD",
+            "engagement_revenue": 50_000.0,
+            "xcsg_cost": 10_000.0, "legacy_cost": None,
+            "xcsg_margin": None, "xcsg_margin_pct": None,
+            "revenue_per_day_xcsg": None,
+            "xcsg_person_days": 5.0,
+            "legacy_team": [],
+        },
+    ]
+    fx_rates = {"USD": 1.0, "EUR": 1.10}
+
+    out = compute_economics_summary(projects, fx_rates, base_currency="USD")
+
+    # 100k USD + 200k * 1.10 = 100k + 220k = 320k
+    assert out["total_revenue"] == 320_000.0, f"got {out['total_revenue']}"
+    # cost saved = (legacy - xcsg) per project, normalized:
+    #   project 1: (200k - 30k) USD = 170k
+    #   project 2: (132k - 60k) EUR * 1.10 = 79.2k USD
+    # total = 249.2k
+    assert abs(out["total_cost_saved"] - 249_200.0) < 0.01, f"got {out['total_cost_saved']}"
+    # avg margin pct across qualifying projects: (0.70 + 0.70) / 2 = 0.70
+    assert out["avg_margin_pct"] == 0.70, f"got {out['avg_margin_pct']}"
+    # avg revenue/day (normalized):
+    #   project 1: 5000 USD/d
+    #   project 2: 8000 EUR/d * 1.10 = 8800 USD/d
+    # avg = 6900
+    assert abs(out["avg_revenue_per_day_xcsg"] - 6900.0) < 0.01, f"got {out['avg_revenue_per_day_xcsg']}"
+    # cost ratio = total_xcsg_cost / total_legacy_cost (normalized)
+    #   total_xcsg = 30k + 60k*1.10 = 96k
+    #   total_legacy = 200k + 132k*1.10 = 345.2k
+    #   ratio = 96 / 345.2 ≈ 0.2782
+    assert abs(out["cost_ratio"] - (96_000.0 / 345_200.0)) < 0.001, f"got {out['cost_ratio']}"
+    assert out["qualifying_project_count"] == 2, f"got {out['qualifying_project_count']}"
+    assert out["total_complete_count"] == 3, f"got {out['total_complete_count']}"
+    assert out["base_currency"] == "USD"
+    assert out["currencies_missing_fx"] == []
+
+
+def test_compute_economics_summary_fx_missing():
+    """When a currency has no FX rate (or rate == 0), affected projects
+    are excluded from totals and the currency code is reported."""
+    from backend.economics import compute_economics_summary
+
+    projects = [
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0,
+            "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+        },
+        {
+            "id": 2, "status": "complete", "currency": "GBP",
+            "engagement_revenue": 80_000.0,
+            "xcsg_cost": 20_000.0, "legacy_cost": 150_000.0,
+            "xcsg_margin": 60_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 4000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+        },
+    ]
+    fx_rates = {"USD": 1.0, "GBP": 0.0}  # GBP rate not yet set
+    out = compute_economics_summary(projects, fx_rates, base_currency="USD")
+    # Only USD project contributes to totals.
+    assert out["total_revenue"] == 100_000.0
+    assert out["qualifying_project_count"] == 1
+    assert "GBP" in out["currencies_missing_fx"]
+
+
+def test_compute_economics_summary_empty():
+    """Zero qualifying projects returns zero totals + None for averages."""
+    from backend.economics import compute_economics_summary
+    out = compute_economics_summary([], {"USD": 1.0}, base_currency="USD")
+    assert out["total_revenue"] == 0.0
+    assert out["total_cost_saved"] == 0.0
+    assert out["avg_margin_pct"] is None
+    assert out["avg_revenue_per_day_xcsg"] is None
+    assert out["cost_ratio"] is None
+    assert out["qualifying_project_count"] == 0
+    assert out["total_complete_count"] == 0
+
+
 def test_practice_role_models():
     """PracticeRoleEntry and PracticeRolesUpdate validate correctly."""
     import pytest
@@ -2843,6 +2956,9 @@ def main():
     test_app_settings_includes_base_currency()
     test_fx_rate_models()
     test_app_settings_endpoints()
+    test_compute_economics_summary()
+    test_compute_economics_summary_fx_missing()
+    test_compute_economics_summary_empty()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
     test_practice_roles_404_for_unknown_practice()
