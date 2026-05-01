@@ -5653,7 +5653,66 @@ function renderProjectExpertResponsesCard(project, pioneers) {
     </div>
   `;
 }
-async function renderProjectCharts(project, metrics) { /* populated in Task 7 */ }
+async function renderProjectCharts(project, metrics) {
+  const cont = document.getElementById('projectCharts');
+  if (!cont) return;
+
+  // Decide which charts to show. Per-round timeline only makes sense with 2+ submitted rounds.
+  const totalRoundsSubmitted = (project.pioneers || []).reduce((sum, p) => {
+    return sum + ((p.rounds || []).filter(r => r.completed_at).length);
+  }, 0);
+  const showTimeline = totalRoundsSubmitted > 1;
+
+  // No metrics → no charts.
+  if (!metrics || metrics.productivity_ratio == null) {
+    cont.innerHTML = `<p style="color:var(--gray-500,#6b7280);font-size:13px">Charts will appear once an expert response is submitted.</p>`;
+    return;
+  }
+
+  // Build chart containers.
+  const timelineCard = !showTimeline ? '' : `
+    <div>
+      <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Per-Round Timeline</h3>
+      <div id="projectChartTimeline" data-testid="project-chart-timeline" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+    </div>`;
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Gains Radar</h3>
+        <div id="projectChartRadar" data-testid="project-chart-radar" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Disprove Matrix</h3>
+        <div id="projectChartDisprove" data-testid="project-chart-disprove" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      ${timelineCard}
+    </div>
+  `;
+
+  if (typeof echarts === 'undefined') {
+    cont.innerHTML += '<p style="color:var(--gray-500,#6b7280);font-size:13px">Charts library not loaded.</p>';
+    return;
+  }
+
+  // Need a single-element project list with `metrics` injected (the chart renderers
+  // expect each project entry to carry its own metrics dict, mirroring how
+  // _build_averaged_complete_projects shapes the dashboard list).
+  const projForCharts = Object.assign({}, project, { ...metrics });
+  const filtered = [projForCharts];
+  const localMetrics = _computeLocalMetrics(filtered);
+
+  function safeRender(rendererKey, divId) {
+    const fn = CHART_RENDERERS[rendererKey];
+    if (!fn) return;
+    const cfg = { id: divId };
+    try { fn(cfg, filtered, localMetrics, localMetrics); }
+    catch (err) { console.error('Project chart render error [' + rendererKey + ']:', err); }
+  }
+
+  safeRender('radar_gains',          'projectChartRadar');
+  safeRender('scatter_disprove',     'projectChartDisprove');
+  if (showTimeline) safeRender('timeline_per_project', 'projectChartTimeline');
+}
 
 // ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
 
