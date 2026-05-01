@@ -5568,7 +5568,46 @@ function renderProjectPioneersCard(pioneers) {
     </div>
   `;
 }
-function renderProjectLegacyTeamCard(legacyTeam, currency) { return ''; }
+function renderProjectLegacyTeamCard(legacyTeam, currency) {
+  if (!Array.isArray(legacyTeam) || legacyTeam.length === 0) {
+    return `
+      <div class="card" data-testid="project-legacy-team-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+        <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 8px">Legacy Team Mix</h2>
+        <p style="color:#9ca3af;font-size:13px;margin:0">No legacy team configured. Add one on the project edit form to enable cost comparison.</p>
+      </div>
+    `;
+  }
+  const fc = (v) => fmtCurrency(v, currency || 'USD');
+  let totalCount = 0;
+  let totalDailyCost = 0;
+  const rows = legacyTeam.map(r => {
+    const count = parseInt(r.count, 10) || 0;
+    const rate = parseFloat(r.day_rate) || 0;
+    const dailyCost = count * rate;
+    totalCount += count;
+    totalDailyCost += dailyCost;
+    return `<tr>
+      <td><strong>${esc(r.role_name || '—')}</strong></td>
+      <td>${count}</td>
+      <td>${fc(rate)}</td>
+      <td>${fc(dailyCost)}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="card" data-testid="project-legacy-team-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Legacy Team Mix</h2>
+      <table class="data-table" style="width:100%;font-size:13px">
+        <thead><tr><th>Role</th><th>Count</th><th>Day rate</th><th>Daily cost</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--gray-300,#d1d5db);font-weight:600">
+            <td>Total</td><td>${totalCount}</td><td>—</td><td>${fc(totalDailyCost)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
 function renderProjectExpertResponsesCard(project, pioneers) { return ''; }
 async function renderProjectCharts(project, metrics) { /* populated in Task 7 */ }
 
