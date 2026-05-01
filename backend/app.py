@@ -1264,6 +1264,12 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
         "xCSG Person-Days", "Legacy Person-Days", "Effort Ratio",
         "xCSG Revisions", "Legacy Revisions", "Quality Ratio", "Value Multiplier",
         "Machine-First Score", "Senior-Led Score", "Proprietary Knowledge Score",
+        # Economics columns (Project Economics + Phase 2c legacy-team mix). Every
+        # value here is in the project's NATIVE currency (see "Currency" column);
+        # the Economics sheets normalize to the base currency.
+        "Currency", "Pricing Model", "Engagement Revenue",
+        "xCSG Cost", "Legacy Cost", "xCSG Margin", "xCSG Margin %",
+        "Revenue / Day xCSG", "Revenue / Day Legacy", "Margin Gain (xCSG/Legacy)",
         "Created At",
     ]
     ws2.append(headers2)
@@ -1292,7 +1298,19 @@ def _build_export_workbook(all_projects: list, complete_projects: list):
                 m.get("legacy_revisions", p.get("legacy_revision_rounds", "")),
                 m.get("quality_ratio"), m.get("value_multiplier"),
                 m.get("machine_first_score", ""), m.get("senior_led_score", ""),
-                m.get("proprietary_knowledge_score", ""), m.get("created_at", p.get("created_at", "")),
+                m.get("proprietary_knowledge_score", ""),
+                # Economics — native currency
+                p.get("currency") or "",
+                p.get("xcsg_pricing_model") or "",
+                p.get("engagement_revenue"),
+                m.get("xcsg_cost"),
+                m.get("legacy_cost"),
+                m.get("xcsg_margin"),
+                m.get("xcsg_margin_pct"),
+                m.get("revenue_per_day_xcsg"),
+                m.get("revenue_per_day_legacy"),
+                m.get("margin_gain"),
+                m.get("created_at", p.get("created_at", "")),
             ])
 
     for ws in [ws1, ws2]:
@@ -1369,6 +1387,7 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
 
     from backend.excel_export import build_dashboard_sheets
     from backend.schema import DASHBOARD_CONFIG, METRICS
+    from backend import economics as econ
 
     all_p = db.list_projects()
     complete_raw = db.list_complete_projects()
@@ -1377,11 +1396,21 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
     complete_metrics = _build_averaged_complete_projects()
     wb = _build_export_workbook(all_p, complete_raw)
 
-    # Append the 18 dashboard-aggregate sheets that let a user rebuild every
-    # chart offline. These operate on the FULL portfolio — dashboard filters
-    # are intentionally ignored.
+    # Append the 18 dashboard-aggregate sheets + 7 economics sheets so a user
+    # can rebuild every chart offline AND see the full economic picture (PR1-3
+    # of Dashboard Economics). Operates on the FULL portfolio — dashboard
+    # filters are intentionally ignored.
     aggregates = mtx.compute_summary(complete_metrics, all_p)
     scaling_gates = mtx.compute_scaling_gates(complete_metrics)
+    settings = db.get_app_settings()
+    base_currency = settings.get("base_currency") or "USD"
+    fx_rates_rows = db.get_fx_rates()
+    fx_rates_dict = {r["currency_code"]: r["rate_to_base"] for r in fx_rates_rows}
+    economics_data = {
+        "summary":    econ.compute_economics_summary(complete_metrics, fx_rates_dict, base_currency),
+        "breakdowns": econ.compute_economics_breakdowns(complete_metrics, fx_rates_dict, base_currency),
+        "trends":     econ.compute_economics_trends(complete_metrics, fx_rates_dict, base_currency),
+    }
     build_dashboard_sheets(
         wb,
         complete=complete_metrics,
@@ -1390,6 +1419,9 @@ async def export_excel(current_user: dict = Depends(auth.get_current_user)):
         scaling_gates=scaling_gates,
         chart_configs=DASHBOARD_CONFIG["charts"],
         metrics_defs=METRICS,
+        economics=economics_data,
+        fx_rates=fx_rates_rows,
+        base_currency=base_currency,
     )
 
     tmp = tempfile.NamedTemporaryFile(

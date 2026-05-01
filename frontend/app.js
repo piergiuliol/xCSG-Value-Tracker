@@ -4940,7 +4940,10 @@ function _notesPageHTML(notes, cats, practices) {
     +     '<label class="notes-filter-date"><span>to</span><input type="date" id="notesTo" value="' + esc(s.to) + '"></label>'
     +     '<button class="btn btn-secondary" type="button" onclick="_clearNotesFilters()"' + (anyFilter ? '' : ' disabled') + '>' + (anyFilter ? 'Show all' : 'Show all') + '</button>'
     +     '<span class="notes-filter-count">' + esc(countLabel) + '</span>'
-    +     '<button class="btn btn-primary" type="button" onclick="_exportNotesExcel()" style="margin-left:auto">Export (xlsx)</button>'
+    +     '<button class="btn btn-primary" type="button" onclick="_exportNotesExcel()" style="margin-left:auto" title="Downloads a comprehensive workbook — Notes, Raw Data, Computed Metrics + 18 dashboard-aggregate sheets (incl. economics breakdowns, FX rates, quarterly trends).">Download full export (xlsx)</button>'
+    +   '</div>'
+    +   '<div class="notes-filter-explainer" style="margin-top:8px;font-size:12px;color:var(--gray-500);font-style:italic">'
+    +     'The xlsx download is a full portfolio workbook — not just notes. It bundles every dashboard metric (flywheel scores, economics, currency mix, quarterly trends, takeaways) so you can rebuild the full picture offline.'
     +   '</div>'
     + '</div>'
     + feed;

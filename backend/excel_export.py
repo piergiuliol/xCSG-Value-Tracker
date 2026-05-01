@@ -581,6 +581,137 @@ def build_takeaways_sheet(wb: Workbook, complete: list, aggregates: dict, scalin
             cell.alignment = wrap
 
 
+# ── Economics Sheets (Dashboard Economics PR1+PR2+PR3 surfaces, in xlsx form) ──
+
+def build_economics_summary_sheet(wb: Workbook, econ_summary: dict) -> None:
+    """Sheet: Economics Summary — the 6 hero tiles + base currency + caveats.
+
+    Mirrors the dashboard's Overview Economics card (PR2). All amounts are in
+    the configured `base_currency`.
+    """
+    ws = wb.create_sheet("Economics Summary")
+    ws.append(["metric", "value", "notes"])
+    _apply_header(ws)
+    s = econ_summary or {}
+    base = s.get("base_currency") or "USD"
+    rows = [
+        ("Base currency",                base,                                   "Currency all aggregates are normalized to."),
+        ("Total revenue",                _round2(s.get("total_revenue")),        f"Sum of engagement_revenue across qualifying projects, in {base}."),
+        ("Total cost saved vs legacy",   _round2(s.get("total_cost_saved")),     f"Sum of (legacy_cost − xcsg_cost) across qualifying projects, in {base}."),
+        ("Avg margin %",                 _round2((s.get("avg_margin_pct") or 0) * 100) if s.get("avg_margin_pct") is not None else None,
+                                         "Mean xcsg_margin_pct across qualifying projects (0-100)."),
+        ("Avg revenue / day xCSG",       _round2(s.get("avg_revenue_per_day_xcsg")),
+                                         f"Mean revenue_per_day_xcsg in {base} per qualifying project."),
+        ("Cost ratio (xCSG / legacy)",   _round2((s.get("cost_ratio") or 0) * 100) if s.get("cost_ratio") is not None else None,
+                                         "Total xcsg cost ÷ total legacy cost (0-100). Lower = more savings."),
+        ("Qualifying projects",          s.get("qualifying_project_count"),      f"of {s.get('total_complete_count') or 0} completed projects with full economics data (revenue + legacy team)."),
+        ("Currencies missing FX rate",   ", ".join(s.get("currencies_missing_fx") or []) or "—",
+                                         "Projects in these currencies were excluded from totals."),
+    ]
+    for r in rows:
+        ws.append(list(r))
+    _set_col_widths(ws, {"A": 32, "B": 18, "C": 80})
+
+
+def build_economics_by_practice_sheet(wb: Workbook, by_practice: list) -> None:
+    """Sheet: Economics by Practice — revenue, cost saved, avg margin %, n."""
+    ws = wb.create_sheet("Economics — By Practice")
+    ws.append(["practice_code", "revenue", "cost_saved", "avg_margin_pct", "n"])
+    _apply_header(ws)
+    for row in by_practice or []:
+        ws.append([
+            row.get("practice_code") or "—",
+            _round2(row.get("revenue")),
+            _round2(row.get("cost_saved")),
+            _round2((row.get("margin_pct") or 0) * 100) if row.get("margin_pct") is not None else None,
+            row.get("n", 0),
+        ])
+    _set_col_widths(ws, {"A": 16, "B": 16, "C": 16, "D": 18, "E": 6})
+
+
+def build_economics_by_pioneer_sheet(wb: Workbook, by_pioneer: list) -> None:
+    """Sheet: Economics by Pioneer — full-revenue attribution per pioneer."""
+    ws = wb.create_sheet("Economics — By Pioneer")
+    ws.append(["pioneer_id", "display_name", "revenue", "cost_saved", "n"])
+    _apply_header(ws)
+    for row in by_pioneer or []:
+        ws.append([
+            row.get("pioneer_id"),
+            row.get("display_name") or "—",
+            _round2(row.get("revenue")),
+            _round2(row.get("cost_saved")),
+            row.get("n", 0),
+        ])
+    _set_col_widths(ws, {"A": 12, "B": 32, "C": 16, "D": 16, "E": 6})
+
+
+def build_economics_by_currency_sheet(wb: Workbook, by_currency: list) -> None:
+    """Sheet: Economics by Currency — NATIVE amounts (not normalized)."""
+    ws = wb.create_sheet("Economics — By Currency")
+    ws.append(["currency_code", "native_revenue", "n_projects"])
+    _apply_header(ws)
+    for row in by_currency or []:
+        ws.append([
+            row.get("code") or "—",
+            _round2(row.get("native_revenue")),
+            row.get("n_projects", 0),
+        ])
+    _set_col_widths(ws, {"A": 14, "B": 18, "C": 12})
+
+
+def build_economics_by_pricing_model_sheet(wb: Workbook, by_pricing_model: list) -> None:
+    """Sheet: Economics by Pricing Model — revenue split by Fixed fee/T&M/etc."""
+    ws = wb.create_sheet("Economics — By Pricing Model")
+    ws.append(["pricing_model", "revenue", "n"])
+    _apply_header(ws)
+    for row in by_pricing_model or []:
+        ws.append([
+            row.get("model") or "—",
+            _round2(row.get("revenue")),
+            row.get("n", 0),
+        ])
+    _set_col_widths(ws, {"A": 22, "B": 16, "C": 6})
+
+
+def build_economics_quarterly_sheet(wb: Workbook, quarterly: list) -> None:
+    """Sheet: Economics — Quarterly trend (revenue, cost_saved, margin %, rev/day)."""
+    ws = wb.create_sheet("Economics — Quarterly")
+    ws.append([
+        "quarter", "revenue", "cost_saved", "margin_pct",
+        "revenue_per_day_xcsg", "revenue_per_day_legacy", "n",
+    ])
+    _apply_header(ws)
+    for row in quarterly or []:
+        ws.append([
+            row.get("quarter") or "—",
+            _round2(row.get("revenue")),
+            _round2(row.get("cost_saved")),
+            _round2((row.get("margin_pct") or 0) * 100) if row.get("margin_pct") is not None else None,
+            _round2(row.get("revenue_per_day_xcsg")),
+            _round2(row.get("revenue_per_day_legacy")),
+            row.get("n", 0),
+        ])
+    _set_col_widths(ws, {"A": 10, "B": 16, "C": 16, "D": 14, "E": 18, "F": 20, "G": 6})
+
+
+def build_fx_rates_sheet(wb: Workbook, fx_rates: list, base_currency: str) -> None:
+    """Sheet: FX Rates — the configured rates used for normalization (admin-edited
+    in Settings). Provides context for every value on the Economics sheets."""
+    ws = wb.create_sheet("FX Rates")
+    ws.append(["currency_code", "rate_to_base", "updated_at"])
+    _apply_header(ws)
+    ws.append([f"(base) {base_currency or 'USD'}", 1.0, ""])
+    for row in fx_rates or []:
+        if (row.get("currency_code") or "") == (base_currency or "USD"):
+            continue  # already added as base above
+        ws.append([
+            row.get("currency_code") or "—",
+            _round2(row.get("rate_to_base")),
+            (row.get("updated_at") or "")[:19],
+        ])
+    _set_col_widths(ws, {"A": 16, "B": 14, "C": 22})
+
+
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def build_dashboard_sheets(
@@ -592,8 +723,11 @@ def build_dashboard_sheets(
     scaling_gates: list,
     chart_configs: list,
     metrics_defs: dict,
+    economics: Optional[dict] = None,
+    fx_rates: Optional[list] = None,
+    base_currency: Optional[str] = None,
 ) -> None:
-    """Append all 18 dashboard-aggregate sheets to `wb` in spec order.
+    """Append all 18 dashboard-aggregate sheets + 7 economics sheets to `wb`.
 
     Safe with an empty portfolio — each sheet still writes its header row.
     """
@@ -615,3 +749,17 @@ def build_dashboard_sheets(
     build_top_movers_sheet(wb, complete)
     build_bottom_movers_sheet(wb, complete)
     build_takeaways_sheet(wb, complete, aggregates, scaling_gates, chart_configs)
+
+    # Economics block (Dashboard Economics PR1+PR2+PR3 in xlsx form). Skipped
+    # entirely if the caller didn't pass economics data — keeps backward
+    # compatibility for any caller that hasn't wired the new args yet.
+    if economics:
+        build_economics_summary_sheet(wb, economics.get("summary") or {})
+        breakdowns = economics.get("breakdowns") or {}
+        build_economics_by_practice_sheet(wb, breakdowns.get("by_practice") or [])
+        build_economics_by_pioneer_sheet(wb, breakdowns.get("by_pioneer") or [])
+        build_economics_by_currency_sheet(wb, breakdowns.get("by_currency") or [])
+        build_economics_by_pricing_model_sheet(wb, breakdowns.get("by_pricing_model") or [])
+        build_economics_quarterly_sheet(wb, (economics.get("trends") or {}).get("quarterly") or [])
+    if fx_rates is not None:
+        build_fx_rates_sheet(wb, fx_rates, base_currency or "USD")
