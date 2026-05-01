@@ -1308,6 +1308,35 @@ def test_economics_schema_constants():
         test(f"chart '{c['id']}' has surface", c.get("surface") in {"summary", "tab", "both"})
         test(f"chart '{c['id']}' has height", isinstance(c.get("height"), int) and c["height"] > 0)
 
+    # PR2-specific: 2 charts must be tagged surface='summary' (the rest are 'tab' for PR3).
+    summary_charts = [c for c in charts if c.get("surface") == "summary"]
+    test("exactly 2 summary-surface charts", len(summary_charts) == 2,
+         detail=f"got {len(summary_charts)}: {[c['id'] for c in summary_charts]}")
+    summary_ids = {c["id"] for c in summary_charts}
+    test("summary charts include economics_quarterly_revenue",
+         "economics_quarterly_revenue" in summary_ids)
+    test("summary charts include economics_margin_trend",
+         "economics_margin_trend" in summary_ids)
+
+    # PR2-specific: tile formats cover all 3 branches the renderer handles.
+    formats_used = {t["format"] for t in tiles}
+    test("tile formats include currency", "currency" in formats_used)
+    test("tile formats include percent", "percent" in formats_used)
+    test("tile formats include fraction", "fraction" in formats_used)
+
+
+def test_dashboard_economics_response_includes_total_complete_count():
+    """The PR2 frontend renders 'qualifying_project_count / total_complete_count'
+    in the Qualifying Projects tile. Both must be present in the summary."""
+    h = auth_h(admin_token())
+    r = requests.get(f"{BASE}/api/dashboard/economics", headers=h)
+    assert r.status_code == 200
+    s = r.json()["summary"]
+    assert "qualifying_project_count" in s, f"missing key in {sorted(s.keys())}"
+    assert "total_complete_count" in s, f"missing key in {sorted(s.keys())}"
+    assert isinstance(s["qualifying_project_count"], int)
+    assert isinstance(s["total_complete_count"], int)
+
 
 def test_migrate_v15_idempotent():
     """migrate_v15 adds new columns + app_settings table, runs idempotently."""
@@ -3079,6 +3108,7 @@ def main():
     test_seed_field_coverage()
     test_economics_schema()
     test_economics_schema_constants()
+    test_dashboard_economics_response_includes_total_complete_count()
     test_practice_roles_schema()
     test_legacy_team_schema()
     test_pioneer_schema()
