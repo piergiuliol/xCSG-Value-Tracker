@@ -1448,11 +1448,16 @@ function renderInlinePioneerCreate(rowEl) {
   if (!sel) return;
   const wrapper = document.createElement('span');
   wrapper.className = 'pioneer-inline-create';
-  wrapper.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
+  wrapper.style.cssText = 'display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap';
+  // Note: data-testid="inlinePioneerTitle" / "inlinePioneerHomePractice" rely on
+  // _pioneerTitleSelect / _pioneerHomePracticeSelect from the Add/Edit modal helpers.
+  // The id attribute is unique per inline create instance (only one open at a time).
   wrapper.innerHTML = `
     <input type="text" class="pioneer-inline-first-name" placeholder="First name" maxlength="80" style="min-width:110px">
     <input type="text" class="pioneer-inline-last-name" placeholder="Last name" maxlength="80" style="min-width:130px">
     <input type="email" class="pioneer-inline-email" placeholder="email@example.com" style="min-width:160px">
+    ${_pioneerTitleSelect(null, 'inlinePioneerTitle')}
+    ${_pioneerHomePracticeSelect(null, 'inlinePioneerHomePractice')}
     <button type="button" class="btn btn-sm btn-primary pioneer-inline-save">Save</button>
     <button type="button" class="btn btn-sm pioneer-inline-cancel">Cancel</button>
   `;
@@ -1471,11 +1476,19 @@ async function handlePioneerInlineSave(rowEl) {
     else alert('First or last name is required');
     return;
   }
+  // Read Title + Home Practice (Task 11) — both optional.
+  const titleEl = document.getElementById('inlinePioneerTitle');
+  const hpEl = document.getElementById('inlinePioneerHomePractice');
+  const title = titleEl && titleEl.value ? titleEl.value : null;
+  const hpRaw = hpEl ? hpEl.value : '';
+  const home_practice_id = hpRaw ? parseInt(hpRaw, 10) : null;
   try {
     const { status, body: result } = await apiCallWithStatus('POST', '/pioneers', {
       first_name: firstName,
       last_name: lastName,
       email: email || null,
+      title: title,
+      home_practice_id: home_practice_id,
     });
     // Refresh module-level pioneer cache.
     window._allPioneers = await loadAllPioneers();
