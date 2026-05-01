@@ -710,11 +710,11 @@ function renderFilterBar(allProjects) {
   // resolve IDs in the popover and chip summary) is window._allPioneers; if
   // unavailable, we synthesize from project rows.
   const pioneerById = new Map();
-  for (const pi of (window._allPioneers || [])) pioneerById.set(pi.id, pi.name || '');
+  for (const pi of (window._allPioneers || [])) pioneerById.set(pi.id, pi.display_name || pi.name || '');
   for (const proj of allProjects) {
     for (const pi of (proj.pioneers || [])) {
       if (pi.pioneer_id != null && !pioneerById.has(pi.pioneer_id)) {
-        pioneerById.set(pi.pioneer_id, pi.name || pi.pioneer_name || '');
+        pioneerById.set(pi.pioneer_id, pi.display_name || pi.pioneer_name || pi.name || '');
       }
     }
   }
@@ -1162,7 +1162,9 @@ function renderPioneerPickerSelect(currentPioneerId, pioneers) {
     const sel = (currentPioneerId != null && p.id === currentPioneerId) ? 'selected' : '';
     if (sel) foundCurrent = true;
     const emailPart = p.email ? ` (${p.email})` : '';
-    opts.push(`<option value="${p.id}" ${sel}>${esc(p.name)}${esc(emailPart)}</option>`);
+    // Use server-supplied display_name; fall back to legacy `name` for safety.
+    const label = p.display_name || p.name || '';
+    opts.push(`<option value="${p.id}" ${sel}>${esc(label)}${esc(emailPart)}</option>`);
   });
   opts.push('<option value="__new__">+ New pioneer…</option>');
   return `<select class="pioneer-picker">${opts.join('')}</select>`;
@@ -1175,28 +1177,31 @@ function renderInlinePioneerCreate(rowEl) {
   wrapper.className = 'pioneer-inline-create';
   wrapper.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
   wrapper.innerHTML = `
-    <input type="text" class="pioneer-inline-name" placeholder="Name" maxlength="120" style="min-width:120px">
+    <input type="text" class="pioneer-inline-first-name" placeholder="First name" maxlength="80" style="min-width:110px">
+    <input type="text" class="pioneer-inline-last-name" placeholder="Last name" maxlength="80" style="min-width:130px">
     <input type="email" class="pioneer-inline-email" placeholder="email@example.com" style="min-width:160px">
     <button type="button" class="btn btn-sm btn-primary pioneer-inline-save">Save</button>
     <button type="button" class="btn btn-sm pioneer-inline-cancel">Cancel</button>
   `;
   sel.replaceWith(wrapper);
-  wrapper.querySelector('.pioneer-inline-name').focus();
+  wrapper.querySelector('.pioneer-inline-first-name').focus();
 }
 
 async function handlePioneerInlineSave(rowEl) {
   const wrapper = rowEl.querySelector('.pioneer-inline-create');
   if (!wrapper) return;
-  const name = wrapper.querySelector('.pioneer-inline-name').value.trim();
+  const firstName = wrapper.querySelector('.pioneer-inline-first-name').value.trim();
+  const lastName = wrapper.querySelector('.pioneer-inline-last-name').value.trim();
   const email = wrapper.querySelector('.pioneer-inline-email').value.trim();
-  if (!name) {
-    if (typeof showToast === 'function') showToast('Name is required');
-    else alert('Name is required');
+  if (!firstName && !lastName) {
+    if (typeof showToast === 'function') showToast('First or last name is required');
+    else alert('First or last name is required');
     return;
   }
   try {
     const { status, body: result } = await apiCallWithStatus('POST', '/pioneers', {
-      name,
+      first_name: firstName,
+      last_name: lastName,
       email: email || null,
     });
     // Refresh module-level pioneer cache.
@@ -1813,7 +1818,7 @@ function showExpertLinks(pioneers) {
   for (const pi of pioneers) {
     const link = window.location.origin + '/#expert/' + (pi.expert_token || '');
     html += '<div style="padding:10px 0;border-bottom:1px solid var(--gray-200)">';
-    html += '<div style="font-weight:600;margin-bottom:4px">' + esc(pi.name || pi.pioneer_name || 'Pioneer') + (pi.email ? ' <span style="color:var(--gray-500);font-weight:400">' + esc(pi.email) + '</span>' : '') + '</div>';
+    html += '<div style="font-weight:600;margin-bottom:4px">' + esc(pi.display_name || pi.pioneer_name || pi.name || 'Pioneer') + (pi.email ? ' <span style="color:var(--gray-500);font-weight:400">' + esc(pi.email) + '</span>' : '') + '</div>';
     html += '<div style="display:flex;gap:8px;align-items:center">';
     html += '<input type="text" value="' + esc(link) + '" readonly style="flex:1;padding:6px 8px;border:1px solid var(--gray-200);border-radius:4px;font-family:monospace;font-size:12px">';
     html += '<button class="btn btn-primary btn-sm" onclick="copyToClipboard(\'' + esc(link) + '\')">Copy</button>';
@@ -1883,10 +1888,10 @@ function _renderPioneerTable(p, mc) {
     roundsHtml += '</div>';
 
     const removeBtn = writer && responseCount === 0
-      ? '<button type="button" class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePioneer(' + p.id + ',' + pi.id + ',\'' + esc(pi.name || pi.pioneer_name) + '\')">Remove</button>'
+      ? '<button type="button" class="btn btn-sm btn-danger" onclick="event.stopPropagation();removePioneer(' + p.id + ',' + pi.id + ',\'' + esc(pi.display_name || pi.pioneer_name || pi.name || '') + '\')">Remove</button>'
       : '';
 
-    html += '<tr><td><strong>' + esc(pi.pioneer_name || pi.name || '') + '</strong></td>'
+    html += '<tr><td><strong>' + esc(pi.display_name || pi.pioneer_name || pi.name || '') + '</strong></td>'
       + '<td>' + esc(pi.pioneer_email || pi.email || '\u2014') + '</td>'
       + '<td>' + roundsHtml + '</td>';
     if (writer) html += '<td class="actions-cell" style="text-align:right">' + removeBtn + '</td>';
@@ -1983,7 +1988,10 @@ async function doRemovePioneer(projectId, pioneerId) {
 
 function showAddPioneerForm(projectId) {
   showModal('<h3>Add Pioneer</h3>'
-    + '<div class="form-group"><label>Name *</label><input type="text" id="addPioneerName" placeholder="Pioneer name"></div>'
+    + '<div style="display:flex;gap:8px">'
+    + '<div class="form-group" style="flex:1"><label>First name *</label><input type="text" id="addPioneerFirstName" data-testid="add-pioneer-first-name" placeholder="First name" maxlength="80"></div>'
+    + '<div class="form-group" style="flex:1"><label>Last name *</label><input type="text" id="addPioneerLastName" data-testid="add-pioneer-last-name" placeholder="Last name" maxlength="80"></div>'
+    + '</div>'
     + '<div class="form-group" style="margin-top:12px"><label>Email</label><input type="email" id="addPioneerEmail" placeholder="Email (optional)"></div>'
     + '<div class="form-group" style="margin-top:12px"><label>Total Rounds</label><input type="number" id="addPioneerRounds" min="1" max="10" placeholder="Uses project default"></div>'
     + '<div class="form-actions" style="margin-top:16px">'
@@ -1992,14 +2000,15 @@ function showAddPioneerForm(projectId) {
 }
 
 async function submitAddPioneer(projectId) {
-  const name = document.getElementById('addPioneerName').value.trim();
+  const first_name = document.getElementById('addPioneerFirstName').value.trim();
+  const last_name = document.getElementById('addPioneerLastName').value.trim();
   const email = document.getElementById('addPioneerEmail').value.trim() || null;
   const roundsVal = document.getElementById('addPioneerRounds').value;
   const total_rounds = roundsVal ? parseInt(roundsVal) : null;
-  if (!name) { showToast('Pioneer name is required', 'error'); return; }
+  if (!first_name && !last_name) { showToast('Pioneer first or last name is required', 'error'); return; }
   hideModal();
   try {
-    await apiCall('POST', '/projects/' + projectId + '/pioneers', { name, email, total_rounds });
+    await apiCall('POST', '/projects/' + projectId + '/pioneers', { first_name, last_name, email, total_rounds });
     showToast('Pioneer added');
     renderEditProject(projectId);
   } catch (err) { showToast(err.message, 'error'); }
@@ -2119,7 +2128,7 @@ async function renderProjects() {
       // Compute pioneer info
       const pioneers = p.pioneers || [];
       const pioneerCount = pioneers.length;
-      const pioneerNames = pioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
+      const pioneerNames = pioneers.map(pi => pi.display_name || pi.pioneer_name || pi.name || '').filter(Boolean);
       const pioneerLabel = pioneerCount + ' pioneer' + (pioneerCount !== 1 ? 's' : '');
       const pioneerTooltip = pioneerNames.join(', ');
 
@@ -2686,7 +2695,7 @@ registerChart('table_portfolio', (cfg, filtered) => {
           ${filtered.map(row => {
             const m = row.metrics || {};
             const rowPioneers = row.pioneers || [];
-            const rowPioneerNames = rowPioneers.map(pi => pi.name || pi.pioneer_name || '').filter(Boolean);
+            const rowPioneerNames = rowPioneers.map(pi => pi.display_name || pi.pioneer_name || pi.name || '').filter(Boolean);
             const pioneerDisplay = rowPioneerNames.length > 0 ? rowPioneerNames.length + ' pioneer' + (rowPioneerNames.length !== 1 ? 's' : '') : esc(row.pioneer_name || '—');
             const pioneerTooltip = rowPioneerNames.join(', ') || row.pioneer_name || '';
             const schedDelta = scheduleDelta(row.date_expected_delivered, row.date_delivered);
@@ -4533,7 +4542,8 @@ async function renderPioneersIndex() {
   }
   window._pioneersCache = pioneers;
   if (!window._pioneersFilters) {
-    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: null, sort_dir: 'asc' };
+    // Default sort: last name ascending (consulting convention).
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: 'last_name', sort_dir: 'asc' };
   }
 
   mc.innerHTML = `
@@ -4545,7 +4555,7 @@ async function renderPioneersIndex() {
       </div>
     </div>
     <div id="pioneersFilterBar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
-      <input type="search" id="pioneersSearch" placeholder="Search name or email…" value="${esc(window._pioneersFilters.search)}"
+      <input type="search" id="pioneersSearch" placeholder="Search first/last name or email…" value="${esc(window._pioneersFilters.search)}"
         style="min-width:200px;padding:5px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:13px">
       <span id="pioneersPracticeFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
       <span id="pioneersRoleFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
@@ -4660,7 +4670,13 @@ function renderPioneersTable() {
   let filtered = all.filter(function(p) {
     if (filters.search) {
       const s = filters.search.toLowerCase();
-      if (!(p.name || '').toLowerCase().includes(s) && !(p.email || '').toLowerCase().includes(s)) return false;
+      const haystack = [
+        p.first_name || '',
+        p.last_name || '',
+        p.display_name || '',
+        p.email || '',
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(s)) return false;
     }
     if (filters.practice && filters.practice.length > 0) {
       const codes = (p.practices || []).map(function(pr) { return pr.code; });
@@ -4712,8 +4728,9 @@ function renderPioneersTable() {
       + esc(label) + arrow + '</th>';
   }
 
-  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:900px;width:100%"><thead><tr>'
-    + thCell('Name', 'name')
+  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:960px;width:100%"><thead><tr>'
+    + thCell('Last name', 'last_name')
+    + thCell('First name', 'first_name')
     + thCell('Email', 'email')
     + thCell('# Projects', 'project_count')
     + '<th>Practices</th>'
@@ -4740,7 +4757,8 @@ function renderPioneersTable() {
     const badgeStyle = statusBadgeStyle[p.status] || statusBadgeStyle.never;
 
     html += '<tr style="cursor:pointer" onclick="window.location.hash=\'#pioneer/' + p.id + '\'">'
-      + '<td><strong>' + esc(p.name || '') + '</strong></td>'
+      + '<td><strong>' + esc(p.last_name || '') + '</strong></td>'
+      + '<td>' + esc(p.first_name || '') + '</td>'
       + '<td style="color:#6b7280;font-size:13px">' + esc(p.email || '') + '</td>'
       + '<td style="text-align:center">' + (p.project_count || 0) + '</td>'
       + '<td>' + (practiceChips || '—') + '</td>'
@@ -4789,9 +4807,15 @@ function openAddPioneerModal() {
   showModal(`
     <div style="padding:8px">
       <h2 style="margin-top:0">Add Pioneer</h2>
-      <div class="form-group" style="margin-bottom:12px">
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Name *</label>
-        <input type="text" id="addPioneerName" maxlength="120" style="width:100%;box-sizing:border-box">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">First name *</label>
+          <input type="text" id="addPioneerFirstName" data-testid="add-pioneer-first-name" maxlength="80" style="width:100%;box-sizing:border-box">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Last name *</label>
+          <input type="text" id="addPioneerLastName" data-testid="add-pioneer-last-name" maxlength="80" style="width:100%;box-sizing:border-box">
+        </div>
       </div>
       <div class="form-group" style="margin-bottom:12px">
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
@@ -4808,25 +4832,31 @@ function openAddPioneerModal() {
     </div>
   `);
   setTimeout(function() {
-    const el = document.getElementById('addPioneerName');
+    const el = document.getElementById('addPioneerFirstName');
     if (el) el.focus();
   }, 50);
 }
 
 async function submitAddPioneerToIndex() {
-  const nameEl = document.getElementById('addPioneerName');
+  const firstEl = document.getElementById('addPioneerFirstName');
+  const lastEl = document.getElementById('addPioneerLastName');
   const emailEl = document.getElementById('addPioneerEmail');
   const notesEl = document.getElementById('addPioneerNotes');
-  if (!nameEl) return;
-  const name = nameEl.value.trim();
-  if (!name) { showToast('Name is required', 'error'); nameEl.focus(); return; }
+  if (!firstEl || !lastEl) return;
+  const first_name = firstEl.value.trim();
+  const last_name = lastEl.value.trim();
+  if (!first_name && !last_name) {
+    showToast('First or last name is required', 'error');
+    firstEl.focus();
+    return;
+  }
   const email = emailEl ? emailEl.value.trim() : '';
   const notes = notesEl ? notesEl.value.trim() : '';
   try {
-    const { status } = await apiCallWithStatus('POST', '/pioneers', { name, email: email || null, notes: notes || null });
+    const { status } = await apiCallWithStatus('POST', '/pioneers', { first_name, last_name, email: email || null, notes: notes || null });
     hideModal();
     // Reset filter state so the new/matched pioneer is visible.
-    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: null, sort_dir: 'asc' };
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: 'last_name', sort_dir: 'asc' };
     await renderPioneersIndex();
     // 200 = find-or-create matched an existing pioneer; 201 = newly created.
     showToast(status === 200 ? 'Pioneer already existed — selected' : 'Pioneer added');
@@ -4881,7 +4911,7 @@ async function renderPioneerDetail(id) {
              style="font-size:13px;color:var(--brand-blue,#6EC1E4);text-decoration:none;display:inline-block;margin-bottom:6px">
             ← Pioneers
           </a>
-          <h1 style="margin:0 0 4px">${esc(pioneer.name)}</h1>
+          <h1 style="margin:0 0 4px">${esc(pioneer.display_name || ((pioneer.first_name || '') + ' ' + (pioneer.last_name || '')).trim())}</h1>
           ${pioneer.email ? '<div style="color:#6b7280;font-size:14px">' + esc(pioneer.email) + '</div>' : ''}
           ${pioneer.notes ? '<div style="color:#374151;font-size:13px;margin-top:6px;white-space:pre-wrap;max-width:600px">' + esc(pioneer.notes) + '</div>' : ''}
         </div>
@@ -5146,9 +5176,15 @@ async function openEditPioneerModal(id) {
   showModal(`
     <div style="padding:8px">
       <h2 style="margin-top:0">Edit Pioneer</h2>
-      <div class="form-group" style="margin-bottom:12px">
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Name *</label>
-        <input type="text" id="editPioneerName" maxlength="120" value="${esc(pioneer.name || '')}" style="width:100%;box-sizing:border-box">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">First name *</label>
+          <input type="text" id="editPioneerFirstName" data-testid="edit-pioneer-first-name" maxlength="80" value="${esc(pioneer.first_name || '')}" style="width:100%;box-sizing:border-box">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Last name *</label>
+          <input type="text" id="editPioneerLastName" data-testid="edit-pioneer-last-name" maxlength="80" value="${esc(pioneer.last_name || '')}" style="width:100%;box-sizing:border-box">
+        </div>
       </div>
       <div class="form-group" style="margin-bottom:12px">
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
@@ -5165,22 +5201,28 @@ async function openEditPioneerModal(id) {
     </div>
   `);
   setTimeout(function() {
-    const el = document.getElementById('editPioneerName');
+    const el = document.getElementById('editPioneerFirstName');
     if (el) el.focus();
   }, 50);
 }
 
 async function submitEditPioneer(id) {
-  const nameEl = document.getElementById('editPioneerName');
+  const firstEl = document.getElementById('editPioneerFirstName');
+  const lastEl = document.getElementById('editPioneerLastName');
   const emailEl = document.getElementById('editPioneerEmail');
   const notesEl = document.getElementById('editPioneerNotes');
-  if (!nameEl) return;
-  const name = nameEl.value.trim();
-  if (!name) { showToast('Name is required', 'error'); nameEl.focus(); return; }
+  if (!firstEl || !lastEl) return;
+  const first_name = firstEl.value.trim();
+  const last_name = lastEl.value.trim();
+  if (!first_name && !last_name) {
+    showToast('First or last name is required', 'error');
+    firstEl.focus();
+    return;
+  }
   const email = emailEl ? emailEl.value.trim() : '';
   const notes = notesEl ? notesEl.value.trim() : '';
   try {
-    await apiCall('PUT', '/pioneers/' + id, { name, email: email || null, notes: notes || null });
+    await apiCall('PUT', '/pioneers/' + id, { first_name, last_name, email: email || null, notes: notes || null });
     hideModal();
     showToast('Pioneer updated');
     await renderPioneerDetail(id);
