@@ -5646,12 +5646,12 @@ function renderProjectLegacyTeamCard(legacyTeam, currency) {
       <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Legacy Team Mix</h2>
       <table class="data-table" style="width:100%;font-size:13px">
         <thead><tr><th>Role</th><th>Count</th><th>Day rate</th><th>Daily cost</th></tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
-          <tr style="border-top:2px solid var(--gray-300,#d1d5db);font-weight:600">
+        <tbody>
+          ${rows}
+          <tr style="border-top:2px solid var(--gray-300,#d1d5db);font-weight:600;background:transparent !important">
             <td>Total</td><td>${totalCount}</td><td>—</td><td>${fc(totalDailyCost)}</td>
           </tr>
-        </tfoot>
+        </tbody>
       </table>
     </div>
   `;
