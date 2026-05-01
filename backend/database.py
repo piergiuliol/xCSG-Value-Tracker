@@ -1150,6 +1150,59 @@ def seed_data() -> None:
         # backend/taxonomy_seed.py. No seeded legacy norms — norms are
         # computed from expert responses.
 
+    _seed_initial_pioneers()
+
+
+# ── Initial pioneer roster (deploy-time seed) ──────────────────────────────────
+
+# Each entry: (first_name, last_name, email_local, home_practice, home_role).
+# `home_practice`/`home_role` are sticky context stored in the pioneer's notes
+# field — they describe where the person typically works, but the project-level
+# pioneer assignment can use a different practice/role.
+_INITIAL_PIONEERS = [
+    # MAP
+    ("Giuseppe",  "Gulotta",         "giuseppe.gulotta",   "MAP", "Partner"),
+    ("Aaron",     "Grandy",          "aaron.grandy",       "MAP", "Principal"),
+    ("Sandra",    "Walsh",           "sandra.walsh",       "MAP", "Senior Consultant"),
+    ("Rithvik",   "Badinedi",        "rithvik.badinedi",   "MAP", "Senior Consultant"),
+    ("Anastasia", "Amato",           "anastasia.amato",    "MAP", "Engagement Manager"),
+    # MCD
+    ("Matteo",    "Tolomei",         "matteo.tolomei",     "MCD", "Engagement Manager"),
+    ("Elia",      "Lahouiri",        "elia.lahouiri",      "MCD", "Principal"),
+    ("Akash",     "Nayak Karopadi",  "akash.nayakkaropadi","MCD", "Principal"),
+    ("Florent",   "Chouvy",          "florent.chouvy",     "MCD", "Principal"),
+    ("Giorgia",   "Miglietta",       "giorgia.miglietta",  "MCD", "Principal"),
+    ("Davide",    "Targa",           "davide.targa",       "MCD", "Senior Consultant"),
+    ("Nicola",    "Luise",           "nicola.luise",       "MCD", "Engagement Manager"),
+    ("Sahil",     "Chutani",         "sahil.chutani",      "MCD", "Engagement Manager"),
+    ("Helena",    "Xu",              "helena.xu",          "MCD", "Engagement Manager"),
+]
+
+
+def _seed_initial_pioneers() -> None:
+    """Insert the initial Alira Health pioneer roster on first deployment.
+
+    Idempotent — pioneers whose email is already present are skipped, so
+    re-running on subsequent deploys is a no-op. Practice + role live in
+    the notes field as sticky context; the per-project pioneer assignment
+    can still pick any role from any practice catalog.
+    """
+    with _db() as conn:
+        for first, last, email_local, home_practice, home_role in _INITIAL_PIONEERS:
+            email = f"{email_local}@alirahealth.com"
+            existing = conn.execute(
+                "SELECT id FROM pioneers WHERE lower(trim(email)) = lower(trim(?))",
+                (email,),
+            ).fetchone()
+            if existing:
+                continue
+            notes = f"{home_practice} — {home_role}"
+            conn.execute(
+                "INSERT INTO pioneers (first_name, last_name, email, notes) VALUES (?, ?, ?, ?)",
+                (first, last, email, notes),
+            )
+        conn.commit()
+
 
 # ── Users ──────────────────────────────────────────────────────────────────────
 
