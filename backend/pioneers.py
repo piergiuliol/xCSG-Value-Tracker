@@ -159,8 +159,11 @@ def list_pioneers_with_metrics() -> list[dict]:
     for r in join_rows:
         by_pioneer[r["pioneer_id"]].append(dict(r))
 
-    # Per-project metrics for avg computation. Use existing compute helper.
-    from backend.metrics import compute_project_metrics
+    # Per-project metrics for avg computation. Use the same averaged-over-pioneers
+    # helper the dashboard uses, otherwise compute_project_metrics gets a
+    # response-less dict and returns None for every quality/value-gain field.
+    from backend.metrics import compute_averaged_project_metrics
+    from backend.database import get_all_project_responses
     metrics_by_project: dict[int, dict] = {}
     for pid_set in by_pioneer.values():
         for rec in pid_set:
@@ -169,7 +172,8 @@ def list_pioneers_with_metrics() -> list[dict]:
                 continue
             proj_dict = _get_project_data_for_metrics(proj_id)
             if proj_dict is not None:
-                metrics_by_project[proj_id] = compute_project_metrics(proj_dict)
+                responses = get_all_project_responses(proj_id)
+                metrics_by_project[proj_id] = compute_averaged_project_metrics(proj_dict, responses)
 
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).replace(tzinfo=None)
