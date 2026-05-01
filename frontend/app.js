@@ -732,6 +732,7 @@ async function route() {
 
   if (hash === '#portfolio') renderPortfolio();
   else if (hash === '#new') { if (canWrite()) renderNewProject(); else { document.getElementById('mainContent').innerHTML = '<div class="error-state">You do not have permission to create projects.</div>'; } }
+  else if (hash.startsWith('#project/')) renderProjectDetail(hash.split('/')[1]);
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
   else if (hash === '#pioneers') renderPioneersIndex();
@@ -5362,6 +5363,64 @@ async function submitAddPioneerToIndex() {
     showToast('Failed to create pioneer: ' + (e && e.message ? e.message : String(e)), 'error');
   }
 }
+
+// ── Project Detail Page ───────────────────────────────────────────────────────
+
+async function renderProjectDetail(id) {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Loading project…</div>';
+
+  let project;
+  try {
+    project = await apiCall('GET', '/projects/' + id);
+  } catch (e) {
+    mc.innerHTML = '<p class="empty-state">Failed to load project: ' + esc(e && e.message ? e.message : String(e)) + '</p>';
+    return;
+  }
+
+  const metrics = project.metrics || {};
+  const pioneers = project.pioneers || [];
+  const legacyTeam = project.legacy_team || [];
+
+  let html = `
+    <div style="max-width:1100px" data-testid="project-detail">
+      ${renderProjectHeader(project, metrics)}
+      ${renderProjectActivityStrip(project, metrics, pioneers)}
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Performance</h2>
+        <div class="metric-chips-grid" style="display:flex;gap:8px;flex-wrap:wrap">
+          ${renderProjectFlywheelChips(metrics)}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        ${renderProjectSpecCard(project)}
+        ${renderProjectPioneersCard(pioneers)}
+      </div>
+      ${renderEconomicsCard(project, metrics)}
+      <div style="margin-top:16px">
+        ${renderProjectLegacyTeamCard(legacyTeam, project.currency)}
+      </div>
+      <div style="margin-top:20px">
+        ${renderProjectExpertResponsesCard(project, pioneers)}
+      </div>
+      <div style="margin-top:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Charts</h2>
+        <div id="projectCharts"></div>
+      </div>
+    </div>
+  `;
+  mc.innerHTML = html;
+  await renderProjectCharts(project, metrics);
+}
+
+function renderProjectHeader(project, metrics) { return ''; }
+function renderProjectActivityStrip(project, metrics, pioneers) { return ''; }
+function renderProjectFlywheelChips(metrics) { return ''; }
+function renderProjectSpecCard(project) { return ''; }
+function renderProjectPioneersCard(pioneers) { return ''; }
+function renderProjectLegacyTeamCard(legacyTeam, currency) { return ''; }
+function renderProjectExpertResponsesCard(project, pioneers) { return ''; }
+async function renderProjectCharts(project, metrics) { /* populated in Task 7 */ }
 
 // ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
 
