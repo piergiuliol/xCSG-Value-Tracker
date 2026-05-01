@@ -1851,6 +1851,49 @@ def test_create_project_persists_economics():
 
 
 
+def test_fx_rates_db_helpers():
+    """get_fx_rates returns all 6 rates; update_fx_rates round-trips and
+    bumps updated_at; _ensure_all_fx_rows_exist backfills missing currencies."""
+    from backend import database
+    database.init_db()
+
+    rates = database.get_fx_rates()
+    assert isinstance(rates, list)
+    codes = sorted(r["currency_code"] for r in rates)
+    assert codes == ["AUD", "CAD", "CHF", "EUR", "GBP", "USD"], f"got {codes}"
+    for r in rates:
+        assert "rate_to_base" in r and "updated_at" in r
+
+    # update_fx_rates accepts a list and persists each row.
+    database.update_fx_rates([
+        {"currency_code": "EUR", "rate_to_base": 1.0850},
+        {"currency_code": "GBP", "rate_to_base": 1.2430},
+    ])
+    after = {r["currency_code"]: r["rate_to_base"] for r in database.get_fx_rates()}
+    assert after["EUR"] == 1.0850, f"got {after['EUR']}"
+    assert after["GBP"] == 1.2430, f"got {after['GBP']}"
+    # USD unchanged.
+    assert after["USD"] == 1.0, f"got {after['USD']}"
+
+    # _ensure_all_fx_rows_exist is a no-op when all rows present.
+    n_before = len(database.get_fx_rates())
+    database._ensure_all_fx_rows_exist()
+    assert len(database.get_fx_rates()) == n_before
+
+    # If we manually delete a row then call the helper, it gets re-added at rate 0
+    # (signals "not yet set" to the FX-missing path).
+    with database._db() as conn:
+        conn.execute("DELETE FROM fx_rates WHERE currency_code = 'CHF'")
+        conn.commit()
+    database._ensure_all_fx_rows_exist()
+    after2 = {r["currency_code"]: r["rate_to_base"] for r in database.get_fx_rates()}
+    assert "CHF" in after2
+    assert after2["CHF"] == 0.0, f"backfilled rate should be 0 to trigger FX-missing UI; got {after2['CHF']}"
+
+    # Cleanup: restore CHF to 1.0 so other tests start from a clean slate.
+    database.update_fx_rates([{"currency_code": "CHF", "rate_to_base": 1.0}])
+
+
 def test_app_settings_endpoints():
     """GET /api/settings is open to all roles; PUT requires admin."""
     print("\n── App Settings ──")
@@ -2689,6 +2732,7 @@ def main():
     test_pioneer_role_name_in_models()
     test_economics_metrics()
     test_legacy_cost_from_team_mix()
+    test_fx_rates_db_helpers()
     test_app_settings_endpoints()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
