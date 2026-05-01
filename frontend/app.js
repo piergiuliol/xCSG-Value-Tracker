@@ -5964,6 +5964,11 @@ async function renderPioneerDetail(id) {
           </a>
           <h1 style="margin:0 0 4px">${esc(pioneer.display_name || ((pioneer.first_name || '') + ' ' + (pioneer.last_name || '')).trim())}</h1>
           ${pioneer.email ? '<div style="color:#6b7280;font-size:14px">' + esc(pioneer.email) + '</div>' : ''}
+          ${(pioneer.title || pioneer.home_practice_code) ? `
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px" data-testid="pioneer-detail-badges">
+            ${pioneer.title ? '<span class="badge" data-testid="pioneer-title-badge" style="background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + esc(pioneer.title) + '</span>' : ''}
+            ${pioneer.home_practice_code ? '<span class="badge practice-badge" data-testid="pioneer-home-practice-badge" style="background:#e0f2fe;color:#0284c7;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + esc(pioneer.home_practice_code) + '</span>' : ''}
+          </div>` : ''}
           ${pioneer.notes ? '<div style="color:#374151;font-size:13px;margin-top:6px;white-space:pre-wrap;max-width:600px">' + esc(pioneer.notes) + '</div>' : ''}
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
