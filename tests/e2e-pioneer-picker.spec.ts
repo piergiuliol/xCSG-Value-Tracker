@@ -83,13 +83,14 @@ test.describe('Pioneer picker', () => {
 
     // Open inline form.
     await row.locator('.pioneer-picker').selectOption('__new__');
-    await page.waitForSelector('.pioneer-row .pioneer-inline-name', { timeout: 5000 });
+    await page.waitForSelector('.pioneer-row .pioneer-inline-first-name', { timeout: 5000 });
 
     // Click Cancel.
     await row.locator('.pioneer-inline-cancel').click();
 
     // Picker should be visible again (no inline form).
     await page.waitForSelector('.pioneer-row .pioneer-picker', { timeout: 5000 });
-    expect(await row.locator('.pioneer-inline-name').count()).toBe(0);
+    expect(await row.locator('.pioneer-inline-first-name').count()).toBe(0);
+    expect(await row.locator('.pioneer-inline-last-name').count()).toBe(0);
   });
 });

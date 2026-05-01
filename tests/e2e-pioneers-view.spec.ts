@@ -18,17 +18,21 @@ async function openPioneersIndex(page: Page) {
 // Create a pioneer via the API (logged-in admin token in sessionStorage).
 // Returns the new pioneer's id. Used by tests that need a fresh row to
 // operate on without depending on a sibling test's state.
-async function createPioneerViaApi(page: Page, name: string, email?: string): Promise<number> {
-  return await page.evaluate(async ({ name, email }) => {
+async function createPioneerViaApi(page: Page, fullName: string, email?: string): Promise<number> {
+  // Split full name into first + last on first whitespace.
+  const idx = fullName.indexOf(' ');
+  const first_name = idx >= 0 ? fullName.slice(0, idx) : fullName;
+  const last_name = idx >= 0 ? fullName.slice(idx + 1) : '';
+  return await page.evaluate(async ({ first_name, last_name, email }) => {
     const tok = sessionStorage.getItem('xcsg_token');
     const r = await fetch('/api/pioneers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
-      body: JSON.stringify({ name, email: email || null }),
+      body: JSON.stringify({ first_name, last_name, email: email || null }),
     });
     const j = await r.json();
     return j.id as number;
-  }, { name, email });
+  }, { first_name, last_name, email });
 }
 
 async function deletePioneerViaApi(page: Page, id: number): Promise<void> {
@@ -48,17 +52,19 @@ test.describe('Pioneers view', () => {
 
     // Click the "+ Add Pioneer" button.
     await page.click('button:has-text("Add Pioneer")');
-    // Modal opens.
-    await page.waitForSelector('#addPioneerName', { timeout: 5000 });
-    await page.fill('#addPioneerName', 'View Test Pia');
+    // Modal opens — first/last name inputs are split.
+    await page.waitForSelector('#addPioneerFirstName', { timeout: 5000 });
+    await page.fill('#addPioneerFirstName', 'View');
+    await page.fill('#addPioneerLastName', 'TestPia');
     await page.fill('#addPioneerEmail', 'view-test-pia@example.com');
     await page.fill('#addPioneerNotes', 'Test pioneer created in E2E');
     await page.click('[data-testid="add-pioneer-save"]');
 
-    // Wait for index refresh — table should now contain the new pioneer.
+    // Wait for index refresh — table should now contain both name parts.
     await page.waitForFunction(() => {
       const cont = document.getElementById('pioneersTableContainer');
-      return cont && /View Test Pia/.test(cont.textContent || '');
+      const txt = cont?.textContent || '';
+      return cont && /TestPia/.test(txt) && /View/.test(txt);
     }, { timeout: 5000 });
   });
 
@@ -68,31 +74,34 @@ test.describe('Pioneers view', () => {
     // Self-contained: create a fresh pioneer rather than relying on test 1's
     // "View Test Pia" row. Unique email so a stale row doesn't collide.
     const stamp = Date.now();
-    const seedName = `Edit Flow Pia ${stamp}`;
+    const firstName = 'Edit';
+    const lastName = `Flow Pia ${stamp}`;
+    const seedName = `${firstName} ${lastName}`;
     const seedEmail = `edit-flow-pia-${stamp}@example.com`;
     const pioneerId = await createPioneerViaApi(page, seedName, seedEmail);
 
     await openPioneersIndex(page);
 
-    // Wait for the seeded pioneer to be visible in the table.
+    // Wait for the seeded pioneer's last name to be visible in the table.
     await page.waitForFunction((needle) => {
       const cont = document.getElementById('pioneersTableContainer');
       return !!(cont && cont.textContent && cont.textContent.includes(needle));
-    }, seedName, { timeout: 5000 });
+    }, lastName, { timeout: 5000 });
 
-    // Open detail by exact-match text click.
-    await page.click(`text=${seedName}`);
+    // Open detail by clicking the last-name cell (last name is the <strong>
+    // tag in the leftmost column post-split).
+    await page.click(`text=${lastName}`);
     await page.waitForSelector('h1', { timeout: 5000 });
     await expect(page.locator('h1')).toContainText(seedName);
 
     // Edit modal — scoped to the detail-page Edit button.
     await page.click('[data-testid="pioneer-detail-edit"]');
-    await page.waitForSelector('#editPioneerName', { timeout: 5000 });
-    const renamed = `${seedName} (renamed)`;
-    await page.fill('#editPioneerName', renamed);
+    await page.waitForSelector('#editPioneerLastName', { timeout: 5000 });
+    const renamedLast = `${lastName} (renamed)`;
+    await page.fill('#editPioneerLastName', renamedLast);
     await page.click('[data-testid="edit-pioneer-save"]');
     await page.waitForSelector('h1', { timeout: 5000 });
-    await expect(page.locator('h1')).toContainText(renamed);
+    await expect(page.locator('h1')).toContainText(renamedLast);
 
     // Delete (confirms via window.confirm — Playwright auto-accepts).
     page.once('dialog', d => d.accept());
