@@ -2452,8 +2452,13 @@ async function renderProjects() {
         if (val == null) return '<span style="color:var(--gray-400)">\u2014</span>';
         return `<span style="color:${metricTone(val, 'pct_tone')};font-weight:600">${fmtPctMaybe(val)}</span>`;
       };
-      html += `<tr data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}">
-        <td><a href="#project/${p.id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none;font-weight:600">${esc(p.project_name)}</a></td>
+      // Wrap interactive cells (pulse select, delete button) in stopPropagation
+      // so they don't trigger the row-level navigation. Same pattern as the
+      // Pioneers index \u2014 entire row is clickable, interactive widgets opt out.
+      const pulseCell = `<td onclick="event.stopPropagation()">${pulseSelect}</td>`;
+      const actionsCell = `<td class="actions-cell" onclick="event.stopPropagation()">${deleteBtn}</td>`;
+      html += `<tr style="cursor:pointer" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}" onclick="window.location.hash='#project/${p.id}'">
+        <td><strong>${esc(p.project_name)}</strong></td>
         <td>${esc(p.category_name || '\u2014')}</td>
         <td>${esc(p.practice_code || '\u2014')}</td>
         <td title="${esc(pioneerTooltip)}">${esc(pioneerLabel)}</td>
@@ -2463,9 +2468,9 @@ async function renderProjects() {
         <td>${ratioCell(m.proprietary_knowledge_score)}</td>
         <td>${pctCell(m.quality_score)}</td>
         <td>${ratioCell(m.productivity_ratio)}</td>
-        <td>${pulseSelect}</td>
+        ${pulseCell}
         <td>${statusBadge}</td>
-        <td class="actions-cell">${deleteBtn}</td>
+        ${actionsCell}
       </tr>`;
     }
     html += '</tbody></table></div>';

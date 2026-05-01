@@ -128,10 +128,10 @@ test('click-through from #projects routes to #project/{id}', async ({ page }) =>
   await loginAs(page, 'admin', 'AliraAdmin2026!');
   await page.goto(`${BASE}/#projects`);
 
-  // Project Name is now a link.
-  const nameLink = page.locator('table#projectTable tbody tr a').filter({ hasText: 'E2E Project Detail Test' });
-  await expect(nameLink).toBeVisible({ timeout: 10000 });
-  await nameLink.click();
+  // Entire row is clickable (cursor:pointer + onclick on the <tr>).
+  const row = page.locator('table#projectTable tbody tr').filter({ hasText: 'E2E Project Detail Test' });
+  await expect(row).toBeVisible({ timeout: 10000 });
+  await row.click();
 
   await expect(page).toHaveURL(new RegExp(`#project/${projectId}$`));
   await expect(page.locator('[data-testid="project-detail"]')).toBeVisible();
