@@ -3106,6 +3106,8 @@ def main():
     test_export_pioneers_csv_empty_filter()
     test_export_pioneer_xlsx()
     test_export_pioneer_xlsx_404_for_unknown()
+    test_fx_rates_get_put_endpoints()
+    test_dashboard_economics_endpoint()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
@@ -3938,6 +3940,193 @@ def test_export_pioneer_xlsx_404_for_unknown():
     headers = auth_h(admin_token())
     r = requests.get(f"{BASE}/api/export/pioneer/99999.xlsx", headers=headers)
     assert r.status_code == 404
+
+
+def test_fx_rates_get_put_endpoints():
+    """GET /api/fx-rates is open; PUT requires admin and validates inputs."""
+    print("\n── FX Rates ──")
+
+    def _login(u, p):
+        r = requests.post(f"{BASE}/api/auth/login", json={"username": u, "password": p})
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    h_admin = auth_h(admin_token())
+    h_analyst = auth_h(_login("pmo", "AliraPMO2026!"))
+    h_viewer = auth_h(_login("viewer", "AliraView2026!"))
+
+    # GET works for all roles.
+    r = requests.get(f"{BASE}/api/fx-rates", headers=h_admin)
+    test("GET /api/fx-rates 200 for admin", r.status_code == 200, f"got {r.status_code}")
+    body = r.json()
+    test("GET /api/fx-rates has base_currency", "base_currency" in body)
+    test("GET /api/fx-rates has rates list", isinstance(body.get("rates"), list))
+    test("GET /api/fx-rates has 6 rate rows", len(body["rates"]) == 6, f"got {len(body['rates'])}")
+
+    test("GET /api/fx-rates 200 for analyst",
+         requests.get(f"{BASE}/api/fx-rates", headers=h_analyst).status_code == 200)
+    test("GET /api/fx-rates 200 for viewer",
+         requests.get(f"{BASE}/api/fx-rates", headers=h_viewer).status_code == 200)
+
+    initial_base = body["base_currency"]
+    initial_rates = {r["currency_code"]: r["rate_to_base"] for r in body["rates"]}
+
+    try:
+        # Admin can PUT.
+        upd = requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": "USD",
+            "rates": [
+                {"currency_code": "EUR", "rate_to_base": 1.0850},
+                {"currency_code": "GBP", "rate_to_base": 1.2430},
+            ],
+        })
+        test("PUT /api/fx-rates 200 for admin", upd.status_code == 200, f"got {upd.status_code}: {upd.text[:120]}")
+        rt = requests.get(f"{BASE}/api/fx-rates", headers=h_admin).json()
+        new_rates = {r["currency_code"]: r["rate_to_base"] for r in rt["rates"]}
+        test("PUT persists EUR rate", new_rates["EUR"] == 1.0850)
+        test("PUT persists GBP rate", new_rates["GBP"] == 1.2430)
+
+        # Non-admin cannot PUT.
+        analyst_put = requests.put(f"{BASE}/api/fx-rates", headers=h_analyst, json={
+            "base_currency": "USD", "rates": []
+        })
+        test("PUT 403 for analyst", analyst_put.status_code == 403, f"got {analyst_put.status_code}")
+        viewer_put = requests.put(f"{BASE}/api/fx-rates", headers=h_viewer, json={
+            "base_currency": "USD", "rates": []
+        })
+        test("PUT 403 for viewer", viewer_put.status_code == 403, f"got {viewer_put.status_code}")
+
+        # Invalid currency code rejected.
+        bad_code = requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": "USD",
+            "rates": [{"currency_code": "XYZ", "rate_to_base": 1.0}],
+        })
+        test("PUT 422 for invalid currency code", bad_code.status_code == 422, f"got {bad_code.status_code}: {bad_code.text[:120]}")
+
+        # Negative rate rejected.
+        bad_rate = requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": "USD",
+            "rates": [{"currency_code": "EUR", "rate_to_base": -1.0}],
+        })
+        test("PUT 422 for negative rate", bad_rate.status_code == 422, f"got {bad_rate.status_code}")
+
+        # base_currency persists into app_settings.
+        settings_get = requests.get(f"{BASE}/api/settings", headers=h_admin).json()
+        test("base_currency mirrored in /api/settings", settings_get.get("base_currency") == "USD")
+    finally:
+        # Restore.
+        restore = [{"currency_code": k, "rate_to_base": v} for k, v in initial_rates.items()]
+        requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": initial_base, "rates": restore
+        })
+
+
+def test_dashboard_economics_endpoint():
+    """GET /api/dashboard/economics returns {summary, breakdowns, trends},
+    honors pioneer_id and date filters, normalizes via FX rates."""
+    print("\n── Dashboard Economics ──")
+    h = auth_h(admin_token())
+
+    # Seed two projects via the public API so we know exactly what to expect.
+    cats = requests.get(f"{BASE}/api/categories", headers=h).json()
+    practices = requests.get(f"{BASE}/api/practices", headers=h).json()
+    pmap = {p["code"]: p["id"] for p in practices}
+    map_cat = next((c for c in cats if any(p["code"] == "MAP" for p in c.get("practices", []))), None)
+    if not map_cat:
+        test("skip — no MAP-eligible category", False, detail="setup")
+        return
+
+    common_legacy = [{"role_name": "Senior", "count": 2, "day_rate": 1500}]
+    bodies = [
+        {
+            "project_name": "Econ Test USD", "category_id": map_cat["id"], "practice_id": pmap["MAP"],
+            "engagement_revenue": 100000.0, "currency": "USD", "xcsg_pricing_model": "Fixed fee",
+            "date_started": "2026-01-15", "date_delivered": "2026-02-10",
+            "working_days": 10, "xcsg_team_size": "2", "xcsg_revision_rounds": "1",
+            "engagement_stage": "Active engagement",
+            "pioneers": [{"first_name": "Econ", "last_name": "Tester1", "email": "econ1@example.com", "total_rounds": 1}],
+            "legacy_team": common_legacy,
+        },
+        {
+            "project_name": "Econ Test EUR", "category_id": map_cat["id"], "practice_id": pmap["MAP"],
+            "engagement_revenue": 200000.0, "currency": "EUR", "xcsg_pricing_model": "Time & materials",
+            "date_started": "2026-01-20", "date_delivered": "2026-02-15",
+            "working_days": 12, "xcsg_team_size": "2", "xcsg_revision_rounds": "1",
+            "engagement_stage": "Active engagement",
+            "pioneers": [{"first_name": "Econ", "last_name": "Tester2", "email": "econ2@example.com", "total_rounds": 1}],
+            "legacy_team": common_legacy,
+        },
+    ]
+    created_ids = []
+    initial_fx = None
+    try:
+        # Set EUR rate to 1.10 for predictable arithmetic. Restore after.
+        initial_fx = requests.get(f"{BASE}/api/fx-rates", headers=h).json()
+        requests.put(f"{BASE}/api/fx-rates", headers=h, json={
+            "base_currency": "USD",
+            "rates": [{"currency_code": "EUR", "rate_to_base": 1.10}],
+        })
+
+        # Import a STRONG payload so the projects compute non-null margins.
+        import importlib.util, pathlib
+        spec = importlib.util.spec_from_file_location("sd", pathlib.Path("tests/seed_20_projects.py"))
+        sd = importlib.util.module_from_spec(spec); spec.loader.exec_module(sd)
+        strong = dict(getattr(sd, "STRONG"))
+
+        for b in bodies:
+            r = requests.post(f"{BASE}/api/projects", headers=h, json=b)
+            assert r.status_code == 201, f"create failed: {r.status_code}: {r.text[:160]}"
+            proj = r.json()
+            created_ids.append(proj["id"])
+            tok = proj["pioneers"][0]["expert_token"]
+            sr = requests.post(f"{BASE}/api/expert/{tok}", json=strong)
+            assert sr.status_code == 201, f"survey submit failed: {sr.status_code}: {sr.text[:160]}"
+
+        # Hit the endpoint.
+        r = requests.get(f"{BASE}/api/dashboard/economics", headers=h)
+        test("GET /api/dashboard/economics 200", r.status_code == 200, f"got {r.status_code}: {r.text[:120]}")
+        data = r.json()
+        test("response has summary", "summary" in data)
+        test("response has breakdowns", "breakdowns" in data)
+        test("response has trends", "trends" in data)
+
+        s = data["summary"]
+        test("summary.base_currency = USD", s["base_currency"] == "USD")
+        test("summary.qualifying_project_count >= 2",
+             s["qualifying_project_count"] >= 2,
+             detail=f"got {s['qualifying_project_count']}")
+        # total_revenue should INCLUDE EUR-converted revenue (200k * 1.10 = 220k)
+        # and the USD project's 100k → at least 320k attributed to OUR projects.
+        test("summary.total_revenue >= 320000",
+             s["total_revenue"] >= 320000.0,
+             detail=f"got {s['total_revenue']}")
+
+        # by_currency includes USD and EUR with native amounts.
+        cur = {row["code"]: row for row in data["breakdowns"]["by_currency"]}
+        test("by_currency has USD", "USD" in cur)
+        test("by_currency has EUR", "EUR" in cur)
+
+        # Pioneer filter pass-through: filter by Econ Tester1's id.
+        pioneers = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+        tester1 = next((p for p in pioneers if p.get("email") == "econ1@example.com"), None)
+        test("Tester1 pioneer found", tester1 is not None)
+        if tester1:
+            pid = tester1["id"]
+            rf = requests.get(f"{BASE}/api/dashboard/economics?pioneer_id={pid}", headers=h).json()
+            # Filter narrows to just the USD project (revenue 100k).
+            test("pioneer filter narrows total_revenue to 100k",
+                 abs(rf["summary"]["total_revenue"] - 100000.0) < 0.01,
+                 detail=f"got {rf['summary']['total_revenue']}")
+    finally:
+        # Cleanup: delete created projects + restore initial FX.
+        for pid in created_ids:
+            requests.delete(f"{BASE}/api/projects/{pid}", headers=h)
+        if initial_fx:
+            requests.put(f"{BASE}/api/fx-rates", headers=h, json={
+                "base_currency": initial_fx["base_currency"],
+                "rates": [{"currency_code": r["currency_code"], "rate_to_base": r["rate_to_base"]}
+                          for r in initial_fx["rates"]],
+            })
 
 
 if __name__ == "__main__":

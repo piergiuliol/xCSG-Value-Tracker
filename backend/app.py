@@ -28,9 +28,12 @@ from backend.models import (
     AppSettingsUpdate,
     CategoryCreate,
     CategoryUpdate,
+    EconomicsResponse,
     ExpertAssessmentMetrics,
     ExpertContextResponse,
     ExpertResponseCreate,
+    FxRatesPayload,
+    FxRatesResponse,
     LoginRequest,
     LoginResponse,
     MetricsSummary,
@@ -1558,6 +1561,33 @@ async def update_settings(
 ):
     db.update_app_settings(default_currency=payload.default_currency)
     return db.get_app_settings()
+
+
+# ── FX Rates ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/fx-rates", response_model=FxRatesResponse)
+async def get_fx_rates_endpoint(current_user: dict = Depends(auth.get_current_user)):
+    settings = db.get_app_settings()
+    return {
+        "base_currency": settings["base_currency"],
+        "rates": db.get_fx_rates(),
+    }
+
+
+@app.put("/api/fx-rates", response_model=FxRatesResponse)
+async def put_fx_rates(
+    payload: FxRatesPayload,
+    current_user: dict = Depends(auth.get_current_user_admin),
+):
+    db.update_app_settings(base_currency=payload.base_currency)
+    db.update_fx_rates([
+        {"currency_code": r.currency_code, "rate_to_base": r.rate_to_base}
+        for r in payload.rates
+    ])
+    return {
+        "base_currency": payload.base_currency,
+        "rates": db.get_fx_rates(),
+    }
 
 
 # ── Pioneer Registry (Phase 3a) ───────────────────────────────────────────────
