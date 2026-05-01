@@ -2163,6 +2163,74 @@ def test_compute_economics_summary_empty():
     assert out["total_complete_count"] == 0
 
 
+def test_compute_economics_breakdowns():
+    """Aggregator returns by_practice, by_pioneer, by_currency, by_pricing_model."""
+    from backend.economics import compute_economics_breakdowns
+
+    projects = [
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0, "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "practice_code": "RAM", "xcsg_pricing_model": "Fixed fee",
+            "pioneer_ids": [10], "pioneer_display_names": ["Sofia Romano"],
+        },
+        {
+            "id": 2, "status": "complete", "currency": "USD",
+            "engagement_revenue": 200_000.0, "xcsg_cost": 50_000.0, "legacy_cost": 250_000.0,
+            "xcsg_margin": 150_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 8000.0, "xcsg_person_days": 25.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "practice_code": "RAM", "xcsg_pricing_model": "Time & materials",
+            "pioneer_ids": [10, 11], "pioneer_display_names": ["Sofia Romano", "Marcus Chen"],
+        },
+        {
+            "id": 3, "status": "complete", "currency": "EUR",
+            "engagement_revenue": 80_000.0, "xcsg_cost": 20_000.0, "legacy_cost": 100_000.0,
+            "xcsg_margin": 60_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 4000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "practice_code": "MAP", "xcsg_pricing_model": "Fixed fee",
+            "pioneer_ids": [11], "pioneer_display_names": ["Marcus Chen"],
+        },
+    ]
+    fx_rates = {"USD": 1.0, "EUR": 1.10}
+    out = compute_economics_breakdowns(projects, fx_rates, base_currency="USD")
+
+    # by_practice: RAM = 100k+200k = 300k revenue, MAP = 80k * 1.10 = 88k
+    practices = {row["practice_code"]: row for row in out["by_practice"]}
+    assert practices["RAM"]["revenue"] == 300_000.0
+    assert practices["RAM"]["n"] == 2
+    assert abs(practices["MAP"]["revenue"] - 88_000.0) < 0.01
+
+    # by_pioneer: Sofia on 2 projects (revenue split or full?), Marcus on 2.
+    # Convention: each pioneer gets the FULL project revenue (multi-attribution).
+    # That matches the existing By Pioneer chart behavior.
+    pioneers = {p["pioneer_id"]: p for p in out["by_pioneer"]}
+    assert 10 in pioneers and 11 in pioneers
+    assert pioneers[10]["display_name"] == "Sofia Romano"
+    # Sofia: project 1 (100k) + project 2 (200k) = 300k
+    assert pioneers[10]["revenue"] == 300_000.0
+    # Marcus: project 2 (200k) + project 3 (88k) = 288k
+    assert abs(pioneers[11]["revenue"] - 288_000.0) < 0.01
+
+    # by_currency: native amounts (NOT normalized)
+    cur = {c["code"]: c for c in out["by_currency"]}
+    assert cur["USD"]["native_revenue"] == 300_000.0
+    assert cur["USD"]["n_projects"] == 2
+    assert cur["EUR"]["native_revenue"] == 80_000.0
+    assert cur["EUR"]["n_projects"] == 1
+
+    # by_pricing_model: "Fixed fee" = 100k + 88k = 188k, "T&M" = 200k
+    pm = {row["model"]: row for row in out["by_pricing_model"]}
+    assert abs(pm["Fixed fee"]["revenue"] - 188_000.0) < 0.01
+    assert pm["Fixed fee"]["n"] == 2
+    assert pm["Time & materials"]["revenue"] == 200_000.0
+    assert pm["Time & materials"]["n"] == 1
+
+
 def test_practice_role_models():
     """PracticeRoleEntry and PracticeRolesUpdate validate correctly."""
     import pytest
@@ -2959,6 +3027,7 @@ def main():
     test_compute_economics_summary()
     test_compute_economics_summary_fx_missing()
     test_compute_economics_summary_empty()
+    test_compute_economics_breakdowns()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
     test_practice_roles_404_for_unknown_practice()
