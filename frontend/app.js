@@ -287,10 +287,19 @@ function renderEconomicsTab(data) {
       <a href="#settings" style="color:var(--brand-blue,#6EC1E4)">set rates in Settings</a>.
     </div>`;
 
-  // Chart cards (heights from schema). Quarterly charts only render when there's
-  // quarterly data — same gating as PR2 to avoid empty 320px boxes.
+  // Chart cards (heights from schema). Each chart only renders when its
+  // backing breakdown is non-empty — _initEconomicsTabCharts skips empty data,
+  // so without this gate users would see empty 320px-tall boxes with titles.
   const quarterly = (data.trends && Array.isArray(data.trends.quarterly)) ? data.trends.quarterly : [];
   const hasQuarterly = quarterly.length > 0;
+  const hasPricing = Array.isArray(breakdowns.by_pricing_model) && breakdowns.by_pricing_model.length > 0;
+  const hasPioneer = Array.isArray(breakdowns.by_pioneer) && breakdowns.by_pioneer.length > 0;
+  const chartShouldRender = (id) => {
+    if (id === 'economics_pricing_mix') return hasPricing;
+    if (id === 'economics_pioneer_productivity') return hasPioneer;
+    if (id.startsWith('economics_quarterly_')) return hasQuarterly;
+    return true;
+  };
   const chartCard = (c) => `
     <div class="chart-card" data-chart-id="${c.id}" data-testid="${c.id}">
       <div class="chart-card-title">${esc(c.title)}</div>
@@ -298,13 +307,7 @@ function renderEconomicsTab(data) {
         <div id="${c.id}" style="width:100%;height:100%"></div>
       </div>
     </div>`;
-  const chartGrid = tabCharts.map(c => {
-    // Hide quarterly charts when there's no time-series data; donut + pioneer
-    // bar can render even with a single quarter as long as breakdowns exist.
-    const isQuarterly = c.id.startsWith('economics_quarterly_');
-    if (isQuarterly && !hasQuarterly) return '';
-    return chartCard(c);
-  }).join('');
+  const chartGrid = tabCharts.filter(c => chartShouldRender(c.id)).map(chartCard).join('');
 
   return `<div data-testid="economics-tab-content">
     <h3 style="margin:0 0 8px;color:var(--navy)">Economics</h3>
@@ -2715,7 +2718,7 @@ function _initEconomicsTabCharts(data) {
           trigger: 'axis',
           formatter: (params) => {
             const lines = params.map(p => `${p.marker}${p.seriesName}: <b>${fmtMoney(p.value)}</b>`);
-            return `<div><b>${params[0].axisValueLabel}</b></div>${lines.join('<br/>')}`;
+            return `<div><b>${esc(params[0].axisValueLabel)}</b></div>${lines.join('<br/>')}`;
           },
         },
         legend: { top: 0, textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
