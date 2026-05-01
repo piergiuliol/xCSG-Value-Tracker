@@ -1453,6 +1453,8 @@ PIONEERS_CSV_FIELDS = [
     "first_name",
     "last_name",
     "email",
+    "title",
+    "home_practice",
     "notes",
     "project_count",
     "rounds_completed",
@@ -1492,6 +1494,9 @@ def export_pioneers_csv(
         flat["roles"] = ", ".join(
             f"{x['role_name']}×{x['count']}" for x in r.get("roles", [])
         )
+        # Surface the structured columns added in v23 with CSV-friendly names.
+        flat["title"] = r.get("title") or ""
+        flat["home_practice"] = r.get("home_practice_code") or ""
         flat.pop("portfolio", None)  # detail-only field, not in list export
         flattened.append(flat)
 
@@ -1531,7 +1536,8 @@ def export_pioneer_xlsx(
     summary = wb.active
     summary.title = "summary"
     summary_cols = [
-        "id", "first_name", "last_name", "email", "notes", "status",
+        "id", "first_name", "last_name", "email", "title", "home_practice",
+        "notes", "status",
         "project_count", "rounds_completed", "rounds_expected", "completion_rate",
         "last_activity_at",
         "avg_quality_score", "avg_value_gain",
@@ -1547,7 +1553,10 @@ def export_pioneer_xlsx(
     )
     summary.append([
         pioneer["id"], pioneer.get("first_name"), pioneer.get("last_name"),
-        pioneer["email"], pioneer.get("notes"),
+        pioneer["email"],
+        pioneer.get("title") or "",
+        pioneer.get("home_practice_code") or "",
+        pioneer.get("notes"),
         pioneer["status"],
         pioneer["project_count"], pioneer["rounds_completed"], pioneer["rounds_expected"],
         pioneer.get("completion_rate"), pioneer.get("last_activity_at"),

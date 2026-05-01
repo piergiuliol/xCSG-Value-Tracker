@@ -3259,6 +3259,7 @@ def main():
     test_pioneer_db_helpers_persist_title_and_home_practice()
     test_pioneer_api_title_and_home_practice_filters()
     test_seed_initial_pioneers_writes_columns_not_notes()
+    test_pioneers_csv_includes_title_and_home_practice_columns()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3650,6 +3651,24 @@ def test_seed_initial_pioneers_writes_columns_not_notes():
             note = (r["notes"] or "").strip()
             assert " — " not in note or "Partner" not in note, \
                 f"{name}: notes still contains structured metadata: {note!r}"
+
+
+def test_pioneers_csv_includes_title_and_home_practice_columns():
+    """CSV export header includes title + home_practice; populated for seeded Alira pioneers."""
+    import csv, io
+    h = auth_h(admin_token())
+    r = requests.get(f"{BASE}/api/export/pioneers.csv", headers=h)
+    assert r.status_code == 200
+    text = r.content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    fields = reader.fieldnames or []
+    assert "title" in fields, f"missing column; got {fields}"
+    assert "home_practice" in fields, f"missing column; got {fields}"
+    rows = list(reader)
+    # At least one Alira pioneer should have title + home_practice populated.
+    alira = [r for r in rows if (r.get("email") or "").endswith("@alirahealth.com")]
+    assert any(r["title"] and r["home_practice"] for r in alira), \
+        f"no Alira pioneer has title+home_practice in CSV: {alira[:3]}"
 
 
 def test_pioneer_api_title_and_home_practice_filters():
