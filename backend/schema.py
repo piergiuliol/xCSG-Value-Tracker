@@ -278,9 +278,10 @@ ECONOMICS_CHARTS = [
 
 DASHBOARD_CONFIG = {
     "tabs": [
-        {"id": "overview",    "label": "Overview",    "icon": "\U0001F30D"},
-        {"id": "trends",      "label": "Trends",      "icon": "\U0001F4C8"},
-        {"id": "breakdowns",  "label": "Breakdowns",  "icon": "\U0001F4CA"},
+        {"id": "overview",    "label": "Overview",        "icon": "\U0001F30D"},
+        {"id": "trends",      "label": "Trends",          "icon": "\U0001F4C8"},
+        {"id": "breakdowns",  "label": "Breakdowns",      "icon": "\U0001F4CA"},
+        {"id": "economics",   "label": "Economics",       "icon": "\U0001F4B0"},
         {"id": "signals",     "label": "Signals & Gates", "icon": "\U0001F680"},
     ],
     "kpi_tiles": [

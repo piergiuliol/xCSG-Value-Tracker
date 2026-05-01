@@ -209,6 +209,121 @@ function renderEconomicsSummaryCard(data) {
   </div>`;
 }
 
+function renderEconomicsBreakdownTable(byPractice, baseCurrency) {
+  const fc = (v) => fmtCurrency(v, baseCurrency || 'USD');
+  if (!Array.isArray(byPractice) || byPractice.length === 0) {
+    return `<div class="card" style="padding:16px;color:var(--gray-500);font-size:13px">No per-practice breakdown available.</div>`;
+  }
+  const rows = byPractice.map(r => `
+    <tr>
+      <td><strong>${esc(r.practice_code || '—')}</strong></td>
+      <td>${r.n}</td>
+      <td>${fc(r.revenue)}</td>
+      <td>${fc(r.cost_saved)}</td>
+      <td>${fmtPctMaybe(r.margin_pct)}</td>
+    </tr>`).join('');
+  return `<div class="card" data-testid="economics-by-practice-table" style="overflow:hidden">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);font-weight:600;color:var(--navy)">By Practice</div>
+    <table class="data-table" style="width:100%">
+      <thead><tr>
+        <th>Practice</th><th>Projects</th><th>Revenue</th><th>Cost saved</th><th>Avg margin %</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderEconomicsCurrencyTiles(byCurrency) {
+  if (!Array.isArray(byCurrency) || byCurrency.length === 0) {
+    return `<div class="card" style="padding:16px;color:var(--gray-500);font-size:13px">No currency breakdown available.</div>`;
+  }
+  const tiles = byCurrency.map(c => {
+    const amount = fmtCurrency(c.native_revenue, c.code);
+    const projectsLbl = `${c.n_projects} project${c.n_projects === 1 ? '' : 's'}`;
+    return `<div class="metric-tile" data-testid="currency-tile-${esc(c.code)}" title="Native amount in ${esc(c.code)}">
+      <div class="metric-tile-value">${amount}</div>
+      <div class="metric-tile-label">${esc(c.code)} · ${projectsLbl}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card" data-testid="economics-currency-mix" style="padding:16px">
+    <div style="font-weight:600;color:var(--navy);margin-bottom:12px">Currency mix (native amounts)</div>
+    <div class="metrics-grid">${tiles}</div>
+  </div>`;
+}
+
+function renderEconomicsTab(data) {
+  if (!data || !data.summary) {
+    return `<div class="empty-state" style="padding:32px;color:var(--gray-500)">Loading economics…</div>`;
+  }
+  const s = data.summary;
+  const breakdowns = data.breakdowns || {};
+  const tiles = (schema && schema.economics_tiles) || [];
+  const tabCharts = ((schema && schema.economics_charts) || [])
+    .filter(c => c.surface === 'tab');
+
+  // Empty state — same wording as the Summary card.
+  if ((s.qualifying_project_count || 0) === 0) {
+    const denom = s.total_complete_count || 0;
+    const msg = denom === 0
+      ? 'No completed projects yet.'
+      : `0 of ${denom} completed projects have full economics data (revenue + legacy team mix).`;
+    return `<div class="empty-state" style="padding:32px">
+      <h3 style="margin:0 0 8px;color:var(--navy)">Economics</h3>
+      <p style="margin:0;color:var(--gray-500)">${esc(msg)} <a href="#projects" style="color:var(--brand-blue,#6EC1E4)">Edit projects →</a></p>
+    </div>`;
+  }
+
+  // Caveat line.
+  const caveat = `<div style="color:var(--gray-500);font-size:12px;margin-bottom:16px">
+    Across ${s.qualifying_project_count} of ${s.total_complete_count} completed projects with full economics data.
+    Converted to ${esc(s.base_currency)} using rates from Settings.
+  </div>`;
+
+  // FX-missing banner (same as Summary card).
+  const missing = s.currencies_missing_fx || [];
+  const banner = missing.length === 0 ? '' : `
+    <div style="margin:0 0 16px;padding:8px 12px;background:var(--amber-50,#fffbeb);border-left:3px solid var(--amber-400,#fbbf24);color:var(--gray-700);font-size:12px">
+      Excluded from total: ${missing.map(esc).join(', ')} —
+      <a href="#settings" style="color:var(--brand-blue,#6EC1E4)">set rates in Settings</a>.
+    </div>`;
+
+  // Chart cards (heights from schema). Each chart only renders when its
+  // backing breakdown is non-empty — _initEconomicsTabCharts skips empty data,
+  // so without this gate users would see empty 320px-tall boxes with titles.
+  const quarterly = (data.trends && Array.isArray(data.trends.quarterly)) ? data.trends.quarterly : [];
+  const hasQuarterly = quarterly.length > 0;
+  const hasPricing = Array.isArray(breakdowns.by_pricing_model) && breakdowns.by_pricing_model.length > 0;
+  const hasPioneer = Array.isArray(breakdowns.by_pioneer) && breakdowns.by_pioneer.length > 0;
+  const chartShouldRender = (id) => {
+    if (id === 'economics_pricing_mix') return hasPricing;
+    if (id === 'economics_pioneer_productivity') return hasPioneer;
+    if (id.startsWith('economics_quarterly_')) return hasQuarterly;
+    return true;
+  };
+  const chartCard = (c) => `
+    <div class="chart-card" data-chart-id="${c.id}" data-testid="${c.id}">
+      <div class="chart-card-title">${esc(c.title)}</div>
+      <div class="chart-body" style="height:${c.height}px">
+        <div id="${c.id}" style="width:100%;height:100%"></div>
+      </div>
+    </div>`;
+  const chartGrid = tabCharts.filter(c => chartShouldRender(c.id)).map(chartCard).join('');
+
+  return `<div data-testid="economics-tab-content">
+    <h3 style="margin:0 0 8px;color:var(--navy)">Economics</h3>
+    ${caveat}
+    ${banner}
+    ${renderEconomicsTilesGrid(s, tiles)}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px;margin-top:24px">
+      ${renderEconomicsBreakdownTable(breakdowns.by_practice, s.base_currency)}
+      ${renderEconomicsCurrencyTiles(breakdowns.by_currency)}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px;margin-top:16px">
+      ${chartGrid}
+    </div>
+  </div>`;
+}
+
 function renderEconomicsCard(project, metrics) {
   if (!project) return '';
   const hasSignal = (
@@ -956,9 +1071,12 @@ function _selectTab(id, mountEl) {
   mountEl.querySelectorAll('.tab-panel').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
   // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes.
   // disposeAllCharts() inside renderDashboardCharts also wipes our economics charts,
-  // so re-init them when returning to Overview.
+  // so re-init them when returning to Overview or Economics.
   renderDashboardCharts(_dashboardCache, applyFilters(_projectsCache));
-  if (id === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
+  if (_economicsCache) {
+    if (id === 'overview') _initEconomicsCharts(_economicsCache);
+    if (id === 'economics') _initEconomicsTabCharts(_economicsCache);
+  }
 }
 
 function _renderDashboardView(allProjects, dashboard) {
@@ -1052,18 +1170,24 @@ function _renderDashboardView(allProjects, dashboard) {
   renderFilterBar(allProjects);
   renderTabShell(document.getElementById('tabContainer'));
 
-  // Inject the Economics summary card at the bottom of the Overview tab panel.
-  // The spec calls this the "Summary tab" — internally it's the 'overview' tab.
+  // Inject Economics surfaces (PR2 Summary card on Overview + PR3 deep view on Economics tab).
   if (_economicsCache) {
     const overviewPanel = document.querySelector('#tabContainer .tab-panel[data-panel="overview"]');
     if (overviewPanel) {
       overviewPanel.insertAdjacentHTML('beforeend', renderEconomicsSummaryCard(_economicsCache));
     }
+    const economicsPanel = document.querySelector('#tabContainer .tab-panel[data-panel="economics"]');
+    if (economicsPanel) {
+      economicsPanel.insertAdjacentHTML('beforeend', renderEconomicsTab(_economicsCache));
+    }
   }
 
   requestAnimationFrame(() => {
     renderDashboardCharts(localMetrics, filtered);
-    if (_activeTab === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
+    if (_economicsCache) {
+      if (_activeTab === 'overview') _initEconomicsCharts(_economicsCache);
+      if (_activeTab === 'economics') _initEconomicsTabCharts(_economicsCache);
+    }
   });
 }
 
@@ -2493,6 +2617,128 @@ function _initEconomicsCharts(data) {
         areaStyle: { color: 'rgba(18,31,107,0.1)' },
       }],
     });
+  }
+}
+
+function _initEconomicsTabCharts(data) {
+  if (typeof echarts === 'undefined') return;
+  if (!data || !data.summary) return;
+  const baseCurrency = data.summary.base_currency || 'USD';
+  const fmtMoney = (v) => fmtCurrency(v, baseCurrency);
+  const breakdowns = data.breakdowns || {};
+  const quarterly = (data.trends && Array.isArray(data.trends.quarterly)) ? data.trends.quarterly : [];
+
+  // ── 1. Pricing model mix (donut) ──
+  const byPricing = Array.isArray(breakdowns.by_pricing_model) ? breakdowns.by_pricing_model : [];
+  if (byPricing.length > 0) {
+    const donut = ecInit('economics_pricing_mix');
+    if (donut) {
+      const total = byPricing.reduce((acc, e) => acc + (e.revenue || 0), 0) || 1;
+      donut.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'item',
+          formatter: (p) => `${p.marker}<b>${esc(p.name)}</b><br/>Revenue: ${fmtMoney(p.value)}<br/>Share: ${(p.value / total * 100).toFixed(1)}%`,
+        },
+        legend: { orient: 'vertical', right: 8, top: 'middle', textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+        series: [{
+          type: 'pie', radius: ['45%', '70%'], center: ['38%', '50%'],
+          itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+          label: { show: false }, labelLine: { show: false },
+          data: byPricing.map(e => ({ name: e.model, value: e.revenue || 0 })),
+        }],
+      });
+    }
+  }
+
+  // ── 2. Cost productivity by pioneer (horizontal bar, top 10 by cost_saved) ──
+  const byPioneer = Array.isArray(breakdowns.by_pioneer) ? breakdowns.by_pioneer : [];
+  if (byPioneer.length > 0) {
+    const bar = ecInit('economics_pioneer_productivity');
+    if (bar) {
+      const top = byPioneer
+        .slice()
+        .sort((a, b) => (b.cost_saved || 0) - (a.cost_saved || 0))
+        .slice(0, 10);
+      bar.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: (params) => {
+            const p = params[0];
+            return `<b>${esc(p.name)}</b><br/>Cost saved: ${fmtMoney(p.value)}`;
+          },
+        },
+        grid: { left: 140, right: 16, top: 16, bottom: 32 },
+        xAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+        yAxis: { type: 'category', inverse: true, data: top.map(p => p.display_name || `#${p.pioneer_id}`), axisLabel: axisLbl() },
+        series: [{
+          type: 'bar',
+          data: top.map(p => p.cost_saved || 0),
+          itemStyle: { color: '#10B981' },
+          barMaxWidth: 24,
+        }],
+      });
+    }
+  }
+
+  // ── 3. Quarterly revenue trend (full-size line) ──
+  if (quarterly.length > 0) {
+    const line = ecInit('economics_quarterly_revenue_full');
+    if (line) {
+      line.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          formatter: (params) => {
+            const p = params[0];
+            return `<b>${esc(p.axisValueLabel)}</b><br/>Revenue: ${fmtMoney(p.value)}`;
+          },
+        },
+        grid: { left: 70, right: 16, top: 16, bottom: 32 },
+        xAxis: { type: 'category', data: quarterly.map(q => q.quarter), axisLabel: axisLbl() },
+        yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+        series: [{
+          type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+          data: quarterly.map(q => q.revenue || 0),
+          itemStyle: { color: '#6EC1E4' },
+          lineStyle: { color: '#6EC1E4', width: 2 },
+          areaStyle: { color: 'rgba(110,193,228,0.18)' },
+        }],
+      });
+    }
+
+    // ── 4. Quarterly cost productivity trend (dual-line: xCSG vs legacy revenue/day) ──
+    const dual = ecInit('economics_quarterly_productivity');
+    if (dual) {
+      dual.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          formatter: (params) => {
+            const lines = params.map(p => `${p.marker}${p.seriesName}: <b>${fmtMoney(p.value)}</b>`);
+            return `<div><b>${esc(params[0].axisValueLabel)}</b></div>${lines.join('<br/>')}`;
+          },
+        },
+        legend: { top: 0, textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+        grid: { left: 70, right: 16, top: 36, bottom: 32 },
+        xAxis: { type: 'category', data: quarterly.map(q => q.quarter), axisLabel: axisLbl() },
+        yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+        series: [
+          {
+            name: 'xCSG revenue / day', type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+            data: quarterly.map(q => q.revenue_per_day_xcsg),
+            itemStyle: { color: '#10B981' }, lineStyle: { color: '#10B981', width: 2 },
+          },
+          {
+            name: 'Legacy revenue / day', type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+            data: quarterly.map(q => q.revenue_per_day_legacy),
+            itemStyle: { color: '#9CA3AF' }, lineStyle: { color: '#9CA3AF', width: 2, type: 'dashed' },
+          },
+        ],
+      });
+    }
   }
 }
 

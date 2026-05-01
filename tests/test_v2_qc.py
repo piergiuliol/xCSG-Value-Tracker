@@ -669,7 +669,7 @@ def test_schema_endpoint():
     body = r.json()
     test("schema response has dashboard key", "dashboard" in body)
     dash = body.get("dashboard") or {}
-    test("schema.dashboard has tabs list", isinstance(dash.get("tabs"), list) and len(dash["tabs"]) == 4)
+    test("schema.dashboard has tabs list", isinstance(dash.get("tabs"), list) and len(dash["tabs"]) == 5)
     test("schema.dashboard has charts list", isinstance(dash.get("charts"), list) and len(dash["charts"]) == 19)
     test("schema.dashboard has kpi_tiles list", isinstance(dash.get("kpi_tiles"), list) and len(dash["kpi_tiles"]) == 12)
     test("schema.dashboard.thresholds.radar_axis_cap present",
@@ -730,7 +730,7 @@ def test_dashboard_config():
     from backend import schema as _schema
     dc = getattr(_schema, "DASHBOARD_CONFIG", None)
     test("DASHBOARD_CONFIG exists", isinstance(dc, dict))
-    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 4)
+    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 5)
     test("DASHBOARD_CONFIG has charts list", isinstance(dc.get("charts"), list))
     th = dc.get("thresholds", {})
     test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
@@ -778,8 +778,10 @@ def test_dashboard_config():
          sum(1 for c in dc["charts"] if c["tab"] == "trends") == 5)
     test("Breakdowns has 5 charts (3 bars + heatmap + mix)",
          sum(1 for c in dc["charts"] if c["tab"] == "breakdowns") == 5)
-    test("every tab has at least one chart",
-         all(any(c["tab"] == t for c in dc["charts"]) for t in tab_ids_set))
+    # 'economics' tab is special: its surfaces come from ECONOMICS_TILES /
+    # ECONOMICS_CHARTS, not from dashboard.charts, so exempt it here.
+    test("every tab (except economics) has at least one chart",
+         all(any(c["tab"] == t for c in dc["charts"]) for t in tab_ids_set if t != "economics"))
     test("Overview has 4 charts",
          sum(1 for c in dc["charts"] if c["tab"] == "overview") == 4)
     test("Signals has 5 charts",
@@ -1324,6 +1326,31 @@ def test_economics_schema_constants():
     test("tile formats include percent", "percent" in formats_used)
     test("tile formats include fraction", "fraction" in formats_used)
 
+    # PR3-specific: 'economics' tab present in dashboard.tabs.
+    dash_tabs = (s.get("dashboard") or {}).get("tabs") or []
+    tab_ids = [t["id"] for t in dash_tabs]
+    test("dashboard.tabs includes 'economics'", "economics" in tab_ids,
+         detail=f"got {tab_ids}")
+    # Sensible position: between 'breakdowns' and 'signals' per the plan decision
+    # (the spec's literal "between Breakdowns and Trends" doesn't match the
+    # existing overview/trends/breakdowns/signals order).
+    if "economics" in tab_ids and "breakdowns" in tab_ids:
+        test("'economics' tab is right after 'breakdowns'",
+             tab_ids.index("economics") == tab_ids.index("breakdowns") + 1,
+             detail=f"got order {tab_ids}")
+
+    # PR3-specific: 4 charts must be tagged surface='tab'.
+    tab_charts = [c for c in charts if c.get("surface") == "tab"]
+    test("exactly 4 tab-surface charts", len(tab_charts) == 4,
+         detail=f"got {len(tab_charts)}: {[c['id'] for c in tab_charts]}")
+    tab_chart_ids = {c["id"] for c in tab_charts}
+    expected_tab_ids = {
+        "economics_pricing_mix", "economics_pioneer_productivity",
+        "economics_quarterly_revenue_full", "economics_quarterly_productivity",
+    }
+    test("tab charts cover all 4 expected ids", tab_chart_ids == expected_tab_ids,
+         detail=f"diff {tab_chart_ids ^ expected_tab_ids}")
+
 
 def test_dashboard_economics_response_includes_total_complete_count():
     """The PR2 frontend renders 'qualifying_project_count / total_complete_count'
@@ -1336,6 +1363,96 @@ def test_dashboard_economics_response_includes_total_complete_count():
     assert "total_complete_count" in s, f"missing key in {sorted(s.keys())}"
     assert isinstance(s["qualifying_project_count"], int)
     assert isinstance(s["total_complete_count"], int)
+
+
+def test_dashboard_economics_response_breakdowns_field_set():
+    """The PR3 Economics tab renderer reads specific fields from each
+    breakdown row. Pin the contract so a backend rename can't silently
+    break the deep view."""
+    h = auth_h(admin_token())
+    r = requests.get(f"{BASE}/api/dashboard/economics", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    breakdowns = body.get("breakdowns") or {}
+    for key in ("by_practice", "by_pioneer", "by_currency", "by_pricing_model"):
+        assert key in breakdowns, f"missing breakdown {key} (got {sorted(breakdowns.keys())})"
+        assert isinstance(breakdowns[key], list), f"{key} is not a list"
+
+    # On an empty DB the lists are empty — that's fine. We're asserting the
+    # KEYS exist and are lists. Field-set tests below run against a seeded
+    # project so the lists are non-empty.
+
+    # Seed a single project so we can assert per-row field set.
+    cats = requests.get(f"{BASE}/api/categories", headers=h).json()
+    practices = requests.get(f"{BASE}/api/practices", headers=h).json()
+    pmap = {p["code"]: p["id"] for p in practices}
+    map_cat = next((c for c in cats if any(p["code"] == "MAP" for p in c.get("practices", []))), None)
+    assert map_cat is not None
+
+    body = {
+        "project_name": "PR3 Field-Set Test",
+        "category_id": map_cat["id"],
+        "practice_id": pmap["MAP"],
+        "engagement_revenue": 100000.0,
+        "currency": "USD",
+        "xcsg_pricing_model": "Fixed fee",
+        "date_started": "2026-01-15", "date_delivered": "2026-02-10",
+        "working_days": 10, "xcsg_team_size": "2", "xcsg_revision_rounds": "1",
+        "engagement_stage": "Active engagement",
+        "pioneers": [{"first_name": "PR3", "last_name": "FieldTest", "email": "pr3-fieldtest@example.com", "total_rounds": 1}],
+        "legacy_team": [{"role_name": "Senior", "count": 2, "day_rate": 1500}],
+    }
+    pid = None
+    try:
+        cr = requests.post(f"{BASE}/api/projects", headers=h, json=body)
+        assert cr.status_code == 201, cr.text
+        proj = cr.json()
+        pid = proj["id"]
+        token = proj["pioneers"][0]["expert_token"]
+        # STRONG payload (re-use seed_20_projects) so margins compute.
+        import importlib.util, pathlib
+        spec = importlib.util.spec_from_file_location("sd", pathlib.Path("tests/seed_20_projects.py"))
+        sd = importlib.util.module_from_spec(spec); spec.loader.exec_module(sd)
+        sr = requests.post(f"{BASE}/api/expert/{token}", json=dict(getattr(sd, "STRONG")))
+        assert sr.status_code == 201, sr.text
+
+        body2 = requests.get(f"{BASE}/api/dashboard/economics", headers=h).json()
+        bd = body2["breakdowns"]
+        assert len(bd["by_practice"]) >= 1, bd
+        prac_row = bd["by_practice"][0]
+        for f in ("practice_code", "revenue", "cost_saved", "margin_pct", "n"):
+            assert f in prac_row, f"by_practice missing {f}: {prac_row}"
+
+        assert len(bd["by_pioneer"]) >= 1, bd
+        pio_row = bd["by_pioneer"][0]
+        for f in ("pioneer_id", "display_name", "revenue", "cost_saved", "n"):
+            assert f in pio_row, f"by_pioneer missing {f}: {pio_row}"
+
+        assert len(bd["by_currency"]) >= 1, bd
+        cur_row = bd["by_currency"][0]
+        for f in ("code", "native_revenue", "n_projects"):
+            assert f in cur_row, f"by_currency missing {f}: {cur_row}"
+
+        assert len(bd["by_pricing_model"]) >= 1, bd
+        pm_row = bd["by_pricing_model"][0]
+        for f in ("model", "revenue", "n"):
+            assert f in pm_row, f"by_pricing_model missing {f}: {pm_row}"
+
+        # Trends shape (PR3 quarterly_productivity chart needs both fields).
+        quarterly = (body2.get("trends") or {}).get("quarterly") or []
+        assert len(quarterly) >= 1, body2
+        q = quarterly[0]
+        for f in ("quarter", "revenue", "cost_saved", "margin_pct",
+                  "revenue_per_day_xcsg", "revenue_per_day_legacy", "n"):
+            assert f in q, f"quarterly missing {f}: {q}"
+    finally:
+        if pid is not None:
+            requests.delete(f"{BASE}/api/projects/{pid}", headers=h)
+        # Clean up the seeded pioneer too (project deletion doesn't cascade).
+        ps = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+        for p in ps:
+            if p.get("email") == "pr3-fieldtest@example.com":
+                requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=h)
 
 
 def test_migrate_v15_idempotent():
@@ -3109,6 +3226,7 @@ def main():
     test_economics_schema()
     test_economics_schema_constants()
     test_dashboard_economics_response_includes_total_complete_count()
+    test_dashboard_economics_response_breakdowns_field_set()
     test_practice_roles_schema()
     test_legacy_team_schema()
     test_pioneer_schema()
