@@ -5509,8 +5509,65 @@ function renderProjectFlywheelChips(metrics) {
     pioneerChip('Value Gain', metrics.productivity_ratio, 'ratio'),
   ].join('');
 }
-function renderProjectSpecCard(project) { return ''; }
-function renderProjectPioneersCard(pioneers) { return ''; }
+function renderProjectSpecCard(project) {
+  const rows = [
+    ['Category', project.category_name || '—'],
+    ['Practice', project.practice_code || '—'],
+    ['Pricing model', project.xcsg_pricing_model || '—'],
+    ['Currency', project.currency || '—'],
+    ['Started', project.date_started || '—'],
+    ['Delivered', project.date_delivered || '—'],
+    ['Working days', project.working_days != null ? String(project.working_days) : '—'],
+    ['xCSG team size', project.xcsg_team_size || '—'],
+    ['xCSG revision rounds', project.xcsg_revision_rounds != null ? String(project.xcsg_revision_rounds) : '—'],
+  ];
+  const rowHtml = rows.map(r => `
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray-100,#f3f4f6);font-size:13px">
+      <span style="color:#6b7280">${esc(r[0])}</span>
+      <span style="font-weight:600;color:var(--gray-700,#374151);text-align:right">${esc(r[1])}</span>
+    </div>
+  `).join('');
+  return `
+    <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff" data-testid="project-spec-card">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Specialization</h2>
+      ${rowHtml}
+    </div>
+  `;
+}
+function renderProjectPioneersCard(pioneers) {
+  if (!pioneers || pioneers.length === 0) {
+    return `
+      <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff" data-testid="project-pioneers-card">
+        <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Pioneers</h2>
+        <p style="color:#9ca3af;font-size:13px;margin:0">No pioneers assigned.</p>
+      </div>
+    `;
+  }
+  const rows = pioneers.map(p => {
+    const name = p.display_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || '—';
+    const role = p.role_name || '—';
+    const rate = p.day_rate != null ? p.day_rate.toLocaleString() : '—';
+    const rounds = (p.response_count || 0) + '/' + (p.total_rounds || 1);
+    const linkedName = p.pioneer_id
+      ? `<a href="#pioneer/${p.pioneer_id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">${esc(name)}</a>`
+      : esc(name);
+    return `<tr>
+      <td>${linkedName}</td>
+      <td>${esc(role)}</td>
+      <td>${rate}</td>
+      <td>${rounds}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff" data-testid="project-pioneers-card">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Pioneers (${pioneers.length})</h2>
+      <table class="data-table" style="width:100%;font-size:13px">
+        <thead><tr><th>Name</th><th>Role</th><th>Day rate</th><th>Rounds</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
 function renderProjectLegacyTeamCard(legacyTeam, currency) { return ''; }
 function renderProjectExpertResponsesCard(project, pioneers) { return ''; }
 async function renderProjectCharts(project, metrics) { /* populated in Task 7 */ }
