@@ -204,7 +204,7 @@ def build_by_category_sheet(wb: Workbook, complete: list) -> None:
 def build_by_pioneer_sheet(wb: Workbook, complete: list) -> None:
     ws = wb.create_sheet("By Pioneer")
     ws.append([
-        "pioneer_name", "project_count",
+        "pioneer_first_name", "pioneer_last_name", "project_count",
         "avg_delivery_speed", "avg_output_quality", "avg_value_gain",
     ])
     _apply_header(ws)
@@ -221,15 +221,31 @@ def build_by_pioneer_sheet(wb: Workbook, complete: list) -> None:
             if key:
                 groups[key].append(p)
 
-    for name, items in sorted(groups.items(), key=lambda kv: kv[0].lower()):
+    # Sort by last name then first name (consulting convention).
+    def _split(full: str) -> tuple[str, str]:
+        s = (full or "").strip()
+        if not s:
+            return ("", "")
+        if " " in s:
+            first, rest = s.split(" ", 1)
+            return (first, rest.strip())
+        return (s, "")
+
+    sorted_groups = sorted(
+        groups.items(),
+        key=lambda kv: (_split(kv[0])[1].lower(), _split(kv[0])[0].lower()),
+    )
+    for name, items in sorted_groups:
+        first, last = _split(name)
         ws.append([
-            name,
+            first,
+            last,
             len(items),
             _avg2(p.get("delivery_speed") for p in items),
             _avg2(p.get("output_quality") for p in items),
             _avg2(p.get("productivity_ratio") for p in items),
         ])
-    _set_col_widths(ws, {"A": 32, "B": 14, "C": 18, "D": 18, "E": 18})
+    _set_col_widths(ws, {"A": 18, "B": 22, "C": 14, "D": 18, "E": 18, "F": 18})
 
 
 def build_quarterly_trend_sheet(wb: Workbook, complete: list) -> None:
