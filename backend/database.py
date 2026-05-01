@@ -1832,6 +1832,8 @@ def add_pioneer(
     issued_by: Optional[int] = None,
     day_rate: Optional[float] = None,
     role_name: Optional[str] = None,
+    title: Optional[str] = None,
+    home_practice_id: Optional[int] = None,
 ) -> int:
     """Add a pioneer-on-project row.
 
@@ -1851,6 +1853,7 @@ def add_pioneer(
                 raise ValueError("add_pioneer: pioneer_id or first_name/last_name required")
             pioneer_id = create_pioneer(
                 first_name=fn, last_name=ln, email=email, notes=None, created_by=issued_by,
+                title=title, home_practice_id=home_practice_id,
             )
 
     token = secrets.token_urlsafe(32)

@@ -27,7 +27,9 @@ def _display_name(first_name: Optional[str], last_name: Optional[str]) -> str:
 
 
 def create_pioneer(first_name: str, last_name: str, email: Optional[str], notes: Optional[str],
-                   created_by: Optional[int]) -> int:
+                   created_by: Optional[int],
+                   title: Optional[str] = None,
+                   home_practice_id: Optional[int] = None) -> int:
     """Insert a new pioneer row; return the new id. Email uniqueness enforced
     by the partial index — caller should call find_pioneer_by_email first
     when find-or-create semantics are desired."""
@@ -36,9 +38,11 @@ def create_pioneer(first_name: str, last_name: str, email: Optional[str], notes:
     ln = (last_name or "").strip()
     with _db() as conn:
         cur = conn.execute(
-            """INSERT INTO pioneers (first_name, last_name, email, notes, created_by)
-               VALUES (?, ?, ?, ?, ?)""",
-            (fn, ln, email.strip() if email else None, notes, created_by),
+            """INSERT INTO pioneers (first_name, last_name, email, notes, created_by,
+                                     title, home_practice_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (fn, ln, email.strip() if email else None, notes, created_by,
+             title, home_practice_id),
         )
         conn.commit()
         return cur.lastrowid
@@ -66,8 +70,17 @@ def find_pioneer_by_email(email: Optional[str]) -> Optional[dict]:
 def update_pioneer_record(pioneer_id: int, first_name: Optional[str] = None,
                           last_name: Optional[str] = None,
                           email: Optional[str] = None,
-                          notes: Optional[str] = None) -> None:
-    """Update only the provided fields. None means 'leave unchanged'."""
+                          notes: Optional[str] = None,
+                          title=...,
+                          home_practice_id=...) -> None:
+    """Update only the provided fields.
+
+    For first_name/last_name/email/notes: None means 'leave unchanged' (legacy
+    semantics preserved for backwards compat with existing callers).
+
+    For title/home_practice_id: pass nothing (the default `...` sentinel) to
+    leave the field unchanged; pass explicit None to CLEAR the field.
+    """
     fields = {}
     if first_name is not None:
         fields["first_name"] = first_name.strip()
@@ -77,6 +90,11 @@ def update_pioneer_record(pioneer_id: int, first_name: Optional[str] = None,
         fields["email"] = email.strip() if email else None
     if notes is not None:
         fields["notes"] = notes
+    # title/home_practice_id: explicit None clears; not-passed (sentinel) leaves alone.
+    if title is not ...:
+        fields["title"] = title
+    if home_practice_id is not ...:
+        fields["home_practice_id"] = home_practice_id
     if not fields:
         return
     from backend.database import _db

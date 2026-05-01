@@ -3256,6 +3256,7 @@ def main():
     test_migrate_v23_leaves_real_notes_alone()
     test_schema_exposes_pioneer_titles()
     test_pioneer_title_and_home_practice_models()
+    test_pioneer_db_helpers_persist_title_and_home_practice()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3626,6 +3627,41 @@ def test_schema_exposes_pioneer_titles():
                 "Senior Consultant", "Consultant", "Analyst"}
     assert expected.issubset(set(titles)), f"missing: {expected - set(titles)}"
     assert isinstance(titles, list)
+
+
+def test_pioneer_db_helpers_persist_title_and_home_practice():
+    """Database helpers round-trip the new fields."""
+    from backend import database, pioneers as pmod
+    database.init_db()
+    with database._db() as conn:
+        map_id = conn.execute("SELECT id FROM practices WHERE code='MAP'").fetchone()[0]
+
+    pid = pmod.create_pioneer(
+        first_name="DBTest", last_name="Helper", email="dbtest.helper@example.com",
+        notes=None, created_by=None, title="Engagement Manager", home_practice_id=map_id,
+    )
+    try:
+        # find_pioneer_by_email returns the new fields
+        p = pmod.find_pioneer_by_email("dbtest.helper@example.com")
+        assert p["title"] == "Engagement Manager"
+        assert p["home_practice_id"] == map_id
+
+        # update_pioneer_record writes them
+        pmod.update_pioneer_record(pid, title="Principal")
+        p2 = pmod.find_pioneer_by_email("dbtest.helper@example.com")
+        assert p2["title"] == "Principal"
+        # home_practice_id unchanged
+        assert p2["home_practice_id"] == map_id
+
+        # Setting to None clears
+        pmod.update_pioneer_record(pid, home_practice_id=None)
+        p3 = pmod.find_pioneer_by_email("dbtest.helper@example.com")
+        assert p3["home_practice_id"] is None
+    finally:
+        # Cleanup
+        with database._db() as conn:
+            conn.execute("DELETE FROM pioneers WHERE id=?", (pid,))
+            conn.commit()
 
 
 def test_pioneer_title_and_home_practice_models():
