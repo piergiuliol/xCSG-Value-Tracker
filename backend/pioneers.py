@@ -161,10 +161,14 @@ def list_pioneers_with_metrics() -> list[dict]:
 
     with _db() as conn:
         # All pioneers — sort by last_name then first_name (consulting convention).
+        # LEFT JOIN practices to surface the home-practice code without an N+1.
         pioneers = conn.execute(
-            """SELECT id, first_name, last_name, email, notes
-                 FROM pioneers
-             ORDER BY last_name COLLATE NOCASE, first_name COLLATE NOCASE"""
+            """SELECT p.id, p.first_name, p.last_name, p.email, p.notes,
+                      p.title, p.home_practice_id,
+                      hp.code AS home_practice_code
+                 FROM pioneers p
+            LEFT JOIN practices hp ON hp.id = p.home_practice_id
+             ORDER BY p.last_name COLLATE NOCASE, p.first_name COLLATE NOCASE"""
         ).fetchall()
         if not pioneers:
             return []
@@ -270,6 +274,9 @@ def list_pioneers_with_metrics() -> list[dict]:
             "display_name": _display_name(p["first_name"], p["last_name"]),
             "email": p["email"],
             "notes": p["notes"],
+            "title": p["title"],
+            "home_practice_id": p["home_practice_id"],
+            "home_practice_code": p["home_practice_code"],
             "project_count": len({r["project_id"] for r in recs}),
             "rounds_completed": rounds_completed,
             "rounds_expected": rounds_expected,
@@ -345,7 +352,12 @@ def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
     # skip the full aggregation.
     with _db() as conn:
         pioneer_row = conn.execute(
-            "SELECT id, first_name, last_name, email, notes FROM pioneers WHERE id = ?",
+            """SELECT p.id, p.first_name, p.last_name, p.email, p.notes,
+                      p.title, p.home_practice_id,
+                      hp.code AS home_practice_code
+                 FROM pioneers p
+            LEFT JOIN practices hp ON hp.id = p.home_practice_id
+                WHERE p.id = ?""",
             (pioneer_id,),
         ).fetchone()
         if not pioneer_row:
@@ -363,6 +375,9 @@ def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
             "display_name": _display_name(pioneer_row["first_name"], pioneer_row["last_name"]),
             "email": pioneer_row["email"],
             "notes": pioneer_row["notes"],
+            "title": pioneer_row["title"],
+            "home_practice_id": pioneer_row["home_practice_id"],
+            "home_practice_code": pioneer_row["home_practice_code"],
             "project_count": 0,
             "rounds_completed": 0,
             "rounds_expected": 0,
