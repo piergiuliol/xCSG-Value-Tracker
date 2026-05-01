@@ -5608,7 +5608,51 @@ function renderProjectLegacyTeamCard(legacyTeam, currency) {
     </div>
   `;
 }
-function renderProjectExpertResponsesCard(project, pioneers) { return ''; }
+function renderProjectExpertResponsesCard(project, pioneers) {
+  // Flatten pioneer×round into a list of completed rounds.
+  const rows = [];
+  pioneers.forEach(p => {
+    (p.rounds || []).forEach(r => {
+      if (r.completed_at) {
+        rows.push({
+          pioneer_id: p.pioneer_id,
+          pioneer_name: p.display_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim(),
+          round_number: r.round_number,
+          completed_at: r.completed_at,
+          token: r.token,
+        });
+      }
+    });
+  });
+
+  if (rows.length === 0) {
+    return `
+      <div class="card" data-testid="project-responses-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+        <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 8px">Expert Responses</h2>
+        <p style="color:#9ca3af;font-size:13px;margin:0">No expert responses submitted yet.</p>
+      </div>
+    `;
+  }
+
+  rows.sort((a, b) => (a.completed_at || '').localeCompare(b.completed_at || ''));
+  const rowHtml = rows.map(r => `
+    <tr>
+      <td><strong>R${r.round_number || '?'}</strong></td>
+      <td>${r.pioneer_id ? `<a href="#pioneer/${r.pioneer_id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">${esc(r.pioneer_name)}</a>` : esc(r.pioneer_name)}</td>
+      <td>${esc((r.completed_at || '').split('T')[0])}</td>
+      <td>${r.token ? `<a href="#expert/${esc(r.token)}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">View answers →</a>` : ''}</td>
+    </tr>
+  `).join('');
+  return `
+    <div class="card" data-testid="project-responses-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Expert Responses (${rows.length})</h2>
+      <table class="data-table" style="width:100%;font-size:13px">
+        <thead><tr><th>Round</th><th>Pioneer</th><th>Submitted</th><th></th></tr></thead>
+        <tbody>${rowHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
 async function renderProjectCharts(project, metrics) { /* populated in Task 7 */ }
 
 // ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
