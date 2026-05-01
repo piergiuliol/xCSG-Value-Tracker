@@ -225,6 +225,7 @@ def init_db() -> None:
     migrate_v18()
     migrate_v19()
     migrate_v20()
+    migrate_v21_fx_rates()
 
     seed_data()
 
@@ -669,6 +670,44 @@ def migrate_v20() -> None:
                    ON pioneers(lower(trim(email))) WHERE email IS NOT NULL"""
         )
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+
+
+def migrate_v21_fx_rates() -> None:
+    """v2.1: add fx_rates table + app_settings.base_currency.
+
+    fx_rates is a 6-row lookup table keyed by ISO currency code, holding
+    the multiplier from each currency to the configured base currency.
+    Seeded at rate 1.0 — admin updates real values in Settings.
+
+    app_settings gains base_currency (default 'USD') for the dashboard
+    rollup. Kept separate from default_currency (new-project default)
+    so the two concerns can diverge.
+
+    Idempotent via PRAGMA table_info.
+    """
+    with _db() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS fx_rates (
+                   currency_code TEXT PRIMARY KEY,
+                   rate_to_base  REAL NOT NULL CHECK (rate_to_base >= 0),
+                   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+               )"""
+        )
+        # Seed every code in the canonical CURRENCIES list at rate 1.0.
+        from backend.schema import CURRENCIES
+        for code in CURRENCIES:
+            conn.execute(
+                "INSERT OR IGNORE INTO fx_rates (currency_code, rate_to_base) VALUES (?, 1.0)",
+                (code,),
+            )
+
+        # Add base_currency column to app_settings if missing.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(app_settings)").fetchall()}
+        if "base_currency" not in cols:
+            conn.execute(
+                "ALTER TABLE app_settings ADD COLUMN base_currency TEXT NOT NULL DEFAULT 'USD'"
+            )
         conn.commit()
 
 

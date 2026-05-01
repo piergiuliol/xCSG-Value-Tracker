@@ -2674,6 +2674,8 @@ def main():
     test_migrate_v19_destructive_creates_pioneers_table()
     test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v20_splits_name_into_first_and_last()
+    test_migrate_v21_creates_fx_rates_and_base_currency()
+    test_migrate_v21_idempotent()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -2897,6 +2899,43 @@ def test_migrate_v20_splits_name_into_first_and_last():
     with database._db() as conn:
         conn.execute("DELETE FROM pioneers WHERE email LIKE '%@v20test.example'")
         conn.commit()
+
+
+def test_migrate_v21_creates_fx_rates_and_base_currency():
+    """v2.1 — fx_rates table exists with all 6 currencies seeded at rate 1.0,
+    and app_settings.base_currency exists with default 'USD'."""
+    from backend import database
+    database.init_db()  # idempotent — applies all migrations
+
+    with database._db() as conn:
+        # fx_rates table exists with the right shape.
+        rates = conn.execute(
+            "SELECT currency_code, rate_to_base FROM fx_rates ORDER BY currency_code"
+        ).fetchall()
+        codes = [r["currency_code"] for r in rates]
+        assert codes == ["AUD", "CAD", "CHF", "EUR", "GBP", "USD"], f"got {codes}"
+        for r in rates:
+            assert r["rate_to_base"] == 1.0, f"{r['currency_code']} rate={r['rate_to_base']}"
+
+        # app_settings has base_currency column with default 'USD'.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(app_settings)").fetchall()}
+        assert "base_currency" in cols, f"got {cols}"
+        row = conn.execute("SELECT base_currency FROM app_settings WHERE id=1").fetchone()
+        assert row["base_currency"] == "USD", f"got {row['base_currency']}"
+
+    # Idempotency: running migration again is a no-op.
+    database.migrate_v21_fx_rates()
+    database.migrate_v21_fx_rates()
+
+
+def test_migrate_v21_idempotent():
+    """Calling migrate_v21_fx_rates twice doesn't duplicate rows or fail."""
+    from backend import database
+    database.init_db()
+    database.migrate_v21_fx_rates()
+    with database._db() as conn:
+        n = conn.execute("SELECT COUNT(*) AS n FROM fx_rates").fetchone()["n"]
+    assert n == 6, f"expected 6 currency rows, got {n}"
 
 
 def test_migrate_v19_email_unique_case_insensitive():
