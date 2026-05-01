@@ -3251,6 +3251,9 @@ def main():
     test_migrate_v21_idempotent()
     test_migrate_v22_drops_legacy_norms()
     test_migrate_v22_idempotent()
+    test_migrate_v23_adds_title_and_home_practice_columns()
+    test_migrate_v23_auto_parses_seeded_notes()
+    test_migrate_v23_leaves_real_notes_alone()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3550,6 +3553,65 @@ def test_migrate_v22_idempotent():
             "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_norms'"
         ).fetchone()
         assert row is None
+
+
+def test_migrate_v23_adds_title_and_home_practice_columns():
+    """v2.3 — pioneers table gains title + home_practice_id columns."""
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(pioneers)").fetchall()}
+        assert "title" in cols, f"got {cols}"
+        assert "home_practice_id" in cols, f"got {cols}"
+
+
+def test_migrate_v23_auto_parses_seeded_notes():
+    """A pioneer with notes='MAP — Partner' migrates to title=Partner + home_practice_id=MAP id."""
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        # Find MAP practice id
+        map_id = conn.execute("SELECT id FROM practices WHERE code='MAP'").fetchone()[0]
+        # Insert a pioneer with the seeded notes pattern, NO title yet (simulating pre-migration state).
+        conn.execute(
+            "INSERT INTO pioneers (first_name, last_name, email, notes, title, home_practice_id) VALUES (?, ?, ?, ?, ?, ?)",
+            ("Test", "Migrated", "test.migrated@alirahealth.com", "MAP — Partner", None, None),
+        )
+        conn.commit()
+    # Re-run migration (idempotent).
+    database.migrate_v23_pioneer_title_home_practice()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT title, home_practice_id, notes FROM pioneers WHERE email='test.migrated@alirahealth.com'"
+        ).fetchone()
+        assert row["title"] == "Partner", f"got {row['title']}"
+        assert row["home_practice_id"] == map_id, f"got {row['home_practice_id']}"
+        assert (row["notes"] or "") == "", f"notes should be cleared after parse; got {row['notes']!r}"
+        # Cleanup
+        conn.execute("DELETE FROM pioneers WHERE email='test.migrated@alirahealth.com'")
+        conn.commit()
+
+
+def test_migrate_v23_leaves_real_notes_alone():
+    """A pioneer whose notes don't match the pattern should be untouched."""
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        conn.execute(
+            "INSERT INTO pioneers (first_name, last_name, email, notes, title, home_practice_id) VALUES (?, ?, ?, ?, ?, ?)",
+            ("Real", "Bio", "real.bio@alirahealth.com", "Lead author on EU MDR submissions; speaks Italian.", None, None),
+        )
+        conn.commit()
+    database.migrate_v23_pioneer_title_home_practice()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT title, home_practice_id, notes FROM pioneers WHERE email='real.bio@alirahealth.com'"
+        ).fetchone()
+        assert row["title"] is None
+        assert row["home_practice_id"] is None
+        assert "Lead author" in (row["notes"] or "")
+        conn.execute("DELETE FROM pioneers WHERE email='real.bio@alirahealth.com'")
+        conn.commit()
 
 
 def test_migrate_v19_email_unique_case_insensitive():

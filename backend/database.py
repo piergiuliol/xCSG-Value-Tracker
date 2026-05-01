@@ -214,6 +214,7 @@ def init_db() -> None:
     migrate_v21_fx_rates()
     _ensure_all_fx_rows_exist()
     migrate_v22_drop_legacy_norms()
+    migrate_v23_pioneer_title_home_practice()
 
     seed_data()
 
@@ -725,6 +726,54 @@ def migrate_v22_drop_legacy_norms() -> None:
             # 2021+, and Docker python:3.11 base images.
             conn.execute("ALTER TABLE projects DROP COLUMN legacy_overridden")
 
+        conn.commit()
+
+
+def migrate_v23_pioneer_title_home_practice() -> None:
+    """v2.3: add pioneers.title + pioneers.home_practice_id; auto-parse the
+    "{practice_code} — {title}" notes pattern that _seed_initial_pioneers
+    produced before this migration existed.
+
+    Idempotent via PRAGMA table_info — once the columns exist and are
+    populated, re-running is a no-op (the WHERE clause filters out already-
+    migrated rows).
+    """
+    import re
+    with _db() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(pioneers)").fetchall()}
+        if "title" not in cols:
+            conn.execute("ALTER TABLE pioneers ADD COLUMN title TEXT")
+        if "home_practice_id" not in cols:
+            # Note: SQLite doesn't enforce FK constraint added via ALTER TABLE,
+            # but the column reference documents intent.
+            conn.execute("ALTER TABLE pioneers ADD COLUMN home_practice_id INTEGER REFERENCES practices(id)")
+        conn.commit()
+
+        # Auto-parse the seeded notes pattern — uses an em dash (—, U+2014) and
+        # the practice code prefix. Matches: "MAP — Partner", "MCD — Engagement Manager".
+        practice_codes = {row[0]: row[1] for row in conn.execute(
+            "SELECT code, id FROM practices"
+        ).fetchall()}
+        # Build code->id lookup; ignore practices with no code.
+        code_to_id = {code: pid for code, pid in practice_codes.items() if code}
+
+        # Find rows whose title is still NULL but notes match the pattern.
+        candidates = conn.execute(
+            "SELECT id, notes FROM pioneers WHERE title IS NULL AND notes IS NOT NULL AND notes != ''"
+        ).fetchall()
+        pattern = re.compile(r"^([A-Z]{2,5})\s+—\s+(.+)$")
+        for cand in candidates:
+            m = pattern.match((cand["notes"] or "").strip())
+            if not m:
+                continue
+            code, title = m.group(1), m.group(2).strip()
+            pid = code_to_id.get(code)
+            if pid is None:
+                continue
+            conn.execute(
+                "UPDATE pioneers SET title=?, home_practice_id=?, notes='' WHERE id=?",
+                (title, pid, cand["id"]),
+            )
         conn.commit()
 
 
