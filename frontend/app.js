@@ -156,8 +156,8 @@ function renderEconomicsTilesGrid(summary, schemaEconomicsTiles) {
 function renderEconomicsSummaryCard(data) {
   if (!data || !data.summary) return '';
   const s = data.summary;
-  const tiles = (window.schema && window.schema.economics_tiles) || [];
-  const charts = ((window.schema && window.schema.economics_charts) || [])
+  const tiles = (schema && schema.economics_tiles) || [];
+  const charts = ((schema && schema.economics_charts) || [])
     .filter(c => c.surface === 'summary');
 
   // Empty state.
