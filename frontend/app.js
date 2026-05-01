@@ -233,6 +233,24 @@ function renderEconomicsBreakdownTable(byPractice, baseCurrency) {
   </div>`;
 }
 
+function renderEconomicsCurrencyTiles(byCurrency) {
+  if (!Array.isArray(byCurrency) || byCurrency.length === 0) {
+    return `<div class="card" style="padding:16px;color:var(--gray-500);font-size:13px">No currency breakdown available.</div>`;
+  }
+  const tiles = byCurrency.map(c => {
+    const amount = fmtCurrency(c.native_revenue, c.code);
+    const projectsLbl = `${c.n_projects} project${c.n_projects === 1 ? '' : 's'}`;
+    return `<div class="metric-tile" data-testid="currency-tile-${esc(c.code)}" title="Native amount in ${esc(c.code)}">
+      <div class="metric-tile-value">${amount}</div>
+      <div class="metric-tile-label">${esc(c.code)} · ${projectsLbl}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card" data-testid="economics-currency-mix" style="padding:16px">
+    <div style="font-weight:600;color:var(--navy);margin-bottom:12px">Currency mix (native amounts)</div>
+    <div class="metrics-grid">${tiles}</div>
+  </div>`;
+}
+
 function renderEconomicsCard(project, metrics) {
   if (!project) return '';
   const hasSignal = (
