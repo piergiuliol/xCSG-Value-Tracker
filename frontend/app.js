@@ -209,6 +209,30 @@ function renderEconomicsSummaryCard(data) {
   </div>`;
 }
 
+function renderEconomicsBreakdownTable(byPractice, baseCurrency) {
+  const fc = (v) => fmtCurrency(v, baseCurrency || 'USD');
+  if (!Array.isArray(byPractice) || byPractice.length === 0) {
+    return `<div class="card" style="padding:16px;color:var(--gray-500);font-size:13px">No per-practice breakdown available.</div>`;
+  }
+  const rows = byPractice.map(r => `
+    <tr>
+      <td><strong>${esc(r.practice_code || '—')}</strong></td>
+      <td>${r.n}</td>
+      <td>${fc(r.revenue)}</td>
+      <td>${fc(r.cost_saved)}</td>
+      <td>${fmtPctMaybe(r.margin_pct)}</td>
+    </tr>`).join('');
+  return `<div class="card" data-testid="economics-by-practice-table" style="overflow:hidden">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);font-weight:600;color:var(--navy)">By Practice</div>
+    <table class="data-table" style="width:100%">
+      <thead><tr>
+        <th>Practice</th><th>Projects</th><th>Revenue</th><th>Cost saved</th><th>Avg margin %</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
 function renderEconomicsCard(project, metrics) {
   if (!project) return '';
   const hasSignal = (
