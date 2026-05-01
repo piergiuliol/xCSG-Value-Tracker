@@ -186,8 +186,11 @@ function renderEconomicsSummaryCard(data) {
     Converted to ${esc(s.base_currency)} using rates from Settings.
   </div>`;
 
-  // Chart containers (heights from schema).
-  const chartCards = charts.map(c => `
+  // Chart containers (heights from schema). Only render when there's quarterly
+  // data — otherwise _initEconomicsCharts skips them and we'd be left with
+  // empty 240px-tall boxes.
+  const hasQuarterly = (data.trends && Array.isArray(data.trends.quarterly) && data.trends.quarterly.length > 0);
+  const chartCards = !hasQuarterly ? '' : charts.map(c => `
     <div class="chart-card" data-chart-id="${c.id}" data-testid="${c.id}">
       <div class="chart-card-title">${esc(c.title)}</div>
       <div class="chart-body" style="height:${c.height}px">
@@ -200,9 +203,9 @@ function renderEconomicsSummaryCard(data) {
     ${renderEconomicsTilesGrid(s, tiles)}
     ${caveat}
     ${banner}
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px;margin-top:16px">
+    ${!hasQuarterly ? '' : `<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px;margin-top:16px">
       ${chartCards}
-    </div>
+    </div>`}
   </div>`;
 }
 
@@ -520,6 +523,10 @@ function handleLogout() {
   state.user = null;
   state.categories = [];
   state.practices = [];
+  _dashboardCache = null;
+  _projectsCache = null;
+  _economicsCache = null;
+  _takeawaysCache = {};
   sessionStorage.removeItem('xcsg_token');
   showScreen('login');
 }
@@ -1060,7 +1067,7 @@ function _renderDashboardView(allProjects, dashboard) {
   });
 }
 
-async function _reapplyFilters() {
+function _reapplyFilters() {
   if (!_projectsCache || !_dashboardCache) return;
   _saveFilters();
   // When a pioneer filter is active, re-fetch server-side aggregates so KPI tiles
@@ -1068,10 +1075,9 @@ async function _reapplyFilters() {
   if (filterState.pioneers.size) {
     renderPortfolio();
   } else {
-    // Non-pioneer filters (practice/category/date) only affect client-side
-    // visualizations today, BUT the economics endpoint is a separate fetch that
-    // also accepts filter params. Re-fetch so the Economics card stays consistent.
-    try { _economicsCache = await loadEconomicsData(); } catch (_) {}
+    // Non-pioneer filters (practice/category/date) only narrow the client-side
+    // visualizations today. /api/dashboard/economics doesn't yet accept those
+    // filters, so the cached _economicsCache is still correct — no re-fetch needed.
     _renderDashboardView(_projectsCache, _dashboardCache);
   }
 }
