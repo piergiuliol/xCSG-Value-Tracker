@@ -3257,6 +3257,7 @@ def main():
     test_schema_exposes_pioneer_titles()
     test_pioneer_title_and_home_practice_models()
     test_pioneer_db_helpers_persist_title_and_home_practice()
+    test_pioneer_api_title_and_home_practice_filters()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3627,6 +3628,50 @@ def test_schema_exposes_pioneer_titles():
                 "Senior Consultant", "Consultant", "Analyst"}
     assert expected.issubset(set(titles)), f"missing: {expected - set(titles)}"
     assert isinstance(titles, list)
+
+
+def test_pioneer_api_title_and_home_practice_filters():
+    """POST persists; GET ?title= and ?home_practice_id= narrow."""
+    h = auth_h(admin_token())
+    # Find practice ids
+    practices = requests.get(f"{BASE}/api/practices", headers=h).json()
+    map_id = next(p["id"] for p in practices if p["code"] == "MAP")
+    mcd_id = next(p["id"] for p in practices if p["code"] == "MCD")
+
+    # Create one Partner in MAP, one Principal in MCD.
+    p1 = requests.post(f"{BASE}/api/pioneers", headers=h, json={
+        "first_name": "FilterTest", "last_name": "Partner", "email": "ft.partner@example.com",
+        "title": "Partner", "home_practice_id": map_id,
+    })
+    assert p1.status_code == 201, p1.text
+    p2 = requests.post(f"{BASE}/api/pioneers", headers=h, json={
+        "first_name": "FilterTest", "last_name": "Principal", "email": "ft.principal@example.com",
+        "title": "Principal", "home_practice_id": mcd_id,
+    })
+    assert p2.status_code == 201, p2.text
+
+    try:
+        # Filter by title
+        partners = requests.get(f"{BASE}/api/pioneers?title=Partner", headers=h).json()
+        assert any(p["email"] == "ft.partner@example.com" for p in partners)
+        assert not any(p["email"] == "ft.principal@example.com" for p in partners)
+
+        # Filter by home_practice_id
+        mcd_pioneers = requests.get(f"{BASE}/api/pioneers?home_practice_id={mcd_id}", headers=h).json()
+        assert any(p["email"] == "ft.principal@example.com" for p in mcd_pioneers)
+        assert not any(p["email"] == "ft.partner@example.com" for p in mcd_pioneers)
+
+        # Invalid title rejected
+        bad = requests.post(f"{BASE}/api/pioneers", headers=h, json={
+            "first_name": "Bad", "last_name": "Title", "email": "bt@example.com", "title": "Wizard",
+        })
+        assert bad.status_code == 422, f"got {bad.status_code}"
+    finally:
+        for em in ("ft.partner@example.com", "ft.principal@example.com"):
+            ps = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+            for p in ps:
+                if p.get("email") == em:
+                    requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=h)
 
 
 def test_pioneer_db_helpers_persist_title_and_home_practice():

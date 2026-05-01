@@ -1631,13 +1631,27 @@ async def put_fx_rates(
 @app.get("/api/pioneers")
 def list_pioneers_endpoint(
     search: Optional[str] = Query(None),
+    title: Optional[List[str]] = Query(None),
+    home_practice_id: Optional[List[int]] = Query(None),
     user=Depends(auth.get_current_user),
 ):
     """Optional ?search filter matches first_name, last_name, the combined
-    'first last' display name, OR email (case-insensitive substring)."""
-    if not search:
-        return db.list_pioneers_with_metrics()
-    return pioneers_mod.filter_pioneers_for_export(search=search)
+    'first last' display name, OR email (case-insensitive substring).
+
+    Optional ?title= and ?home_practice_id= filter the result list (multi-
+    valued; OR semantics within a filter, AND across filters).
+    """
+    if search:
+        results = pioneers_mod.filter_pioneers_for_export(search=search)
+    else:
+        results = db.list_pioneers_with_metrics()
+    if title:
+        title_set = set(title)
+        results = [p for p in results if p.get("title") in title_set]
+    if home_practice_id:
+        hp_set = set(home_practice_id)
+        results = [p for p in results if p.get("home_practice_id") in hp_set]
+    return results
 
 
 @app.get("/api/pioneers/{pioneer_id}")
@@ -1668,6 +1682,8 @@ def create_pioneer_endpoint(
         email=payload.email,
         notes=payload.notes,
         created_by=user_id,
+        title=payload.title,
+        home_practice_id=payload.home_practice_id,
     )
     return db.get_pioneer_with_metrics(pid)
 
@@ -1681,12 +1697,17 @@ def update_pioneer_endpoint(
     pioneer = db.get_pioneer_with_metrics(pioneer_id)
     if not pioneer:
         raise HTTPException(status_code=404, detail="Pioneer not found")
+    # Use sentinel `...` to distinguish "field omitted from PUT body" (leave
+    # alone) from "explicitly set to None" (clear the field).
+    fields_set = payload.model_fields_set
     db.update_pioneer_record(
         pioneer_id,
         first_name=payload.first_name,
         last_name=payload.last_name,
         email=payload.email,
         notes=payload.notes,
+        title=payload.title if "title" in fields_set else ...,
+        home_practice_id=payload.home_practice_id if "home_practice_id" in fields_set else ...,
     )
     return db.get_pioneer_with_metrics(pioneer_id)
 
