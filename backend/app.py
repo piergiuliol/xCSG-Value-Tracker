@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import auth
 from backend import database as db
 from backend import metrics as mtx
+from backend import economics as econ
 from backend import pioneers as pioneers_mod
 from backend.pioneers import PioneerInUseError
 from backend.models import (
@@ -1037,8 +1038,6 @@ async def dashboard_economics(
 ):
     """Portfolio-level economics aggregates. Honors the same filters as
     /api/dashboard/metrics. Returns {summary, breakdowns, trends}."""
-    from backend import economics as econ
-
     settings = db.get_app_settings()
     base_currency = settings["base_currency"]
     fx = {r["currency_code"]: r["rate_to_base"] for r in db.get_fx_rates()}
@@ -1624,6 +1623,11 @@ async def put_fx_rates(
     payload: FxRatesPayload,
     current_user: dict = Depends(auth.get_current_user_admin),
 ):
+    # Non-atomic by design: app_settings + fx_rates live in separate
+    # connections, so a failure in update_fx_rates leaves base_currency
+    # already committed. Acceptable for an admin-only manual edit; the
+    # Settings UI re-fetches and re-renders after the round-trip so an
+    # inconsistency would be visible immediately.
     db.update_app_settings(base_currency=payload.base_currency)
     db.update_fx_rates([
         {"currency_code": r.currency_code, "rate_to_base": r.rate_to_base}

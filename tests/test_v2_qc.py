@@ -4118,9 +4118,15 @@ def test_dashboard_economics_endpoint():
                  abs(rf["summary"]["total_revenue"] - 100000.0) < 0.01,
                  detail=f"got {rf['summary']['total_revenue']}")
     finally:
-        # Cleanup: delete created projects + restore initial FX.
+        # Cleanup: delete created projects + restore initial FX + remove test pioneers.
         for pid in created_ids:
             requests.delete(f"{BASE}/api/projects/{pid}", headers=h)
+        # Pioneer rows in the global pioneers table don't cascade on project
+        # deletion (FK is RESTRICT), so we must DELETE them by email manually.
+        all_pioneers = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+        for p in all_pioneers:
+            if p.get("email") in {"econ1@example.com", "econ2@example.com"}:
+                requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=h)
         if initial_fx:
             requests.put(f"{BASE}/api/fx-rates", headers=h, json={
                 "base_currency": initial_fx["base_currency"],
