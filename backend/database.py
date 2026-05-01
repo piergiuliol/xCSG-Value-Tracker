@@ -2329,7 +2329,11 @@ def get_app_settings() -> dict:
 def update_app_settings(
     *, default_currency: Optional[str] = None, base_currency: Optional[str] = None
 ) -> None:
-    """Update either or both fields. Pass None to leave a field unchanged."""
+    """Update either or both fields. Pass None to leave a field unchanged.
+
+    Note: passing None for both is a silent no-op. Callers expecting at least
+    one update should validate before calling.
+    """
     with _db() as conn:
         if default_currency is not None:
             conn.execute(
