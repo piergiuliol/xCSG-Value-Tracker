@@ -1030,6 +1030,31 @@ async def dashboard_takeaways(
     return compute_takeaways(complete, aggregates, scaling_gates, DASHBOARD_CONFIG["charts"])
 
 
+@app.get("/api/dashboard/economics", response_model=EconomicsResponse)
+async def dashboard_economics(
+    pioneer_id: Optional[List[int]] = Query(None),
+    current_user: dict = Depends(auth.get_current_user),
+):
+    """Portfolio-level economics aggregates. Honors the same filters as
+    /api/dashboard/metrics. Returns {summary, breakdowns, trends}."""
+    from backend import economics as econ
+
+    settings = db.get_app_settings()
+    base_currency = settings["base_currency"]
+    fx = {r["currency_code"]: r["rate_to_base"] for r in db.get_fx_rates()}
+
+    project_id_filter = _filter_project_ids_by_pioneer(pioneer_id)
+    complete = _build_averaged_complete_projects()
+    if project_id_filter is not None:
+        complete = [p for p in complete if p["id"] in project_id_filter]
+
+    return {
+        "summary": econ.compute_economics_summary(complete, fx, base_currency),
+        "breakdowns": econ.compute_economics_breakdowns(complete, fx, base_currency),
+        "trends": econ.compute_economics_trends(complete, fx, base_currency),
+    }
+
+
 @app.get("/api/projects/{project_id}/metrics")
 async def project_metrics(
     project_id: int,
@@ -1070,6 +1095,26 @@ def _build_averaged_complete_projects() -> list:
                 pp.get("display_name") or pp.get("pioneer_name", "")
                 for pp in project_pioneers
             )
+            # Phase 4 (Dashboard Economics): structured pioneer attribution for
+            # the economics aggregator's by_pioneer breakdown. list_pioneers()
+            # returns pp.id as `id` (project_pioneers row) and pp.pioneer_id as
+            # `pioneer_id` (the global pioneers.id). We want the latter so that
+            # filtering by /api/pioneers ids lines up correctly.
+            avg["pioneer_ids"] = [
+                pp.get("pioneer_id") for pp in project_pioneers
+                if pp.get("pioneer_id") is not None
+            ]
+            avg["pioneer_display_names"] = [
+                pp.get("display_name") or pp.get("pioneer_name", "")
+                for pp in project_pioneers
+            ]
+            # Currency / pricing / delivery date for the economics aggregator.
+            # The status + legacy_team fields decide whether the project
+            # qualifies for portfolio sums in compute_economics_summary.
+            avg["status"] = p.get("status")
+            avg["legacy_team"] = project_dict["legacy_team"]
+            avg["currency"] = p.get("currency")
+            avg["xcsg_pricing_model"] = p.get("xcsg_pricing_model")
             avg["date_started"] = p.get("date_started")
             avg["date_delivered"] = p.get("date_delivered")
             result.append(avg)
