@@ -2315,13 +2315,32 @@ def list_norm_aggregates() -> list:
 
 def get_app_settings() -> dict:
     with _db() as conn:
-        row = conn.execute("SELECT default_currency FROM app_settings WHERE id=1").fetchone()
-        return {"default_currency": row["default_currency"] if row else "EUR"}
+        row = conn.execute(
+            "SELECT default_currency, base_currency FROM app_settings WHERE id=1"
+        ).fetchone()
+        if row:
+            return {
+                "default_currency": row["default_currency"],
+                "base_currency": row["base_currency"],
+            }
+        return {"default_currency": "EUR", "base_currency": "USD"}
 
 
-def update_app_settings(*, default_currency: str) -> None:
+def update_app_settings(
+    *, default_currency: Optional[str] = None, base_currency: Optional[str] = None
+) -> None:
+    """Update either or both fields. Pass None to leave a field unchanged."""
     with _db() as conn:
-        conn.execute("UPDATE app_settings SET default_currency = ? WHERE id=1", (default_currency,))
+        if default_currency is not None:
+            conn.execute(
+                "UPDATE app_settings SET default_currency = ? WHERE id=1",
+                (default_currency,),
+            )
+        if base_currency is not None:
+            conn.execute(
+                "UPDATE app_settings SET base_currency = ? WHERE id=1",
+                (base_currency,),
+            )
         conn.commit()
 
 

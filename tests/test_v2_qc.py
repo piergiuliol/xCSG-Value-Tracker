@@ -1851,6 +1851,32 @@ def test_create_project_persists_economics():
 
 
 
+def test_app_settings_includes_base_currency():
+    """get_app_settings returns base_currency; update_app_settings persists it."""
+    from backend import database
+    database.init_db()
+    s = database.get_app_settings()
+    assert "default_currency" in s
+    assert "base_currency" in s, f"missing base_currency: {s}"
+    assert s["base_currency"] == "USD", f"default base_currency should be USD; got {s['base_currency']}"
+
+    initial_default = s["default_currency"]
+    initial_base = s["base_currency"]
+    try:
+        database.update_app_settings(default_currency="EUR", base_currency="GBP")
+        s2 = database.get_app_settings()
+        assert s2["default_currency"] == "EUR"
+        assert s2["base_currency"] == "GBP"
+
+        # Partial update: only base_currency.
+        database.update_app_settings(base_currency="CHF")
+        s3 = database.get_app_settings()
+        assert s3["default_currency"] == "EUR"  # unchanged
+        assert s3["base_currency"] == "CHF"
+    finally:
+        database.update_app_settings(default_currency=initial_default, base_currency=initial_base)
+
+
 def test_fx_rates_db_helpers():
     """get_fx_rates returns all 6 rates; update_fx_rates round-trips and
     bumps updated_at; _ensure_all_fx_rows_exist backfills missing currencies."""
@@ -2733,6 +2759,7 @@ def main():
     test_economics_metrics()
     test_legacy_cost_from_team_mix()
     test_fx_rates_db_helpers()
+    test_app_settings_includes_base_currency()
     test_app_settings_endpoints()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
