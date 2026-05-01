@@ -5712,6 +5712,56 @@ async function renderProjectCharts(project, metrics) {
   safeRender('radar_gains',          'projectChartRadar');
   safeRender('scatter_disprove',     'projectChartDisprove');
   if (showTimeline) safeRender('timeline_per_project', 'projectChartTimeline');
+
+  // Per-pioneer xCSG cost donut — only meaningful with 2+ pioneers.
+  const pioneers = project.pioneers || [];
+  if (pioneers.length >= 2 && metrics.xcsg_cost != null) {
+    const slice = pioneers.map(p => {
+      const rate = parseFloat(p.day_rate) || 0;
+      const rounds = parseInt(p.total_rounds, 10) || 1;
+      const weight = rate * rounds;
+      return {
+        name: p.display_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || `Pioneer #${p.pioneer_id}`,
+        weight,
+      };
+    });
+    const totalWeight = slice.reduce((s, e) => s + e.weight, 0);
+    if (totalWeight > 0) {
+      const grid = cont.querySelector('div[style*="grid-template-columns"]');
+      if (grid) {
+        // Build a card div containing h3 + chart div, append to grid.
+        const card = document.createElement('div');
+        card.innerHTML = `
+          <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Cost Composition by Pioneer</h3>
+          <div id="projectChartCostByPioneer" data-testid="project-chart-cost-by-pioneer" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+        `;
+        grid.appendChild(card);
+        const donut = ecInit('projectChartCostByPioneer');
+        if (donut) {
+          const fc = (v) => fmtCurrency(v, project.currency || 'USD');
+          const totalCost = metrics.xcsg_cost;
+          donut.setOption({
+            tooltip: {
+              ...tip(),
+              trigger: 'item',
+              formatter: (p) => {
+                const share = totalWeight > 0 ? p.value / totalWeight : 0;
+                const dollars = totalCost * share;
+                return `${p.marker}<b>${esc(p.name)}</b><br/>Share: ${(share * 100).toFixed(1)}%<br/>~${fc(dollars)}`;
+              },
+            },
+            legend: { orient: 'vertical', right: 8, top: 'middle', textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+            series: [{
+              type: 'pie', radius: ['45%', '70%'], center: ['38%', '50%'],
+              itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+              label: { show: false }, labelLine: { show: false },
+              data: slice.map(s => ({ name: s.name, value: s.weight })),
+            }],
+          });
+        }
+      }
+    }
+  }
 }
 
 // ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
