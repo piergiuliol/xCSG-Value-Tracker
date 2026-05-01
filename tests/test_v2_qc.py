@@ -133,7 +133,7 @@ def test_expert_options():
     
     expected = {
         "b1_starting_point": ["From AI draft", "Mixed", "From blank page"],
-        "b2_research_sources": ["1-3", "4-7", "8-12", "13+"],
+        "b2_research_sources": ["Single source or dataset", "A few targeted sources (2-4)", "Multiple sources across domains (5-10)", "Broad systematic synthesis (10+)"],
         "b3_assembly_ratio": [">75% AI", "50-75%", "25-50%", "<25%"],
         "b4_hypothesis_first": ["Hypothesis-first", "Hybrid", "Discovery-first"],
         "b5_ai_survival": [">75%", "50-75%", "25-50%", "<25%", "Did not use AI draft"],
@@ -236,8 +236,14 @@ def test_create_deliverable():
         test("Cannot test create - no categories", False)
         return
     cat_id = cats[0]["id"]
-    prs = requests.get(f"{BASE}/api/practices", headers=auth_h(tk)).json()
-    practice_id = prs[0]["id"] if prs else None
+    # Phase 2c added (category, practice) constraint — pick a practice allowed for cat[0].
+    practice_id = cats[0].get("practices", [{}])[0].get("id") if cats[0].get("practices") else None
+    if not practice_id:
+        # Fall back: find any category that has at least one allowed practice.
+        for c in cats:
+            if c.get("practices"):
+                cat_id, practice_id = c["id"], c["practices"][0]["id"]
+                break
 
     # Create with all V2 fields
     payload = {
@@ -324,8 +330,11 @@ def test_expert_assessment():
         return
     
     proj = r.json()
-    token = proj["expert_token"]
-    
+    # Phase 2+: /api/expert/{token} resolves a per-pioneer round token, not the
+    # legacy project-level expert_token. Pull the pioneer's round-1 token.
+    pioneers = proj.get("pioneers") or []
+    token = pioneers[0]["expert_token"] if pioneers else proj.get("expert_token")
+
     # GET expert context (no auth)
     r = requests.get(f"{BASE}/api/expert/{token}")
     test("GET /api/expert/{{token}} returns 200 (no auth)", r.status_code == 200, f"got {r.status_code}")
@@ -338,7 +347,7 @@ def test_expert_assessment():
     # POST expert assessment
     expert_data = {
         "b1_starting_point": "From AI draft",
-        "b2_research_sources": "8-12",
+        "b2_research_sources": "Multiple sources across domains (5-10)",
         "b3_assembly_ratio": ">75% AI",
         "b4_hypothesis_first": "Hypothesis-first",
         "b5_ai_survival": ">75%",
@@ -360,7 +369,7 @@ def test_expert_assessment():
         "l3_legacy_revision_depth": "Moderate rework",
         "l4_legacy_scope_expansion": "No",
         "l5_legacy_client_reaction": "Met expectations",
-        "l6_legacy_b2_sources": "4-7",
+        "l6_legacy_b2_sources": "A few targeted sources (2-4)",
         "l7_legacy_c1_specialization": "Generalist",
         "l8_legacy_c2_directness": "Expert reviewed only",
         "l9_legacy_c3_judgment": "25-50%",
@@ -391,45 +400,52 @@ def test_metrics():
     print("\n── F. Metrics Computation ──")
     tk = admin_token()
     
-    # Check that the metrics code uses the right team midpoints
+    # Scoring literals live in backend/schema.py (single source of truth);
+    # metrics.py only re-binds them via SCORES["…"]. So check each literal in
+    # whichever file actually owns it.
     from pathlib import Path
-    metrics_file = Path(DB_PATH).parent.parent / "backend" / "metrics.py"
-    if metrics_file.exists():
+    base_dir = Path(DB_PATH).parent.parent
+    metrics_file = base_dir / "backend" / "metrics.py"
+    schema_file = base_dir / "backend" / "schema.py"
+    if metrics_file.exists() and schema_file.exists():
         content = metrics_file.read_text()
+        schema_content = schema_file.read_text()
+
+        # Team midpoints still live in metrics.py
         test("TEAM_MIDPOINTS defined", 'TEAM_MIDPOINTS' in content)
         test('Team midpoint "1":1', '"1": 1' in content or "'1': 1" in content)
         test('Team midpoint "4+":5', '"4+": 5' in content or "'4+': 5" in content)
-        
-        # Quality score components
-        test("REVISION_DEPTH_SCORES defined", "REVISION_DEPTH_SCORES" in content)
-        test("No revisions=1.0", '"No revisions needed": 1.0' in content)
-        test("Cosmetic=0.85", '"Cosmetic only": 0.85' in content)
-        test("Moderate=0.55", '"Moderate rework": 0.55' in content)
-        test("Major=0.2", '"Major rework": 0.2' in content)
-        
-        test("SELF_ASSESSMENT_SCORES defined", "SELF_ASSESSMENT_SCORES" in content)
-        test("Significantly=1.0", '"Significantly better": 1.0' in content)
-        test("Somewhat=0.7", '"Somewhat better": 0.7' in content)
-        test("Comparable=0.4", '"Comparable": 0.4' in content)
-        test("Worse=0.1", '"Somewhat worse": 0.1' in content)
-        
-        test("CLIENT_PULSE_SCORES defined", "CLIENT_PULSE_SCORES" in content)
-        test("Exceeded=1.0", '"Exceeded expectations": 1.0' in content)
-        test("Met=0.6", '"Met expectations": 0.6' in content)
-        test("Below=0.1", '"Below expectations": 0.1' in content)
-        
+
+        # Scoring dicts: identifier in metrics.py, literal weights in schema.py.
+        test("REVISION_DEPTH_SCORES bound in metrics", "REVISION_DEPTH_SCORES" in content)
+        test("No revisions=1.0", '"No revisions needed": 1.0' in schema_content)
+        test("Cosmetic=0.85", '"Cosmetic only": 0.85' in schema_content)
+        test("Moderate=0.55", '"Moderate rework": 0.55' in schema_content)
+        test("Major=0.2", '"Major rework": 0.2' in schema_content)
+
+        test("SELF_ASSESSMENT_SCORES bound in metrics", "SELF_ASSESSMENT_SCORES" in content)
+        test("Significantly=1.0", '"Significantly better": 1.0' in schema_content)
+        test("Somewhat=0.7", '"Somewhat better": 0.7' in schema_content)
+        test("Comparable=0.4", '"Comparable": 0.4' in schema_content)
+        test("Worse=0.1", '"Somewhat worse": 0.1' in schema_content)
+
+        test("CLIENT_PULSE_SCORES bound in metrics", "CLIENT_PULSE_SCORES" in content)
+        test("Exceeded=1.0", '"Exceeded expectations": 1.0' in schema_content)
+        test("Met=0.6", '"Met expectations": 0.6' in schema_content)
+        test("Below=0.1", '"Below expectations": 0.1' in schema_content)
+
         # Quality score is composite, not ratio
         test("compute_quality_score defined", "compute_quality_score" in content or "quality_score" in content)
-        
+
         # Outcome rate = quality_score / person_days
         test("outcome_rate computation", "outcome_rate" in content.lower())
-        
+
         # Revenue productivity
         test("revenue_productivity computation", "productivity" in content.lower() or "revenue_productivity" in content.lower())
-        
-        # B5 "Did not use AI draft" excluded
-        test("B5 'Did not use AI draft' handled", "Did not use AI draft" in content)
-        
+
+        # B5 "Did not use AI draft" handled — option declared in schema.py.
+        test("B5 'Did not use AI draft' handled", "Did not use AI draft" in schema_content)
+
         # Flywheel leg scores
         test("Machine-First score computed", "machine_first" in content.lower())
         test("Senior-Led score computed", "senior_led" in content.lower())
@@ -557,11 +573,12 @@ def test_string_consistency():
         for opt in info.get("options", []):
             api_strings.add(opt)
     
-    # Check backend metrics.py for matching strings
-    metrics_file = base_dir / "backend" / "metrics.py"
-    if metrics_file.exists():
-        content = metrics_file.read_text()
-        # Check key strings exist in metrics
+    # Check backend schema.py for matching strings \u2014 option strings are the
+    # single source of truth there (metrics.py only references SCORES["\u2026"]).
+    schema_file = base_dir / "backend" / "schema.py"
+    if schema_file.exists():
+        content = schema_file.read_text()
+        # Check key strings exist in schema
         critical_strings = [
             "No revisions needed", "Cosmetic only", "Moderate rework", "Major rework",
             "Significantly better", "Somewhat better", "Comparable", "Somewhat worse",
@@ -570,7 +587,9 @@ def test_string_consistency():
             "No \u2014 proprietary inputs decisive", "Partially \u2014 they would miss key insights", "Yes \u2014 all inputs publicly available",
         ]
         for s in critical_strings:
-            test(f"Backend metrics contains: '{s[:40]}...'", s in content, f"missing: {s[:60]}")
+            # Schema source escapes em dashes as —; accept either form.
+            escaped = s.replace("—", "\\u2014")
+            test(f"Schema contains: '{s[:40]}...'", s in content or escaped in content, f"missing: {s[:60]}")
     
     # Check frontend app.js
     frontend_file = base_dir / "frontend" / "app.js"
@@ -622,20 +641,21 @@ def test_norms():
     
     if norms:
         n = norms[0]
-        test("Norm has sample_count", "sample_count" in n)
+        # Modern norms aggregate exposes 'completed_surveys' (renamed from 'sample_count').
+        test("Norm has completed_surveys", "completed_surveys" in n)
         test("Norm has category_name", "category_name" in n)
-        
+
         # Check outlier flag logic - should only appear when ≥3 samples
-        if n.get("sample_count", 0) < 3:
-            test(f"Outlier flag absent when <3 samples ({n.get('sample_count')})", not n.get("has_outlier_flags", False))
-    
+        if n.get("completed_surveys", 0) < 3:
+            test(f"Outlier flag absent when <3 samples ({n.get('completed_surveys')})", not n.get("has_outlier_flags", False))
+
     # Categories with 0 completions should show empty/null norms
-    has_zero = any(n.get("sample_count", 0) == 0 for n in norms)
+    has_zero = any(n.get("completed_surveys", 0) == 0 for n in norms)
     if has_zero:
         for n in norms:
-            if n.get("sample_count", 0) == 0:
+            if n.get("completed_surveys", 0) == 0:
                 test(f"Zero-completion category ({n.get('category_name')}) has null averages",
-                     n.get("average_legacy_working_days") is None or n.get("average_legacy_team_size") is None)
+                     n.get("avg_effort_ratio") is None or n.get("avg_quality_ratio") is None)
 
 # ── L2. /api/schema endpoint ─────────────────────────────────────────────────
 
@@ -792,7 +812,7 @@ def test_seed_field_coverage():
 
 _VALID_EXPERT_PAYLOAD = {
     "b1_starting_point": "From AI draft",
-    "b2_research_sources": "8-12",
+    "b2_research_sources": "Multiple sources across domains (5-10)",
     "b3_assembly_ratio": ">75% AI",
     "b4_hypothesis_first": "Hypothesis-first",
     "b5_ai_survival": ">75%",
@@ -814,7 +834,7 @@ _VALID_EXPERT_PAYLOAD = {
     "l3_legacy_revision_depth": "Moderate rework",
     "l4_legacy_scope_expansion": "No",
     "l5_legacy_client_reaction": "Met expectations",
-    "l6_legacy_b2_sources": "4-7",
+    "l6_legacy_b2_sources": "A few targeted sources (2-4)",
     "l7_legacy_c1_specialization": "Generalist",
     "l8_legacy_c2_directness": "Expert reviewed only",
     "l9_legacy_c3_judgment": "25-50%",
@@ -1017,6 +1037,7 @@ def test_expert_notes():
         if open_round:
             break
     if not (proj_id and pioneer and open_round):
+        # TODO(qc): destructive migration tests upstream wipe project_pioneers; needs mid-suite re-seed.
         test("skipped — no pioneer with open round", False, detail="all rounds completed")
         return
 
@@ -1072,6 +1093,7 @@ def test_notes_feed_endpoint():
     map_tok = next((r for r in open_rounds if r[1] == "MAP"), None)
     other_tok = next((r for r in open_rounds if r[1] and r[1] != "MAP"), None)
     if not map_tok or not other_tok:
+        # TODO(qc): destructive migration tests upstream wipe project_pioneers; needs mid-suite re-seed.
         test("skipped — need one MAP and one non-MAP open round", False, detail=f"open={[r[1] for r in open_rounds]}")
         return
 
@@ -1143,6 +1165,7 @@ def test_notes_excel_sheet():
         return
     notes_sheet = wb["Notes"]
     rows = list(notes_sheet.iter_rows(values_only=True))
+    # TODO(qc): notes are seeded by upstream tests that get wiped by migration cleanup; needs mid-suite re-seed.
     test("Notes sheet has header row + >=1 data row", len(rows) >= 2, detail=f"rows={len(rows)}")
     expected_cols = ["Project", "Category", "Practice", "Pioneer", "Round", "Submitted", "Notes"]
     test("Notes sheet header matches expected columns", list(rows[0]) == expected_cols, detail=f"got {rows[0]}")
@@ -1177,6 +1200,8 @@ def test_dashboard_export_sheets():
     for name in ["By Practice", "Quarterly Trend", "Takeaways", "Top Movers"]:
         if name in wb.sheetnames:
             rows = list(wb[name].iter_rows(values_only=True))
+            # TODO(qc): "Top Movers" needs status='complete' projects (productivity_ratio set);
+            # seed leaves projects in 'partial' (2nd pioneer round pending). Needs full-completion seed.
             test(
                 f"'{name}' sheet has header + at least one data row",
                 len(rows) >= 2,
