@@ -210,3 +210,66 @@ def compute_economics_breakdowns(
         "by_currency": currency_out,
         "by_pricing_model": pricing_out,
     }
+
+
+def _quarter_label(date_str: Optional[str]) -> Optional[str]:
+    """'2026-02-15' → '2026-Q1'. Returns None if date is missing/malformed."""
+    if not date_str:
+        return None
+    try:
+        year, month, _ = date_str.split("-", 2)
+        q = (int(month) - 1) // 3 + 1
+        return f"{year}-Q{q}"
+    except (ValueError, AttributeError):
+        return None
+
+
+def compute_economics_trends(
+    projects: list[dict],
+    fx_rates: dict[str, float],
+    base_currency: str,
+) -> dict:
+    """Bucket qualifying projects by date_delivered quarter; normalize to base."""
+    qualifying = [p for p in projects if _project_qualifies(p)]
+
+    buckets: dict[str, dict] = {}
+    for p in qualifying:
+        q = _quarter_label(p.get("date_delivered"))
+        if not q:
+            continue
+        rate = _fx(fx_rates, p.get("currency"))
+        if rate is None:
+            continue
+
+        revenue = p["engagement_revenue"] * rate
+        cost_saved = ((p.get("legacy_cost") or 0.0) - (p.get("xcsg_cost") or 0.0)) * rate
+        rev_per_xcsg = (p.get("revenue_per_day_xcsg") or 0.0) * rate if p.get("revenue_per_day_xcsg") is not None else None
+        rev_per_legacy = (p.get("revenue_per_day_legacy") or 0.0) * rate if p.get("revenue_per_day_legacy") is not None else None
+
+        ent = buckets.setdefault(q, {
+            "quarter": q, "revenue": 0.0, "cost_saved": 0.0,
+            "margin_pcts": [], "rev_per_xcsg": [], "rev_per_legacy": [], "n": 0,
+        })
+        ent["revenue"] += revenue
+        ent["cost_saved"] += cost_saved
+        if p.get("xcsg_margin_pct") is not None:
+            ent["margin_pcts"].append(p["xcsg_margin_pct"])
+        if rev_per_xcsg is not None:
+            ent["rev_per_xcsg"].append(rev_per_xcsg)
+        if rev_per_legacy is not None:
+            ent["rev_per_legacy"].append(rev_per_legacy)
+        ent["n"] += 1
+
+    quarterly = []
+    for q in sorted(buckets.keys()):
+        v = buckets[q]
+        quarterly.append({
+            "quarter": v["quarter"],
+            "revenue": _round2(v["revenue"]),
+            "cost_saved": _round2(v["cost_saved"]),
+            "margin_pct": round(sum(v["margin_pcts"]) / len(v["margin_pcts"]), 4) if v["margin_pcts"] else None,
+            "revenue_per_day_xcsg": _round2(sum(v["rev_per_xcsg"]) / len(v["rev_per_xcsg"])) if v["rev_per_xcsg"] else None,
+            "revenue_per_day_legacy": _round2(sum(v["rev_per_legacy"]) / len(v["rev_per_legacy"])) if v["rev_per_legacy"] else None,
+            "n": v["n"],
+        })
+    return {"quarterly": quarterly}

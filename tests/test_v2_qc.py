@@ -2231,6 +2231,61 @@ def test_compute_economics_breakdowns():
     assert pm["Time & materials"]["n"] == 1
 
 
+def test_compute_economics_trends():
+    """Quarterly trend bucketed by date_delivered, normalized to base currency."""
+    from backend.economics import compute_economics_trends
+
+    projects = [
+        # 2026-Q1
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0, "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0, "revenue_per_day_legacy": 1000.0,
+            "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "date_delivered": "2026-02-15",
+        },
+        # 2026-Q1 (same quarter)
+        {
+            "id": 2, "status": "complete", "currency": "EUR",
+            "engagement_revenue": 200_000.0, "xcsg_cost": 50_000.0, "legacy_cost": 250_000.0,
+            "xcsg_margin": 150_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 8000.0, "revenue_per_day_legacy": 1500.0,
+            "xcsg_person_days": 25.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "date_delivered": "2026-03-30",
+        },
+        # 2026-Q2
+        {
+            "id": 3, "status": "complete", "currency": "USD",
+            "engagement_revenue": 50_000.0, "xcsg_cost": 10_000.0, "legacy_cost": 90_000.0,
+            "xcsg_margin": 40_000.0, "xcsg_margin_pct": 0.80,
+            "revenue_per_day_xcsg": 5000.0, "revenue_per_day_legacy": 900.0,
+            "xcsg_person_days": 10.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "date_delivered": "2026-04-10",
+        },
+    ]
+    fx_rates = {"USD": 1.0, "EUR": 1.10}
+    out = compute_economics_trends(projects, fx_rates, base_currency="USD")
+
+    quarters = {q["quarter"]: q for q in out["quarterly"]}
+    assert "2026-Q1" in quarters and "2026-Q2" in quarters
+    # Q1: revenue 100k + 200k*1.10 = 320k; cost saved 170k + 200k*1.10 = 390k
+    assert quarters["2026-Q1"]["revenue"] == 320_000.0, f"got {quarters['2026-Q1']['revenue']}"
+    assert quarters["2026-Q1"]["cost_saved"] == 390_000.0, f"got {quarters['2026-Q1']['cost_saved']}"
+    # Q1 avg margin %: (0.70 + 0.75) / 2 = 0.725
+    assert quarters["2026-Q1"]["margin_pct"] == 0.725
+    assert quarters["2026-Q1"]["n"] == 2
+    # Q2: just project 3 → 50k revenue, 80k saved
+    assert quarters["2026-Q2"]["revenue"] == 50_000.0
+    assert quarters["2026-Q2"]["cost_saved"] == 80_000.0
+    assert quarters["2026-Q2"]["n"] == 1
+    # Sorted ascending by quarter.
+    assert [q["quarter"] for q in out["quarterly"]] == ["2026-Q1", "2026-Q2"]
+
+
 def test_practice_role_models():
     """PracticeRoleEntry and PracticeRolesUpdate validate correctly."""
     import pytest
@@ -3028,6 +3083,7 @@ def main():
     test_compute_economics_summary_fx_missing()
     test_compute_economics_summary_empty()
     test_compute_economics_breakdowns()
+    test_compute_economics_trends()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
     test_practice_roles_404_for_unknown_practice()
