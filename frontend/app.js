@@ -5496,7 +5496,19 @@ function renderProjectActivityStrip(project, metrics, pioneers) {
     </div>
   `;
 }
-function renderProjectFlywheelChips(metrics) { return ''; }
+function renderProjectFlywheelChips(metrics) {
+  // metrics is `project.metrics || {}` from renderProjectDetail — empty object means no responses yet.
+  if (!metrics || metrics.productivity_ratio == null) {
+    return '<p style="color:#9ca3af;font-size:13px;margin:0">No metrics yet — submit an expert response to populate scores.</p>';
+  }
+  return [
+    pioneerChip('Machine-First', metrics.machine_first_score, 'ratio'),
+    pioneerChip('Senior-Led', metrics.senior_led_score, 'ratio'),
+    pioneerChip('Knowledge', metrics.proprietary_knowledge_score, 'ratio'),
+    pioneerChip('Quality', metrics.quality_score, 'pct'),
+    pioneerChip('Value Gain', metrics.productivity_ratio, 'ratio'),
+  ].join('');
+}
 function renderProjectSpecCard(project) { return ''; }
 function renderProjectPioneersCard(pioneers) { return ''; }
 function renderProjectLegacyTeamCard(legacyTeam, currency) { return ''; }
