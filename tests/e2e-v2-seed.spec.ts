@@ -249,10 +249,22 @@ test.describe.serial('20-project real-world seed + metric verification (v2: M2M 
           xcsg_revision_rounds: p.revs,
           revision_depth: p.revDepth,
           xcsg_scope_expansion: p.scope,
-          pioneers: p.pioneers.map((n: string) => ({
-            name: n,
-            email: n.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') + '@alira.health',
-          })),
+          pioneers: p.pioneers.map((n: string) => {
+            // Phase 3c split: pioneers carry first_name + last_name on the
+            // create payload (not a single name field).
+            const idx = n.indexOf(' ');
+            const first_name = idx >= 0 ? n.slice(0, idx) : n;
+            const last_name  = idx >= 0 ? n.slice(idx + 1) : '';
+            return {
+              first_name,
+              last_name,
+              email: n.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') + '@alira.health',
+            };
+          }),
+          // delivery_speed = (legacy_team_count * l1_legacy_working_days) /
+          // xcsg_person_days. Without a legacy_team the metric collapses to
+          // null / 0, and the dashboard-aggregate assertion below fails.
+          legacy_team: [{ role_name: 'Senior', count: 2, day_rate: 1500 }],
         };
         const r = await fetch(`/api/projects`, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
         if (!r.ok) throw new Error(`Failed to create ${p.name}: ${r.status} ${await r.text()}`);
@@ -309,7 +321,9 @@ test.describe.serial('20-project real-world seed + metric verification (v2: M2M 
 
   test('05 — Dashboard metrics populated (non-null)', async () => {
     await page.goto(`${BASE}/#portfolio`);
-    await page.waitForSelector('.dashboard-section');
+    // The dashboard wrapper is now .hero-section (renamed from
+    // .dashboard-section in the redesign).
+    await page.waitForSelector('.hero-section');
     await page.waitForTimeout(2000);
 
     const metrics = await page.evaluate(async () => {
@@ -399,7 +413,7 @@ test.describe.serial('20-project real-world seed + metric verification (v2: M2M 
       const body = {
         project_name: 'illegal pair', category_id: regStrat.id, practice_id: mcd.id,
         xcsg_team_size: '2', xcsg_revision_rounds: '1',
-        pioneers: [{ name: 'x' }],
+        pioneers: [{ first_name: 'X', last_name: 'Y' }],
       };
       const r = await fetch(`/api/projects`, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
       return { status: r.status, body: await r.text() };
