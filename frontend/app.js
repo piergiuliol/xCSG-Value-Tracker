@@ -5925,11 +5925,35 @@ async function renderPioneerDetail(id) {
   await renderPioneerCharts(pioneer, pioneerEconomics);
 }
 
-async function renderPioneerCharts(pioneer) {
+async function renderPioneerCharts(pioneer, pioneerEconomics) {
   const cont = document.getElementById('pioneerCharts');
   if (!cont) return;
 
-  // Build four chart containers in a 2×2 grid.
+  const econ = pioneerEconomics || {};
+  const breakdowns = econ.breakdowns || {};
+  const trends = econ.trends || {};
+  const hasPricing = Array.isArray(breakdowns.by_pricing_model) && breakdowns.by_pricing_model.length > 0;
+  const hasQuarterlyEcon = Array.isArray(trends.quarterly) && trends.quarterly.length > 0;
+
+  // Top row: 4 flywheel charts (Radar / Disprove / Timeline / Quarterly).
+  // Bottom row: 2 economics charts (pricing donut + quarterly revenue line) — only when data is available.
+  const economicsRow = (hasPricing || hasQuarterlyEcon) ? `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px">
+      ${hasPricing ? `
+        <div>
+          <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Pricing Model Mix</h3>
+          <div id="pioneerEconChartPricing" data-testid="pioneer-econ-chart-pricing" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+        </div>
+      ` : ''}
+      ${hasQuarterlyEcon ? `
+        <div>
+          <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Quarterly Revenue</h3>
+          <div id="pioneerEconChartQuarterly" data-testid="pioneer-econ-chart-quarterly" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+        </div>
+      ` : ''}
+    </div>
+  ` : '';
+
   cont.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:8px">
       <div>
@@ -5949,6 +5973,7 @@ async function renderPioneerCharts(pioneer) {
         <div id="pioneerChartQuarterly" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
       </div>
     </div>
+    ${economicsRow}
   `;
 
   if (typeof echarts === 'undefined') {
@@ -5994,6 +6019,58 @@ async function renderPioneerCharts(pioneer) {
   safeRender('scatter_disprove',     'pioneerChartDisprove');
   safeRender('timeline_per_project', 'pioneerChartTimeline');
   safeRender('timeline_quarterly',   'pioneerChartQuarterly');
+
+  // ── Economics charts (only when pioneer has economic data) ──
+  if (hasPricing) {
+    const baseCurrency = (econ.summary && econ.summary.base_currency) || 'USD';
+    const fc = (v) => fmtCurrency(v, baseCurrency);
+    const donut = ecInit('pioneerEconChartPricing');
+    if (donut) {
+      const total = breakdowns.by_pricing_model.reduce((acc, e) => acc + (e.revenue || 0), 0) || 1;
+      donut.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'item',
+          formatter: (p) => `${p.marker}<b>${esc(p.name)}</b><br/>Revenue: ${fc(p.value)}<br/>Share: ${(p.value / total * 100).toFixed(1)}%`,
+        },
+        legend: { orient: 'vertical', right: 8, top: 'middle', textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+        series: [{
+          type: 'pie', radius: ['45%', '70%'], center: ['38%', '50%'],
+          itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+          label: { show: false }, labelLine: { show: false },
+          data: breakdowns.by_pricing_model.map(e => ({ name: e.model, value: e.revenue || 0 })),
+        }],
+      });
+    }
+  }
+
+  if (hasQuarterlyEcon) {
+    const baseCurrency = (econ.summary && econ.summary.base_currency) || 'USD';
+    const fc = (v) => fmtCurrency(v, baseCurrency);
+    const line = ecInit('pioneerEconChartQuarterly');
+    if (line) {
+      line.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          formatter: (params) => {
+            const p = params[0];
+            return `<b>${esc(p.axisValueLabel)}</b><br/>Revenue: ${fc(p.value)}`;
+          },
+        },
+        grid: { left: 70, right: 16, top: 16, bottom: 32 },
+        xAxis: { type: 'category', data: trends.quarterly.map(q => q.quarter), axisLabel: axisLbl() },
+        yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fc(v) } },
+        series: [{
+          type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+          data: trends.quarterly.map(q => q.revenue || 0),
+          itemStyle: { color: '#6EC1E4' },
+          lineStyle: { color: '#6EC1E4', width: 2 },
+          areaStyle: { color: 'rgba(110,193,228,0.18)' },
+        }],
+      });
+    }
+  }
 
   // Show a gentle empty-state message when the pioneer has no assessed projects.
   const done = filtered.filter(function(p) { return p.metrics && (p.status === 'complete' || p.status === 'partial'); });
