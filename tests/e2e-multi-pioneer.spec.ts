@@ -169,20 +169,22 @@ const PROFILES = [STRONG, MODERATE, WEAK];
 // ── Project definitions ──────────────────────────────────────────────────────
 
 interface PioneerDef {
-  name: string;
+  first_name: string;
+  last_name: string;
   email: string;
 }
 
 interface ProjectDef {
   name: string;
-  categoryId: number;     // 1=Landscape, 2=Competitive Intel, 3=Regulatory, 4=Drug Pricing, 5=Market Access
+  // Practice code (RAM/MAP/NPS/MCD/RWE/RAP/PEN/TAD/CLI). Each test resolves the
+  // practice id at runtime and pairs it with the first matching category.
+  practiceCode: string;
   client: string;
   stage: string;
   pulse: string;
   team: string;
   revisions: string;
-  legDays: string;
-  legTeam: string;
+  legDays: number;
   legRevs: string;
   pioneers: PioneerDef[];
   defaultRounds: number;
@@ -193,20 +195,19 @@ const PROJECTS: ProjectDef[] = [
   {
     // Project 1: 4 pioneers x 1 round = 4 surveys
     name: 'Market Landscape Analysis',
-    categoryId: 1,
+    practiceCode: 'MCD',
     client: 'Novartis',
     stage: 'Active engagement',
     pulse: 'Exceeded expectations',
     team: '3',
     revisions: '1',
-    legDays: '12',
-    legTeam: '4',
+    legDays: 12,
     legRevs: '3',
     pioneers: [
-      { name: 'Alice Chen', email: 'alice@test.com' },
-      { name: 'Bob Martinez', email: 'bob@test.com' },
-      { name: 'Carol Wu', email: 'carol@test.com' },
-      { name: 'Diana Okafor', email: 'diana@test.com' },
+      { first_name: 'Alice', last_name: 'Chen',     email: 'alice@test.com' },
+      { first_name: 'Bob',   last_name: 'Martinez', email: 'bob@test.com' },
+      { first_name: 'Carol', last_name: 'Wu',       email: 'carol@test.com' },
+      { first_name: 'Diana', last_name: 'Okafor',   email: 'diana@test.com' },
     ],
     defaultRounds: 1,
     showPrevious: false,
@@ -214,37 +215,35 @@ const PROJECTS: ProjectDef[] = [
   {
     // Project 2: 3 pioneers x 2 rounds = 6 surveys
     name: 'Competitive Intelligence Report',
-    categoryId: 2,
+    practiceCode: 'NPS',
     client: 'Roche',
     stage: 'Active engagement',
     pulse: 'Met expectations',
     team: '2',
     revisions: '2',
-    legDays: '15',
-    legTeam: '5',
+    legDays: 15,
     legRevs: '4',
     pioneers: [
-      { name: 'Eve Patel', email: 'eve@test.com' },
-      { name: 'Frank Nguyen', email: 'frank@test.com' },
-      { name: 'Grace Kim', email: 'grace@test.com' },
+      { first_name: 'Eve',   last_name: 'Patel',  email: 'eve@test.com' },
+      { first_name: 'Frank', last_name: 'Nguyen', email: 'frank@test.com' },
+      { first_name: 'Grace', last_name: 'Kim',    email: 'grace@test.com' },
     ],
     defaultRounds: 2,
     showPrevious: false,
   },
   {
     // Project 3: 1 pioneer x 3 rounds = 3 surveys (show_previous ON)
-    name: 'Regulatory Strategy',
-    categoryId: 3,
+    name: 'Regulatory Strategy P3',
+    practiceCode: 'RAM',
     client: 'Pfizer',
     stage: 'Post-engagement (follow-on)',
     pulse: 'Exceeded expectations',
     team: '2',
     revisions: '1',
-    legDays: '10',
-    legTeam: '3',
+    legDays: 10,
     legRevs: '2',
     pioneers: [
-      { name: 'Hank Rivera', email: 'hank@test.com' },
+      { first_name: 'Hank', last_name: 'Rivera', email: 'hank@test.com' },
     ],
     defaultRounds: 3,
     showPrevious: true,
@@ -252,20 +251,19 @@ const PROJECTS: ProjectDef[] = [
   {
     // Project 4: 4 pioneers x 1 round = 4 surveys
     name: 'Drug Pricing Analysis',
-    categoryId: 4,
+    practiceCode: 'MAP',
     client: 'AstraZeneca',
     stage: 'New business (pre-mandate)',
     pulse: 'Met expectations',
     team: '4',
     revisions: '2',
-    legDays: '14',
-    legTeam: '5',
+    legDays: 14,
     legRevs: '3',
     pioneers: [
-      { name: 'Ivy Zhang', email: 'ivy@test.com' },
-      { name: 'Jack Thompson', email: 'jack@test.com' },
-      { name: 'Kate Sullivan', email: 'kate@test.com' },
-      { name: 'Leo Fernandez', email: 'leo@test.com' },
+      { first_name: 'Ivy',  last_name: 'Zhang',     email: 'ivy@test.com' },
+      { first_name: 'Jack', last_name: 'Thompson',  email: 'jack@test.com' },
+      { first_name: 'Kate', last_name: 'Sullivan',  email: 'kate@test.com' },
+      { first_name: 'Leo',  last_name: 'Fernandez', email: 'leo@test.com' },
     ],
     defaultRounds: 1,
     showPrevious: false,
@@ -273,19 +271,18 @@ const PROJECTS: ProjectDef[] = [
   {
     // Project 5: 3 pioneers x 1 round = 3 surveys
     name: 'Market Access Assessment',
-    categoryId: 5,
+    practiceCode: 'PEN',
     client: 'Sanofi',
     stage: 'Active engagement',
     pulse: 'Exceeded expectations',
     team: '2',
     revisions: '0',
-    legDays: '8',
-    legTeam: '3',
+    legDays: 8,
     legRevs: '2',
     pioneers: [
-      { name: 'Maya Johnson', email: 'maya@test.com' },
-      { name: 'Noah Williams', email: 'noah@test.com' },
-      { name: 'Olivia Brown', email: 'olivia@test.com' },
+      { first_name: 'Maya',   last_name: 'Johnson',  email: 'maya@test.com' },
+      { first_name: 'Noah',   last_name: 'Williams', email: 'noah@test.com' },
+      { first_name: 'Olivia', last_name: 'Brown',    email: 'olivia@test.com' },
     ],
     defaultRounds: 1,
     showPrevious: false,
@@ -375,12 +372,60 @@ async function fillSurveyViaUI(page: Page, token: string, profile: SurveyPayload
 }
 
 // ── Helper: submit survey via API (faster for bulk) ──────────────────────
+//
+// Each round has its own one-shot token. After a round is completed, the
+// server auto-issues the next round's token in the response payload
+// (`next_round_token`). For multi-round pioneers we walk that chain.
 
-async function submitSurveyViaAPI(page: Page, token: string, profile: SurveyPayload): Promise<void> {
+async function submitSurveyViaAPI(
+  page: Page,
+  token: string,
+  profile: SurveyPayload,
+): Promise<{ next_round_token: string | null }> {
   const response = await page.request.post(`${BASE}/api/expert/${token}`, {
     data: profile,
   });
   expect(response.status()).toBe(201);
+  const body = await response.json();
+  return { next_round_token: body.next_round_token || null };
+}
+
+/** Submit `n` consecutive rounds for a pioneer, starting at the given token.
+ * Walks the auto-issued next_round_token chain. */
+async function submitRounds(
+  page: Page,
+  startToken: string,
+  profiles: SurveyPayload[],
+): Promise<void> {
+  let token = startToken;
+  for (let i = 0; i < profiles.length; i++) {
+    const { next_round_token } = await submitSurveyViaAPI(page, token, profiles[i]);
+    if (i + 1 < profiles.length) {
+      if (!next_round_token) {
+        throw new Error(`Expected next_round_token after round ${i + 1} but got none`);
+      }
+      token = next_round_token;
+    }
+  }
+}
+
+/** Look up the next pending round token for a pioneer via the project API.
+ * Used when a previous round was filled outside this run (e.g. via UI test). */
+async function getPendingRoundToken(
+  page: Page,
+  projectId: number,
+  pioneerProjectId: number,
+): Promise<string> {
+  const authToken = await page.evaluate(() => sessionStorage.getItem('xcsg_token'));
+  const r = await page.request.get(`${BASE}/api/projects/${projectId}`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  const proj = await r.json();
+  const pioneer = (proj.pioneers || []).find((pi: any) => pi.id === pioneerProjectId);
+  if (!pioneer) throw new Error(`pioneer ${pioneerProjectId} not found in project ${projectId}`);
+  const round = (pioneer.rounds || []).find((rr: any) => !rr.completed_at);
+  if (!round) throw new Error(`No pending rounds for pioneer ${pioneerProjectId}`);
+  return round.token;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -390,8 +435,10 @@ async function submitSurveyViaAPI(page: Page, token: string, profile: SurveyPayl
 test.describe.serial('Multi-Pioneer E2E: 5 projects, 20 surveys', () => {
   let page: Page;
 
-  // projectId -> { projectId, pioneers: [{ name, token, totalRounds }] }
-  interface PioneerInfo { name: string; token: string; totalRounds: number }
+  // projectId -> { projectId, pioneers: [{ name, token, totalRounds, ppId }] }
+  // `ppId` is the project_pioneers.id row, needed to look up freshly-issued
+  // next-round tokens for multi-round pioneers.
+  interface PioneerInfo { name: string; token: string; totalRounds: number; ppId: number }
   interface ProjectInfo { projectId: number; pioneers: PioneerInfo[] }
   const createdProjects: ProjectInfo[] = [];
 
@@ -420,91 +467,84 @@ test.describe.serial('Multi-Pioneer E2E: 5 projects, 20 surveys', () => {
   });
 
   // ─── CREATE 5 PROJECTS WITH MULTI-PIONEER CONFIGS ─────────────────────────
+  // Project creation now uses the /api/projects endpoint directly. The form UI
+  // changed substantially (legacy team is a multi-row repeater, pioneers use a
+  // picker + role/day-rate, no #fLTeam, etc) and reproducing it via Playwright
+  // is brittle. The UI flow is exercised by e2e-realistic / e2e-full; this
+  // suite focuses on multi-pioneer behaviour, which is API-driven on the
+  // server side anyway.
   test('Create 5 projects with varied pioneer configurations', { timeout: 120_000 }, async () => {
+    const authToken = await page.evaluate(() => sessionStorage.getItem('xcsg_token'));
+    const hdr = { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' };
+
+    // Resolve practice ids and pick one valid category per practice.
+    const cats = await (await page.request.get(`${BASE}/api/categories`, { headers: hdr })).json();
+    const pracs = await (await page.request.get(`${BASE}/api/practices`, { headers: hdr })).json();
+    const pmap: Record<string, number> = {};
+    pracs.forEach((p: any) => { pmap[p.code] = p.id; });
+
     for (let i = 0; i < PROJECTS.length; i++) {
       const p = PROJECTS[i];
       const dates = projectDates(i);
 
-      await page.goto(BASE + '/#new');
-      await expect(page.locator('#projectForm')).toBeVisible({ timeout: 10000 });
+      const cat = cats.find((c: any) => (c.practices || []).some((pp: any) => pp.code === p.practiceCode));
+      if (!cat) throw new Error(`No category allows practice ${p.practiceCode}`);
 
-      // Fill basic project info
-      await page.fill('#fName', p.name);
-      await page.selectOption('#fCategory', String(p.categoryId));
-      await page.fill('#fClient', p.client);
-      await page.selectOption('#fStage', p.stage);
-      await page.selectOption('#fPulse', p.pulse);
+      const body: any = {
+        project_name: p.name,
+        category_id: cat.id,
+        practice_id: pmap[p.practiceCode],
+        client_name: p.client,
+        engagement_stage: p.stage,
+        client_pulse: p.pulse,
+        date_started: dates.start,
+        date_delivered: dates.end,
+        working_days: 5 + i,             // realistic, varies per project
+        xcsg_team_size: p.team,
+        xcsg_revision_rounds: p.revisions,
+        legacy_calendar_days: String(p.legDays),
+        legacy_revision_rounds: p.legRevs,
+        default_rounds: p.defaultRounds,
+        show_previous_answers: p.showPrevious,
+        pioneers: p.pioneers.map(pi => ({
+          first_name: pi.first_name,
+          last_name: pi.last_name,
+          email: pi.email,
+          // total_rounds left undefined on the entry → server applies default_rounds.
+        })),
+        // delivery_speed is computed as (legacy_team_count * l1_legacy_working_days)
+        // / xcsg_person_days. Without a legacy_team the legacy person-day
+        // denominator is null and the metric collapses to null. Seed a minimal
+        // legacy team so the metrics-API assertion below has real numbers.
+        legacy_team: [{ role_name: 'Senior', count: 2, day_rate: 1500 }],
+      };
 
-      // Dates
-      await page.fill('#fDateStart', dates.start);
-      await page.fill('#fDateEnd', dates.end);
-
-      // xCSG performance
-      await page.fill('#fXTeam', p.team);
-      await page.fill('#fRevisions', p.revisions);
-
-      // Legacy baseline
-      await page.fill('#fLDays', p.legDays);
-      await page.fill('#fLTeam', p.legTeam);
-      await page.fill('#fLRevisions', p.legRevs);
-
-      // Configure pioneers: first row already exists, fill it then add more
-      const pioneerContainer = page.locator('#pioneersContainer');
-      const existingRows = await pioneerContainer.locator('.pioneer-row').count();
-
-      // Fill the first pioneer in the existing row
-      const firstRow = pioneerContainer.locator('.pioneer-row').first();
-      await firstRow.locator('.pioneer-name').fill(p.pioneers[0].name);
-      await firstRow.locator('.pioneer-email').fill(p.pioneers[0].email);
-      if (p.pioneers[0].name && p.defaultRounds > 1) {
-        // Per-pioneer rounds field (leave empty to use project default)
+      const r = await page.request.post(`${BASE}/api/projects`, { data: body, headers: hdr });
+      if (r.status() !== 201) {
+        throw new Error(`create failed for ${p.name}: ${r.status()} ${await r.text()}`);
       }
+      const created = await r.json();
 
-      // Add additional pioneer rows
-      for (let pi = 1; pi < p.pioneers.length; pi++) {
-        await page.click('#addPioneerBtn');
-        await page.waitForTimeout(200);
-        const rows = pioneerContainer.locator('.pioneer-row');
-        const newRow = rows.nth(pi);
-        await newRow.locator('.pioneer-name').fill(p.pioneers[pi].name);
-        await newRow.locator('.pioneer-email').fill(p.pioneers[pi].email);
-      }
-
-      // Set default rounds and show_previous
-      await page.fill('#fDefaultRounds', String(p.defaultRounds));
-      await page.selectOption('#fShowPrevious', p.showPrevious ? '1' : '0');
-
-      // Submit project
-      await page.click('#projectForm button[type="submit"]');
-      await expect(page.locator('.modal-overlay.active')).toBeVisible({ timeout: 10000 });
-
-      // Close the modal
-      await page.waitForTimeout(500);
-      // For multi-pioneer projects the modal shows a list of links; for single it shows an input
-      await page.locator('.modal-card .btn-secondary, .modal-card .btn-primary').last().click();
-      await page.waitForTimeout(300);
-
-      // Fetch project details via API to get pioneer tokens
-      const authToken = await page.evaluate(() => sessionStorage.getItem('xcsg_token'));
-      const projectsResponse = await page.request.get(`${BASE}/api/projects`, {
-        headers: { Authorization: `Bearer ${authToken}` },
+      const projectPioneers: PioneerInfo[] = (created.pioneers || []).map((pi: any) => {
+        // Round-1 token always lives in rounds[0]. expert_token on the
+        // pioneer row is the legacy single-round token; prefer rounds[0].
+        const token = (pi.rounds && pi.rounds[0] && pi.rounds[0].token)
+          || pi.expert_token
+          || '';
+        const displayName = pi.display_name || pi.name || pi.pioneer_name
+          || `${pi.first_name || ''} ${pi.last_name || ''}`.trim();
+        return {
+          name: displayName,
+          token,
+          totalRounds: pi.total_rounds || p.defaultRounds,
+          ppId: pi.id,
+        };
       });
-      const allProjects = await projectsResponse.json();
-      const created = allProjects.find((proj: any) => proj.project_name === p.name);
-      expect(created).toBeTruthy();
-
-      const projectPioneers: PioneerInfo[] = (created.pioneers || []).map((pi: any) => ({
-        name: pi.name || pi.pioneer_name,
-        token: pi.expert_token,
-        totalRounds: pi.total_rounds || p.defaultRounds,
-      }));
 
       expect(projectPioneers.length).toBe(p.pioneers.length);
+      for (const pp of projectPioneers) expect(pp.token).toBeTruthy();
 
-      createdProjects.push({
-        projectId: created.id,
-        pioneers: projectPioneers,
-      });
+      createdProjects.push({ projectId: created.id, pioneers: projectPioneers });
 
       console.log(`  Created P${i + 1}: "${p.name}" with ${projectPioneers.length} pioneers, ${p.defaultRounds} round(s)`);
     }
@@ -562,41 +602,27 @@ test.describe.serial('Multi-Pioneer E2E: 5 projects, 20 surveys', () => {
     apiCount++;
     console.log(`  API ${apiCount}: ${p1.pioneers[3].name} - STRONG`);
 
-    // P2: Eve R2 (MODERATE), Frank R1 (STRONG) + R2 (MODERATE), Grace R1 (WEAK) + R2 (STRONG)
+    // P2: Eve R2 (MODERATE), Frank R1+R2, Grace R1+R2 — multi-round chained.
+    // Eve R1 was filled via UI; fetch the now-pending R2 token from the API.
     const p2 = createdProjects[1];
-    await submitSurveyViaAPI(page, p2.pioneers[0].token, MODERATE);  // Eve Round 2
+    const eveR2Token = await getPendingRoundToken(page, p2.projectId, p2.pioneers[0].ppId);
+    await submitSurveyViaAPI(page, eveR2Token, MODERATE);
     apiCount++;
     console.log(`  API ${apiCount}: ${p2.pioneers[0].name} R2 - MODERATE`);
 
-    await submitSurveyViaAPI(page, p2.pioneers[1].token, STRONG);    // Frank Round 1
-    apiCount++;
-    console.log(`  API ${apiCount}: ${p2.pioneers[1].name} R1 - STRONG`);
+    await submitRounds(page, p2.pioneers[1].token, [STRONG, MODERATE]);  // Frank R1+R2
+    apiCount += 2;
+    console.log(`  API ${apiCount - 1}-${apiCount}: ${p2.pioneers[1].name} R1+R2`);
 
-    await submitSurveyViaAPI(page, p2.pioneers[1].token, MODERATE);  // Frank Round 2
-    apiCount++;
-    console.log(`  API ${apiCount}: ${p2.pioneers[1].name} R2 - MODERATE`);
-
-    await submitSurveyViaAPI(page, p2.pioneers[2].token, WEAK);      // Grace Round 1
-    apiCount++;
-    console.log(`  API ${apiCount}: ${p2.pioneers[2].name} R1 - WEAK`);
-
-    await submitSurveyViaAPI(page, p2.pioneers[2].token, STRONG);    // Grace Round 2
-    apiCount++;
-    console.log(`  API ${apiCount}: ${p2.pioneers[2].name} R2 - STRONG`);
+    await submitRounds(page, p2.pioneers[2].token, [WEAK, STRONG]);      // Grace R1+R2
+    apiCount += 2;
+    console.log(`  API ${apiCount - 1}-${apiCount}: ${p2.pioneers[2].name} R1+R2`);
 
     // P3: Hank R1 (STRONG), R2 (MODERATE), R3 (WEAK) — show_previous ON
     const p3 = createdProjects[2];
-    await submitSurveyViaAPI(page, p3.pioneers[0].token, STRONG);    // Hank Round 1
-    apiCount++;
-    console.log(`  API ${apiCount}: ${p3.pioneers[0].name} R1 - STRONG`);
-
-    await submitSurveyViaAPI(page, p3.pioneers[0].token, MODERATE);  // Hank Round 2
-    apiCount++;
-    console.log(`  API ${apiCount}: ${p3.pioneers[0].name} R2 - MODERATE`);
-
-    await submitSurveyViaAPI(page, p3.pioneers[0].token, WEAK);      // Hank Round 3
-    apiCount++;
-    console.log(`  API ${apiCount}: ${p3.pioneers[0].name} R3 - WEAK`);
+    await submitRounds(page, p3.pioneers[0].token, [STRONG, MODERATE, WEAK]);
+    apiCount += 3;
+    console.log(`  API ${apiCount - 2}-${apiCount}: ${p3.pioneers[0].name} R1-R3`);
 
     // P4: Ivy (STRONG), Jack (MODERATE), Kate (WEAK), Leo (STRONG)
     const p4 = createdProjects[3];
@@ -658,13 +684,20 @@ test.describe.serial('Multi-Pioneer E2E: 5 projects, 20 surveys', () => {
     expect(realValues.length).toBeGreaterThanOrEqual(4);
     console.log('  KPI values:', kpiValues.join(', '));
 
-    // Charts rendered (ECharts creates canvas inside divs)
+    // Charts rendered (ECharts creates canvas inside divs). Only the active
+    // tab has mounted canvases — other tabs' chart hosts are empty divs until
+    // selected. Just assert at least one canvas on Overview.
     await page.waitForTimeout(2000);
-    const chartCanvases = await page.locator('.chart-body canvas').count();
+    const chartCanvases = await page.locator('.tab-panel.active .chart-body canvas').count();
     console.log(`  Chart canvases: ${chartCanvases}`);
-    expect(chartCanvases).toBeGreaterThanOrEqual(3);
+    expect(chartCanvases).toBeGreaterThanOrEqual(1);
 
-    // Portfolio table should have 5 projects
+    // Portfolio table + scaling gates live on the Signals tab in the
+    // redesigned dashboard. Click into it to assert rows + gates.
+    await page.locator('.tab-bar .tab[data-tab="signals"]').click();
+    await page.waitForSelector('.tab-panel[data-panel="signals"].active');
+    await page.waitForTimeout(400);
+
     const tableRows = await mc.locator('.portfolio-table tbody tr').count();
     expect(tableRows).toBe(5);
     console.log(`  Portfolio table rows: ${tableRows}`);
@@ -730,10 +763,13 @@ test.describe.serial('Multi-Pioneer E2E: 5 projects, 20 surveys', () => {
     // Should have 3 pioneer rows
     expect(pioneerTableRows).toBeGreaterThanOrEqual(3);
 
-    // Page should contain pioneer-related content
+    // Page should contain pioneer-related content. The pioneer table now
+    // renders per-round status badges (R1 ✓ / R2 ✓ etc) instead of a
+    // standalone "Copy Link" button on each row.
     const pageText = await mc.textContent();
-    expect(pageText).toContain('Copy Link');
-    console.log('  Pioneer table with Copy Link buttons visible');
+    expect(pageText).toMatch(/R1\s*✓/);
+    expect(pageText).toMatch(/R2\s*✓/);
+    console.log('  Pioneer table with per-round status badges visible');
   });
 
   // ─── VERIFY METRICS VIA API ───────────────────────────────────────────────
