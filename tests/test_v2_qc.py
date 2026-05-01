@@ -3258,6 +3258,7 @@ def main():
     test_pioneer_title_and_home_practice_models()
     test_pioneer_db_helpers_persist_title_and_home_practice()
     test_pioneer_api_title_and_home_practice_filters()
+    test_seed_initial_pioneers_writes_columns_not_notes()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3628,6 +3629,27 @@ def test_schema_exposes_pioneer_titles():
                 "Senior Consultant", "Consultant", "Analyst"}
     assert expected.issubset(set(titles)), f"missing: {expected - set(titles)}"
     assert isinstance(titles, list)
+
+
+def test_seed_initial_pioneers_writes_columns_not_notes():
+    """After seed_data, the 14 Alira pioneers have title + home_practice_id set,
+    notes empty (or content unrelated to practice/title)."""
+    from backend import database
+    database.init_db()  # runs seed_data + migration
+    with database._db() as conn:
+        rows = conn.execute(
+            """SELECT first_name, last_name, title, home_practice_id, notes
+               FROM pioneers WHERE email LIKE '%@alirahealth.com'"""
+        ).fetchall()
+        assert len(rows) >= 14, f"expected at least 14 Alira pioneers; got {len(rows)}"
+        for r in rows:
+            name = f"{r['first_name']} {r['last_name']}"
+            assert r["title"] is not None, f"{name}: title is None"
+            assert r["home_practice_id"] is not None, f"{name}: home_practice_id is None"
+            # Notes should NOT contain "MAP — Partner"-style metadata
+            note = (r["notes"] or "").strip()
+            assert " — " not in note or "Partner" not in note, \
+                f"{name}: notes still contains structured metadata: {note!r}"
 
 
 def test_pioneer_api_title_and_home_practice_filters():

@@ -1205,9 +1205,10 @@ def seed_data() -> None:
 # ── Initial pioneer roster (deploy-time seed) ──────────────────────────────────
 
 # Each entry: (first_name, last_name, email_local, home_practice, home_role).
-# `home_practice`/`home_role` are sticky context stored in the pioneer's notes
-# field — they describe where the person typically works, but the project-level
-# pioneer assignment can use a different practice/role.
+# `home_practice` is the practice code (FK lookup) and `home_role` is the title.
+# The seeder writes these into the structured columns added in v23 — they
+# describe where the person typically works, but the project-level pioneer
+# assignment can use a different practice/role.
 _INITIAL_PIONEERS = [
     # MAP
     ("Giuseppe",  "Gulotta",         "giuseppe.gulotta",   "MAP", "Partner"),
@@ -1232,11 +1233,14 @@ def _seed_initial_pioneers() -> None:
     """Insert the initial Alira Health pioneer roster on first deployment.
 
     Idempotent — pioneers whose email is already present are skipped, so
-    re-running on subsequent deploys is a no-op. Practice + role live in
-    the notes field as sticky context; the per-project pioneer assignment
-    can still pick any role from any practice catalog.
+    re-running on subsequent deploys is a no-op. Writes title +
+    home_practice_id directly into the structured columns (added in v23);
+    notes is left empty for the user to add real bio content later.
     """
     with _db() as conn:
+        practice_lookup = {row[0]: row[1] for row in conn.execute(
+            "SELECT code, id FROM practices"
+        ).fetchall()}
         for first, last, email_local, home_practice, home_role in _INITIAL_PIONEERS:
             email = f"{email_local}@alirahealth.com"
             existing = conn.execute(
@@ -1245,10 +1249,12 @@ def _seed_initial_pioneers() -> None:
             ).fetchone()
             if existing:
                 continue
-            notes = f"{home_practice} — {home_role}"
+            home_practice_id = practice_lookup.get(home_practice)
             conn.execute(
-                "INSERT INTO pioneers (first_name, last_name, email, notes) VALUES (?, ?, ?, ?)",
-                (first, last, email, notes),
+                """INSERT INTO pioneers (first_name, last_name, email, notes,
+                                        title, home_practice_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (first, last, email, None, home_role, home_practice_id),
             )
         conn.commit()
 
