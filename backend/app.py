@@ -37,7 +37,6 @@ from backend.models import (
     FxRatesResponse,
     LoginRequest,
     LoginResponse,
-    MetricsSummary,
     ProjectPioneerEntry,
     ProjectPioneerUpdate,
     PioneerCreate,
@@ -50,8 +49,6 @@ from backend.models import (
     ProjectCreate,
     ProjectUpdate,
     RegisterRequest,
-    ScalingGates,
-    TrendData,
     UserInfo,
 )
 from backend.schema import (
@@ -1118,39 +1115,6 @@ def _build_averaged_complete_projects() -> list:
             avg["date_delivered"] = p.get("date_delivered")
             result.append(avg)
     return result
-
-
-@app.get("/api/metrics/summary", response_model=MetricsSummary)
-async def metrics_summary(current_user: dict = Depends(auth.get_current_user)):
-    complete = _build_averaged_complete_projects()
-    all_p = db.list_projects()
-    summary = mtx.compute_summary(complete, all_p)
-    return MetricsSummary(**summary)
-
-
-@app.get("/api/metrics/projects")
-async def metrics_projects(current_user: dict = Depends(auth.get_current_user)):
-    return _build_averaged_complete_projects()
-
-
-@app.get("/api/metrics/trends", response_model=TrendData)
-async def metrics_trends(current_user: dict = Depends(auth.get_current_user)):
-    complete = _build_averaged_complete_projects()
-    from backend.models import TrendPoint
-    return TrendData(points=[TrendPoint(**p) for p in complete])
-
-
-@app.get("/api/metrics/scaling-gates", response_model=ScalingGates)
-async def metrics_scaling_gates(current_user: dict = Depends(auth.get_current_user)):
-    complete = _build_averaged_complete_projects()
-    gates = mtx.compute_scaling_gates(complete)
-    from backend.models import ScalingGate
-    passed = sum(1 for g in gates if g["status"] == "pass")
-    return ScalingGates(
-        gates=[ScalingGate(**g) for g in gates],
-        passed_count=passed,
-        total_count=len(gates),
-    )
 
 
 # ── Activity Log ──────────────────────────────────────────────────────────────

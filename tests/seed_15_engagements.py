@@ -478,22 +478,29 @@ def main():
         print(f"  Avg outcome rate ratio:{m.get('average_outcome_rate_ratio', '?')}")
         print(f"  Reuse intent rate:     {m.get('reuse_intent_rate', m.get('reuse_intent_avg', '?'))}%")
     
-    # Get scaling gates
-    r = requests.get(f"{BASE}/api/metrics/scaling-gates", headers=headers)
+    # Get scaling gates (now embedded in /api/dashboard/metrics; legacy
+    # /api/metrics/scaling-gates removed in v2.2)
+    r = requests.get(f"{BASE}/api/dashboard/metrics", headers=headers)
     if r.status_code == 200:
-        sg = r.json()
+        body = r.json()
+        gates = body.get("scaling_gates", [])
         print("\nScaling Gates:")
-        for g in sg.get("gates", []):
+        for g in gates:
             print(f"  [{g['status'].upper():6s}] Gate {g['id']}: {g['name']:<25s} — {g['detail']}")
-        print(f"\n  Passed: {sg.get('passed_count', 0)}/{sg.get('total_count', '?')}")
-    
-    # Get per-project metrics
-    r = requests.get(f"{BASE}/api/metrics/projects", headers=headers)
+        print(f"\n  Passed: {body.get('scaling_gates_passed', 0)}/{body.get('scaling_gates_total', '?')}")
+
+    # Per-project metrics: legacy /api/metrics/projects removed in v2.2.
+    # Equivalent payload now via /api/projects/{id}/metrics for each complete project.
+    r = requests.get(f"{BASE}/api/projects?status=complete", headers=headers)
     if r.status_code == 200:
-        metrics = r.json()
-        print(f"\nPer-Project Metrics ({len(metrics)} projects):")
-        for pm in metrics:
-            name = pm.get("project_name", "?")
+        projects = r.json() or []
+        print(f"\nPer-Project Metrics ({len(projects)} projects):")
+        for p in projects:
+            rm = requests.get(f"{BASE}/api/projects/{p['id']}/metrics", headers=headers)
+            if rm.status_code != 200:
+                continue
+            pm = rm.json() or {}
+            name = p.get("project_name", "?")
             er = pm.get("effort_ratio", "?")
             qs = pm.get("quality_score", "?")
             orr = pm.get("outcome_rate_ratio", "?")

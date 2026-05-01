@@ -314,10 +314,10 @@ test.describe.serial('20-project real-world seed + metric verification (v2: M2M 
 
     const metrics = await page.evaluate(async () => {
       const tok = sessionStorage.getItem('xcsg_token');
-      const r = await fetch(`/api/metrics/summary`, { headers: { Authorization: `Bearer ${tok}` } });
+      const r = await fetch(`/api/dashboard/metrics`, { headers: { Authorization: `Bearer ${tok}` } });
       return r.json();
     });
-    console.log('[METRICS] summary:', JSON.stringify(metrics, null, 2));
+    console.log('[METRICS] dashboard:', JSON.stringify(metrics, null, 2));
 
     expect(metrics.total_projects).toBe(20);
     expect(metrics.complete_projects + metrics.pending_projects).toBe(20);
@@ -345,10 +345,12 @@ test.describe.serial('20-project real-world seed + metric verification (v2: M2M 
   });
 
   test('07 — Scaling gates: at least 3 pass', async () => {
+    // /api/metrics/scaling-gates removed in v2.2; gates surface via /api/dashboard/metrics
     const gates = await page.evaluate(async () => {
       const tok = sessionStorage.getItem('xcsg_token');
-      const r = await fetch(`/api/metrics/scaling-gates`, { headers: { Authorization: `Bearer ${tok}` } });
-      return r.json();
+      const r = await fetch(`/api/dashboard/metrics`, { headers: { Authorization: `Bearer ${tok}` } });
+      const j = await r.json();
+      return { gates: j.scaling_gates || [], passed_count: j.scaling_gates_passed || 0 };
     });
     console.log('[METRICS] scaling gates:');
     gates.gates.forEach((g: any) => console.log(`  [${g.status.toUpperCase().padEnd(7)}] ${g.name}: ${g.detail}`));
