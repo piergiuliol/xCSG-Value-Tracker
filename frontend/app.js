@@ -153,6 +153,30 @@ function renderEconomicsTilesGrid(summary, schemaEconomicsTiles) {
   return `<div class="metrics-grid">${schemaEconomicsTiles.map(tileFor).join('')}</div>`;
 }
 
+function renderPioneerEconomicsTiles(summary) {
+  if (!summary) return '';
+  const baseCurrency = summary.base_currency || 'USD';
+  const fc = (v) => fmtCurrency(v, baseCurrency);
+  const tiles = [
+    { label: 'Revenue contribution', value: summary.total_revenue, format: 'currency' },
+    { label: 'Cost saved',           value: summary.total_cost_saved, format: 'currency' },
+    { label: 'Avg margin %',         value: summary.avg_margin_pct, format: 'percent' },
+    { label: 'Avg revenue / day',    value: summary.avg_revenue_per_day_xcsg, format: 'currency' },
+  ];
+  const tileHtml = tiles.map(t => {
+    let formatted, raw = t.value;
+    if (t.format === 'currency') formatted = fc(raw);
+    else if (t.format === 'percent') formatted = fmtPctMaybe(raw);
+    else formatted = raw == null ? '—' : String(raw);
+    const toneKey = t.format === 'percent' ? 'pct_tone' : 'metric_tone';
+    return `<div class="metric-tile" title="${esc(t.label)}">
+      <div class="metric-tile-value" style="color:${metricTone(raw, toneKey)}">${formatted}</div>
+      <div class="metric-tile-label">${esc(t.label)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="metrics-grid" data-testid="pioneer-economics-tiles">${tileHtml}</div>`;
+}
+
 function renderEconomicsSummaryCard(data) {
   if (!data || !data.summary) return '';
   const s = data.summary;
@@ -814,6 +838,10 @@ function _buildDashboardQS() {
 async function loadEconomicsData() {
   const qs = _buildDashboardQS();
   return await apiCall('GET', `/dashboard/economics${qs}`);
+}
+
+async function loadPioneerEconomics(pioneerId) {
+  return await apiCall('GET', '/dashboard/economics?pioneer_id=' + encodeURIComponent(pioneerId));
 }
 
 async function renderPortfolio() {
@@ -5778,6 +5806,13 @@ async function renderPioneerDetail(id) {
     return;
   }
 
+  let pioneerEconomics = null;
+  try {
+    pioneerEconomics = await loadPioneerEconomics(id);
+  } catch (e) {
+    console.warn('Pioneer economics fetch failed:', e);
+  }
+
   const statusBadgeStyle = PIONEER_STATUS_BADGE_STYLES;
   const statusOpts = (schema && schema.pioneer_status_options) ? schema.pioneer_status_options : PIONEER_STATUS_FALLBACK;
   function statusLabel(val) {
@@ -5867,6 +5902,14 @@ async function renderPioneerDetail(id) {
         ${renderPioneerPortfolio(pioneer)}
       </div>
 
+      <!-- Economics (NEW) -->
+      ${pioneerEconomics ? `
+        <div style="margin-bottom:20px" data-testid="pioneer-economics-section">
+          <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Economics</h2>
+          ${renderPioneerEconomicsTiles(pioneerEconomics.summary || {})}
+        </div>
+      ` : ''}
+
       <!-- Charts (placeholder for Task 7) -->
       <div style="margin-bottom:20px">
         <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Charts</h2>
@@ -5879,7 +5922,7 @@ async function renderPioneerDetail(id) {
   mc.innerHTML = html;
 
   // Task 7: populate pioneer-scoped charts now that the DOM is ready.
-  await renderPioneerCharts(pioneer);
+  await renderPioneerCharts(pioneer, pioneerEconomics);
 }
 
 async function renderPioneerCharts(pioneer) {
