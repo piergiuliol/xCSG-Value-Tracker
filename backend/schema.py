@@ -246,6 +246,34 @@ PIONEER_STATUS_OPTIONS = [
     {"value": "completed",        "label": "Completed"},
 ]
 
+# ── Dashboard Economics (PR1) ──────────────────────────────────────────────
+
+ECONOMICS_TILES = [
+    {"key": "total_revenue",            "label": "Total revenue",            "format": "currency"},
+    {"key": "total_cost_saved",         "label": "Cost saved vs legacy",     "format": "currency"},
+    {"key": "avg_margin_pct",           "label": "Avg margin %",             "format": "percent"},
+    {"key": "avg_revenue_per_day_xcsg", "label": "Avg revenue / day",        "format": "currency"},
+    {"key": "cost_ratio",               "label": "Cost ratio (xCSG/legacy)", "format": "percent"},
+    {"key": "qualifying_project_count", "label": "Qualifying projects",      "format": "fraction"},
+]
+
+ECONOMICS_CHARTS = [
+    # Summary card (PR2)
+    {"id": "economics_quarterly_revenue", "title": "Quarterly revenue + cost saved",
+     "type": "bar", "surface": "summary", "height": 240},
+    {"id": "economics_margin_trend", "title": "Margin % over time",
+     "type": "line", "surface": "summary", "height": 240},
+    # Economics tab (PR3)
+    {"id": "economics_pricing_mix", "title": "Pricing model mix",
+     "type": "donut", "surface": "tab", "height": 320},
+    {"id": "economics_pioneer_productivity", "title": "Cost productivity by pioneer",
+     "type": "bar", "surface": "tab", "height": 320},
+    {"id": "economics_quarterly_revenue_full", "title": "Revenue trend",
+     "type": "line", "surface": "tab", "height": 320},
+    {"id": "economics_quarterly_productivity", "title": "Cost productivity trend",
+     "type": "line", "surface": "tab", "height": 320},
+]
+
 # ── Dashboard configuration (single source of truth for the frontend) ───────
 
 DASHBOARD_CONFIG = {
@@ -381,4 +409,6 @@ def build_schema_response() -> dict:
         "legacy_team_fields": LEGACY_TEAM_FIELDS,
         "pioneer_fields": PIONEER_FIELDS,
         "pioneer_status_options": PIONEER_STATUS_OPTIONS,
+        "economics_tiles": ECONOMICS_TILES,
+        "economics_charts": ECONOMICS_CHARTS,
     }

@@ -3972,27 +3972,76 @@ async function doDeletePractice(id) {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-function renderAppSettingsTab() {
+async function renderAppSettingsTab() {
   const sc = document.getElementById('settingsContent');
-  sc.innerHTML = `
+  sc.innerHTML = '<div class="loading">Loading…</div>';
+
+  const [settings, fx] = await Promise.all([
+    apiCall('GET', '/settings'),
+    apiCall('GET', '/fx-rates'),
+  ]);
+  const currencies = schema?.currencies || ['USD', 'EUR', 'GBP', 'CHF', 'CAD', 'AUD'];
+
+  const fxByCode = {};
+  (fx?.rates || []).forEach(r => { fxByCode[r.currency_code] = r; });
+
+  let html = `
     <div class="card">
       <div style="padding:16px 24px;border-bottom:1px solid var(--gray-200)">
         <h3 style="margin:0 0 4px;color:var(--navy)">App Settings</h3>
         <p style="margin:0;color:var(--gray-500);font-size:13px">Global defaults applied across the application.</p>
       </div>
+
       <div style="padding:8px 0">
         <div style="display:flex;gap:12px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--gray-200)">
           <label for="settingDefaultCurrency" style="font-weight:600;min-width:200px">Default currency</label>
           <select id="settingDefaultCurrency">
-            ${(schema?.currencies || ['EUR']).map(c =>
-              `<option value="${esc(c)}"${c === window._defaultCurrency ? ' selected' : ''}>${esc(c)}</option>`
+            ${currencies.map(c =>
+              `<option value="${esc(c)}"${c === settings.default_currency ? ' selected' : ''}>${esc(c)}</option>`
             ).join('')}
           </select>
           <button class="btn btn-secondary btn-sm" onclick="saveDefaultCurrency()">Save</button>
           <span class="field-help" style="color:var(--gray-500);font-size:12px">Pre-fills the currency selector on new projects.</span>
         </div>
       </div>
+    </div>
+
+    <div class="card" style="margin-top:16px" data-testid="fx-rates-section">
+      <div style="padding:16px 24px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <h3 style="margin:0 0 4px;color:var(--navy)">FX Rates</h3>
+          <p style="margin:0;color:var(--gray-500);font-size:13px">Multipliers from each currency to the base currency. Used for portfolio-level economic aggregates on the dashboard.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" data-testid="fx-rates-save" onclick="saveFxRates()">Save</button>
+      </div>
+
+      <div style="padding:12px 24px;display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--gray-200)">
+        <label for="settingBaseCurrency" style="font-weight:600;min-width:200px">Base currency</label>
+        <select id="settingBaseCurrency" data-testid="base-currency-select">
+          ${currencies.map(c =>
+            `<option value="${esc(c)}"${c === fx.base_currency ? ' selected' : ''}>${esc(c)}</option>`
+          ).join('')}
+        </select>
+        <span class="field-help" style="color:var(--gray-500);font-size:12px">Currency for the dashboard's portfolio rollup.</span>
+      </div>
+
+      <table class="data-table" style="width:100%">
+        <thead><tr><th>Currency</th><th>Rate to base</th><th>Updated</th></tr></thead>
+        <tbody>
+          ${currencies.map(code => {
+            const row = fxByCode[code] || { rate_to_base: 0, updated_at: null };
+            const rate = row.rate_to_base != null ? row.rate_to_base : '';
+            const updated = row.updated_at ? esc(row.updated_at.slice(0, 10)) : '—';
+            return `<tr>
+              <td><strong>${esc(code)}</strong></td>
+              <td><input type="number" step="0.0001" min="0" data-testid="fx-rate-${esc(code)}" value="${esc(String(rate))}" style="width:120px"></td>
+              <td>${updated}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
     </div>`;
+  sc.innerHTML = html;
 }
 
 async function saveDefaultCurrency() {
@@ -4001,6 +4050,23 @@ async function saveDefaultCurrency() {
     await apiCall('PUT', '/settings', { default_currency: v });
     window._defaultCurrency = v;
     showToast('Default currency updated');
+  } catch (e) {
+    showToast('Failed to save: ' + (e?.message || e), 'error');
+  }
+}
+
+async function saveFxRates() {
+  const base = document.getElementById('settingBaseCurrency').value;
+  const currencies = schema?.currencies || [];
+  const rates = currencies.map(code => {
+    const inp = document.querySelector(`[data-testid="fx-rate-${code}"]`);
+    return { currency_code: code, rate_to_base: parseFloat(inp.value || '0') };
+  });
+  try {
+    await apiCall('PUT', '/fx-rates', { base_currency: base, rates });
+    showToast('FX rates saved');
+    // Re-render to refresh the "Updated" column.
+    renderAppSettingsTab();
   } catch (e) {
     showToast('Failed to save: ' + (e?.message || e), 'error');
   }

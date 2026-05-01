@@ -225,6 +225,8 @@ def init_db() -> None:
     migrate_v18()
     migrate_v19()
     migrate_v20()
+    migrate_v21_fx_rates()
+    _ensure_all_fx_rows_exist()
 
     seed_data()
 
@@ -669,6 +671,44 @@ def migrate_v20() -> None:
                    ON pioneers(lower(trim(email))) WHERE email IS NOT NULL"""
         )
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+
+
+def migrate_v21_fx_rates() -> None:
+    """v2.1: add fx_rates table + app_settings.base_currency.
+
+    fx_rates is a 6-row lookup table keyed by ISO currency code, holding
+    the multiplier from each currency to the configured base currency.
+    Seeded at rate 1.0 — admin updates real values in Settings.
+
+    app_settings gains base_currency (default 'USD') for the dashboard
+    rollup. Kept separate from default_currency (new-project default)
+    so the two concerns can diverge.
+
+    Idempotent via PRAGMA table_info.
+    """
+    with _db() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS fx_rates (
+                   currency_code TEXT PRIMARY KEY,
+                   rate_to_base  REAL NOT NULL CHECK (rate_to_base >= 0),
+                   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+               )"""
+        )
+        # Seed every code in the canonical CURRENCIES list at rate 1.0.
+        from backend.schema import CURRENCIES
+        for code in CURRENCIES:
+            conn.execute(
+                "INSERT OR IGNORE INTO fx_rates (currency_code, rate_to_base) VALUES (?, 1.0)",
+                (code,),
+            )
+
+        # Add base_currency column to app_settings if missing.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(app_settings)").fetchall()}
+        if "base_currency" not in cols:
+            conn.execute(
+                "ALTER TABLE app_settings ADD COLUMN base_currency TEXT NOT NULL DEFAULT 'USD'"
+            )
         conn.commit()
 
 
@@ -2275,11 +2315,79 @@ def list_norm_aggregates() -> list:
 
 def get_app_settings() -> dict:
     with _db() as conn:
-        row = conn.execute("SELECT default_currency FROM app_settings WHERE id=1").fetchone()
-        return {"default_currency": row["default_currency"] if row else "EUR"}
+        row = conn.execute(
+            "SELECT default_currency, base_currency FROM app_settings WHERE id=1"
+        ).fetchone()
+        if row:
+            return {
+                "default_currency": row["default_currency"],
+                "base_currency": row["base_currency"],
+            }
+        return {"default_currency": "EUR", "base_currency": "USD"}
 
 
-def update_app_settings(*, default_currency: str) -> None:
+def update_app_settings(
+    *, default_currency: Optional[str] = None, base_currency: Optional[str] = None
+) -> None:
+    """Update either or both fields. Pass None to leave a field unchanged.
+
+    Note: passing None for both is a silent no-op. Callers expecting at least
+    one update should validate before calling.
+    """
     with _db() as conn:
-        conn.execute("UPDATE app_settings SET default_currency = ? WHERE id=1", (default_currency,))
+        if default_currency is not None:
+            conn.execute(
+                "UPDATE app_settings SET default_currency = ? WHERE id=1",
+                (default_currency,),
+            )
+        if base_currency is not None:
+            conn.execute(
+                "UPDATE app_settings SET base_currency = ? WHERE id=1",
+                (base_currency,),
+            )
+        conn.commit()
+
+
+def get_fx_rates() -> list[dict]:
+    """Return the 6-row FX rate table sorted by currency code."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT currency_code, rate_to_base, updated_at FROM fx_rates ORDER BY currency_code"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_fx_rates(rates: list[dict]) -> None:
+    """Upsert the given rate rows. Each dict needs currency_code + rate_to_base.
+    Bumps updated_at to current timestamp. Validates rate_to_base > 0 implicitly
+    via the table CHECK constraint (sqlite raises IntegrityError on violation)."""
+    with _db() as conn:
+        for r in rates:
+            conn.execute(
+                """INSERT INTO fx_rates (currency_code, rate_to_base, updated_at)
+                       VALUES (?, ?, datetime('now'))
+                       ON CONFLICT(currency_code) DO UPDATE SET
+                         rate_to_base = excluded.rate_to_base,
+                         updated_at   = datetime('now')""",
+                (r["currency_code"], float(r["rate_to_base"])),
+            )
+        conn.commit()
+
+
+def _ensure_all_fx_rows_exist() -> None:
+    """Backfill any currencies in schema.CURRENCIES that don't yet have a row.
+    Inserted at rate 0.0 — the dashboard's FX-missing path treats 0 as 'unset'
+    and excludes affected projects from the normalized total. Called on init_db
+    so adding a new currency to the schema later doesn't crash the aggregator."""
+    from backend.schema import CURRENCIES
+    with _db() as conn:
+        existing = {r[0] for r in conn.execute(
+            "SELECT currency_code FROM fx_rates"
+        ).fetchall()}
+        for code in CURRENCIES:
+            if code not in existing:
+                conn.execute(
+                    "INSERT INTO fx_rates (currency_code, rate_to_base) VALUES (?, 0.0)",
+                    (code,),
+                )
         conn.commit()

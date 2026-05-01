@@ -440,17 +440,75 @@ class ActivityLogEntry(BaseModel):
 
 class AppSettings(BaseModel):
     default_currency: str
+    base_currency: str
 
 
 class AppSettingsUpdate(BaseModel):
-    default_currency: str
+    default_currency: Optional[str] = None
+    base_currency: Optional[str] = None
 
-    @field_validator("default_currency")
+    @field_validator("default_currency", "base_currency")
     @classmethod
     def _valid_currency(cls, v):
+        if v is None:
+            return v
         if v not in CURRENCIES:
-            raise ValueError(f"default_currency must be one of {CURRENCIES}")
+            raise ValueError(f"currency must be one of {CURRENCIES}")
         return v
+
+
+class FxRate(BaseModel):
+    currency_code: str
+    rate_to_base: float
+    updated_at: Optional[str] = None  # populated on responses, ignored on input
+
+    @field_validator("currency_code")
+    @classmethod
+    def _valid_code(cls, v):
+        if v not in CURRENCIES:
+            raise ValueError(f"currency_code must be one of {CURRENCIES}")
+        return v
+
+    @field_validator("rate_to_base")
+    @classmethod
+    def _non_negative(cls, v):
+        if v < 0:
+            raise ValueError("rate_to_base must be >= 0")
+        return v
+
+
+class FxRatesPayload(BaseModel):
+    """PUT /api/fx-rates body: base_currency + a list of rates to upsert."""
+    base_currency: str
+    rates: List[FxRate]
+
+    @field_validator("base_currency")
+    @classmethod
+    def _valid_base(cls, v):
+        if v not in CURRENCIES:
+            raise ValueError(f"base_currency must be one of {CURRENCIES}")
+        return v
+
+    @model_validator(mode="after")
+    def _no_duplicate_codes(self):
+        codes = [r.currency_code for r in self.rates]
+        if len(codes) != len(set(codes)):
+            raise ValueError("duplicate currency codes in rates")
+        return self
+
+
+class FxRatesResponse(BaseModel):
+    base_currency: str
+    rates: List[FxRate]
+
+
+class EconomicsResponse(BaseModel):
+    """Response for GET /api/dashboard/economics. Shape is loose dicts because
+    the aggregator returns dynamically-keyed breakdown lists; we validate the
+    top-level structure only and trust the aggregator for the inner values."""
+    summary: dict
+    breakdowns: dict
+    trends: dict
 
 
 # ── Practice role catalog (Phase 2a) ──────────────────────────────────────────

@@ -1274,6 +1274,41 @@ def test_economics_schema():
     assert "economics_fields" in response
 
 
+def test_economics_schema_constants():
+    """ECONOMICS_TILES + ECONOMICS_CHARTS exposed via /api/schema."""
+    r = requests.get(f"{BASE}/api/schema")
+    assert r.status_code == 200
+    s = r.json()
+    test("schema has economics_tiles", isinstance(s.get("economics_tiles"), list))
+    tiles = s.get("economics_tiles") or []
+    test("economics_tiles has 6 entries", len(tiles) == 6, f"got {len(tiles)}")
+    expected_keys = {"total_revenue", "total_cost_saved", "avg_margin_pct",
+                     "avg_revenue_per_day_xcsg", "cost_ratio", "qualifying_project_count"}
+    actual_keys = {t["key"] for t in tiles}
+    test("tiles cover all hero metrics", expected_keys.issubset(actual_keys),
+         detail=f"missing {expected_keys - actual_keys}")
+    for t in tiles:
+        test(f"tile '{t['key']}' has label", isinstance(t.get("label"), str) and t["label"])
+        test(f"tile '{t['key']}' has format", t.get("format") in {"currency", "percent", "fraction"})
+
+    test("schema has economics_charts", isinstance(s.get("economics_charts"), list))
+    charts = s.get("economics_charts") or []
+    test("economics_charts has 6 entries", len(charts) == 6, f"got {len(charts)}")
+    chart_ids = {c["id"] for c in charts}
+    expected_chart_ids = {
+        "economics_quarterly_revenue", "economics_margin_trend",
+        "economics_pricing_mix", "economics_pioneer_productivity",
+        "economics_quarterly_revenue_full", "economics_quarterly_productivity",
+    }
+    test("charts cover all 6 ids", chart_ids == expected_chart_ids,
+         detail=f"diff {chart_ids ^ expected_chart_ids}")
+    for c in charts:
+        test(f"chart '{c['id']}' has title", isinstance(c.get("title"), str))
+        test(f"chart '{c['id']}' has type", c.get("type") in {"bar", "line", "donut"})
+        test(f"chart '{c['id']}' has surface", c.get("surface") in {"summary", "tab", "both"})
+        test(f"chart '{c['id']}' has height", isinstance(c.get("height"), int) and c["height"] > 0)
+
+
 def test_migrate_v15_idempotent():
     """migrate_v15 adds new columns + app_settings table, runs idempotently."""
     from backend import database
@@ -1556,7 +1591,7 @@ def test_economics_models():
         ProjectCreate(**base, xcsg_pricing_model="Pay what you want")
 
     # AppSettings models.
-    s = AppSettings(default_currency="USD")
+    s = AppSettings(default_currency="USD", base_currency="USD")
     assert s.default_currency == "USD"
     with pytest.raises(ValidationError):
         AppSettingsUpdate(default_currency="XYZ")
@@ -1851,6 +1886,156 @@ def test_create_project_persists_economics():
 
 
 
+def test_fx_rate_models():
+    """FxRate, FxRatesPayload, FxRatesResponse, EconomicsResponse validate correctly.
+    AppSettings/AppSettingsUpdate now include base_currency."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import (
+        FxRate, FxRatesPayload, FxRatesResponse,
+        AppSettings, AppSettingsUpdate, EconomicsResponse,
+    )
+
+    # FxRate accepts valid input.
+    fx = FxRate(currency_code="EUR", rate_to_base=1.0850)
+    assert fx.currency_code == "EUR"
+    assert fx.rate_to_base == 1.0850
+
+    # FxRate rejects invalid currency code.
+    with pytest.raises(ValidationError):
+        FxRate(currency_code="XYZ", rate_to_base=1.0)
+    # FxRate rejects negative rate.
+    with pytest.raises(ValidationError):
+        FxRate(currency_code="EUR", rate_to_base=-0.5)
+    # Rate of 0 is allowed (signals "unset").
+    FxRate(currency_code="EUR", rate_to_base=0.0)
+
+    # FxRatesPayload (PUT body) requires base_currency + rates list.
+    payload = FxRatesPayload(base_currency="USD", rates=[
+        FxRate(currency_code="EUR", rate_to_base=1.0850),
+        FxRate(currency_code="GBP", rate_to_base=1.2430),
+    ])
+    assert payload.base_currency == "USD"
+    assert len(payload.rates) == 2
+
+    # FxRatesPayload rejects invalid base currency.
+    with pytest.raises(ValidationError):
+        FxRatesPayload(base_currency="XYZ", rates=[])
+    # Duplicate currency codes rejected.
+    with pytest.raises(ValidationError):
+        FxRatesPayload(base_currency="USD", rates=[
+            FxRate(currency_code="EUR", rate_to_base=1.0),
+            FxRate(currency_code="EUR", rate_to_base=2.0),
+        ])
+
+    # FxRatesResponse (GET body) shape.
+    resp = FxRatesResponse(base_currency="USD", rates=[
+        {"currency_code": "EUR", "rate_to_base": 1.0850, "updated_at": "2026-05-01T12:00:00"},
+    ])
+    assert resp.base_currency == "USD"
+    assert resp.rates[0].currency_code == "EUR"
+
+    # AppSettings includes base_currency now.
+    s = AppSettings(default_currency="EUR", base_currency="USD")
+    assert s.base_currency == "USD"
+
+    # AppSettingsUpdate accepts both fields, both optional.
+    upd = AppSettingsUpdate(base_currency="GBP")
+    assert upd.base_currency == "GBP"
+    assert upd.default_currency is None
+
+    # AppSettingsUpdate rejects invalid currency codes.
+    with pytest.raises(ValidationError):
+        AppSettingsUpdate(base_currency="XYZ")
+
+    # EconomicsResponse skeleton check (the aggregator returns this shape).
+    er = EconomicsResponse(
+        summary={
+            "total_revenue": 0.0, "total_cost_saved": 0.0,
+            "avg_margin_pct": None, "avg_revenue_per_day_xcsg": None,
+            "cost_ratio": None, "qualifying_project_count": 0,
+            "total_complete_count": 0, "base_currency": "USD",
+            "currencies_missing_fx": [],
+        },
+        breakdowns={"by_practice": [], "by_pioneer": [], "by_currency": [], "by_pricing_model": []},
+        trends={"quarterly": []},
+    )
+    assert er.summary["base_currency"] == "USD"
+
+
+def test_app_settings_includes_base_currency():
+    """get_app_settings returns base_currency; update_app_settings persists it."""
+    from backend import database
+    database.init_db()
+    s = database.get_app_settings()
+    assert "default_currency" in s
+    assert "base_currency" in s, f"missing base_currency: {s}"
+    assert s["base_currency"] == "USD", f"default base_currency should be USD; got {s['base_currency']}"
+
+    initial_default = s["default_currency"]
+    initial_base = s["base_currency"]
+    try:
+        database.update_app_settings(default_currency="EUR", base_currency="GBP")
+        s2 = database.get_app_settings()
+        assert s2["default_currency"] == "EUR"
+        assert s2["base_currency"] == "GBP"
+
+        # Partial update: only base_currency.
+        database.update_app_settings(base_currency="CHF")
+        s3 = database.get_app_settings()
+        assert s3["default_currency"] == "EUR"  # unchanged
+        assert s3["base_currency"] == "CHF"
+    finally:
+        database.update_app_settings(default_currency=initial_default, base_currency=initial_base)
+
+
+def test_fx_rates_db_helpers():
+    """get_fx_rates returns all 6 rates; update_fx_rates round-trips and
+    bumps updated_at; _ensure_all_fx_rows_exist backfills missing currencies."""
+    from backend import database
+    database.init_db()
+
+    rates = database.get_fx_rates()
+    assert isinstance(rates, list)
+    codes = sorted(r["currency_code"] for r in rates)
+    assert codes == ["AUD", "CAD", "CHF", "EUR", "GBP", "USD"], f"got {codes}"
+    for r in rates:
+        assert "rate_to_base" in r and "updated_at" in r
+
+    try:
+        # update_fx_rates accepts a list and persists each row.
+        database.update_fx_rates([
+            {"currency_code": "EUR", "rate_to_base": 1.0850},
+            {"currency_code": "GBP", "rate_to_base": 1.2430},
+        ])
+        after = {r["currency_code"]: r["rate_to_base"] for r in database.get_fx_rates()}
+        assert after["EUR"] == 1.0850, f"got {after['EUR']}"
+        assert after["GBP"] == 1.2430, f"got {after['GBP']}"
+        # USD unchanged.
+        assert after["USD"] == 1.0, f"got {after['USD']}"
+
+        # _ensure_all_fx_rows_exist is a no-op when all rows present.
+        n_before = len(database.get_fx_rates())
+        database._ensure_all_fx_rows_exist()
+        assert len(database.get_fx_rates()) == n_before
+
+        # If we manually delete a row then call the helper, it gets re-added at rate 0
+        # (signals "not yet set" to the FX-missing path).
+        with database._db() as conn:
+            conn.execute("DELETE FROM fx_rates WHERE currency_code = 'CHF'")
+            conn.commit()
+        database._ensure_all_fx_rows_exist()
+        after2 = {r["currency_code"]: r["rate_to_base"] for r in database.get_fx_rates()}
+        assert "CHF" in after2
+        assert after2["CHF"] == 0.0, f"backfilled rate should be 0; got {after2['CHF']}"
+    finally:
+        # Restore ALL six rates to identity so subsequent tests start clean.
+        from backend.schema import CURRENCIES
+        database.update_fx_rates([
+            {"currency_code": code, "rate_to_base": 1.0} for code in CURRENCIES
+        ])
+
+
 def test_app_settings_endpoints():
     """GET /api/settings is open to all roles; PUT requires admin."""
     print("\n── App Settings ──")
@@ -1898,6 +2083,242 @@ def test_app_settings_endpoints():
     finally:
         # Restore.
         requests.put(f"{BASE}/api/settings", headers=h_admin, json={"default_currency": initial})
+
+
+def test_compute_economics_summary():
+    """Pure aggregator: takes pre-computed per-project metrics dicts +
+    fx_rates dict + base_currency. Returns the 6 hero tile values."""
+    from backend.economics import compute_economics_summary
+
+    # Two USD projects, one EUR — base = USD.
+    # Each project shape mirrors what _build_averaged_complete_projects produces.
+    projects = [
+        # USD project: revenue 100k, xcsg_cost 30k, legacy_cost 200k → margin=70k, margin_pct=0.7
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0,
+            "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0,
+            "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "Senior", "count": 2, "day_rate": 1500}],
+        },
+        # EUR project: revenue 200k EUR (= 220k USD at rate 1.10), cost 60k EUR / 132k legacy
+        {
+            "id": 2, "status": "complete", "currency": "EUR",
+            "engagement_revenue": 200_000.0,
+            "xcsg_cost": 60_000.0, "legacy_cost": 132_000.0,
+            "xcsg_margin": 140_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 8000.0,
+            "xcsg_person_days": 25.0,
+            "legacy_team": [{"role_name": "Senior", "count": 1, "day_rate": 1200}],
+        },
+        # USD project missing legacy_team → does NOT qualify (sum excluded)
+        # but still counted in total_complete_count.
+        {
+            "id": 3, "status": "complete", "currency": "USD",
+            "engagement_revenue": 50_000.0,
+            "xcsg_cost": 10_000.0, "legacy_cost": None,
+            "xcsg_margin": None, "xcsg_margin_pct": None,
+            "revenue_per_day_xcsg": None,
+            "xcsg_person_days": 5.0,
+            "legacy_team": [],
+        },
+    ]
+    fx_rates = {"USD": 1.0, "EUR": 1.10}
+
+    out = compute_economics_summary(projects, fx_rates, base_currency="USD")
+
+    # 100k USD + 200k * 1.10 = 100k + 220k = 320k
+    assert out["total_revenue"] == 320_000.0, f"got {out['total_revenue']}"
+    # cost saved = (legacy - xcsg) per project, normalized:
+    #   project 1: (200k - 30k) USD = 170k
+    #   project 2: (132k - 60k) EUR * 1.10 = 79.2k USD
+    # total = 249.2k
+    assert abs(out["total_cost_saved"] - 249_200.0) < 0.01, f"got {out['total_cost_saved']}"
+    # avg margin pct across qualifying projects: (0.70 + 0.70) / 2 = 0.70
+    assert out["avg_margin_pct"] == 0.70, f"got {out['avg_margin_pct']}"
+    # avg revenue/day (normalized):
+    #   project 1: 5000 USD/d
+    #   project 2: 8000 EUR/d * 1.10 = 8800 USD/d
+    # avg = 6900
+    assert abs(out["avg_revenue_per_day_xcsg"] - 6900.0) < 0.01, f"got {out['avg_revenue_per_day_xcsg']}"
+    # cost ratio = total_xcsg_cost / total_legacy_cost (normalized)
+    #   total_xcsg = 30k + 60k*1.10 = 96k
+    #   total_legacy = 200k + 132k*1.10 = 345.2k
+    #   ratio = 96 / 345.2 ≈ 0.2782
+    assert abs(out["cost_ratio"] - (96_000.0 / 345_200.0)) < 0.001, f"got {out['cost_ratio']}"
+    assert out["qualifying_project_count"] == 2, f"got {out['qualifying_project_count']}"
+    assert out["total_complete_count"] == 3, f"got {out['total_complete_count']}"
+    assert out["base_currency"] == "USD"
+    assert out["currencies_missing_fx"] == []
+
+
+def test_compute_economics_summary_fx_missing():
+    """When a currency has no FX rate (or rate == 0), affected projects
+    are excluded from totals and the currency code is reported."""
+    from backend.economics import compute_economics_summary
+
+    projects = [
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0,
+            "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+        },
+        {
+            "id": 2, "status": "complete", "currency": "GBP",
+            "engagement_revenue": 80_000.0,
+            "xcsg_cost": 20_000.0, "legacy_cost": 150_000.0,
+            "xcsg_margin": 60_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 4000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+        },
+    ]
+    fx_rates = {"USD": 1.0, "GBP": 0.0}  # GBP rate not yet set
+    out = compute_economics_summary(projects, fx_rates, base_currency="USD")
+    # Only USD project contributes to totals.
+    assert out["total_revenue"] == 100_000.0
+    assert out["qualifying_project_count"] == 1
+    assert "GBP" in out["currencies_missing_fx"]
+
+
+def test_compute_economics_summary_empty():
+    """Zero qualifying projects returns zero totals + None for averages."""
+    from backend.economics import compute_economics_summary
+    out = compute_economics_summary([], {"USD": 1.0}, base_currency="USD")
+    assert out["total_revenue"] == 0.0
+    assert out["total_cost_saved"] == 0.0
+    assert out["avg_margin_pct"] is None
+    assert out["avg_revenue_per_day_xcsg"] is None
+    assert out["cost_ratio"] is None
+    assert out["qualifying_project_count"] == 0
+    assert out["total_complete_count"] == 0
+
+
+def test_compute_economics_breakdowns():
+    """Aggregator returns by_practice, by_pioneer, by_currency, by_pricing_model."""
+    from backend.economics import compute_economics_breakdowns
+
+    projects = [
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0, "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "practice_code": "RAM", "xcsg_pricing_model": "Fixed fee",
+            "pioneer_ids": [10], "pioneer_display_names": ["Sofia Romano"],
+        },
+        {
+            "id": 2, "status": "complete", "currency": "USD",
+            "engagement_revenue": 200_000.0, "xcsg_cost": 50_000.0, "legacy_cost": 250_000.0,
+            "xcsg_margin": 150_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 8000.0, "xcsg_person_days": 25.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "practice_code": "RAM", "xcsg_pricing_model": "Time & materials",
+            "pioneer_ids": [10, 11], "pioneer_display_names": ["Sofia Romano", "Marcus Chen"],
+        },
+        {
+            "id": 3, "status": "complete", "currency": "EUR",
+            "engagement_revenue": 80_000.0, "xcsg_cost": 20_000.0, "legacy_cost": 100_000.0,
+            "xcsg_margin": 60_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 4000.0, "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "practice_code": "MAP", "xcsg_pricing_model": "Fixed fee",
+            "pioneer_ids": [11], "pioneer_display_names": ["Marcus Chen"],
+        },
+    ]
+    fx_rates = {"USD": 1.0, "EUR": 1.10}
+    out = compute_economics_breakdowns(projects, fx_rates, base_currency="USD")
+
+    # by_practice: RAM = 100k+200k = 300k revenue, MAP = 80k * 1.10 = 88k
+    practices = {row["practice_code"]: row for row in out["by_practice"]}
+    assert practices["RAM"]["revenue"] == 300_000.0
+    assert practices["RAM"]["n"] == 2
+    assert abs(practices["MAP"]["revenue"] - 88_000.0) < 0.01
+
+    # by_pioneer: Sofia on 2 projects (revenue split or full?), Marcus on 2.
+    # Convention: each pioneer gets the FULL project revenue (multi-attribution).
+    # That matches the existing By Pioneer chart behavior.
+    pioneers = {p["pioneer_id"]: p for p in out["by_pioneer"]}
+    assert 10 in pioneers and 11 in pioneers
+    assert pioneers[10]["display_name"] == "Sofia Romano"
+    # Sofia: project 1 (100k) + project 2 (200k) = 300k
+    assert pioneers[10]["revenue"] == 300_000.0
+    # Marcus: project 2 (200k) + project 3 (88k) = 288k
+    assert abs(pioneers[11]["revenue"] - 288_000.0) < 0.01
+
+    # by_currency: native amounts (NOT normalized)
+    cur = {c["code"]: c for c in out["by_currency"]}
+    assert cur["USD"]["native_revenue"] == 300_000.0
+    assert cur["USD"]["n_projects"] == 2
+    assert cur["EUR"]["native_revenue"] == 80_000.0
+    assert cur["EUR"]["n_projects"] == 1
+
+    # by_pricing_model: "Fixed fee" = 100k + 88k = 188k, "T&M" = 200k
+    pm = {row["model"]: row for row in out["by_pricing_model"]}
+    assert abs(pm["Fixed fee"]["revenue"] - 188_000.0) < 0.01
+    assert pm["Fixed fee"]["n"] == 2
+    assert pm["Time & materials"]["revenue"] == 200_000.0
+    assert pm["Time & materials"]["n"] == 1
+
+
+def test_compute_economics_trends():
+    """Quarterly trend bucketed by date_delivered, normalized to base currency."""
+    from backend.economics import compute_economics_trends
+
+    projects = [
+        # 2026-Q1
+        {
+            "id": 1, "status": "complete", "currency": "USD",
+            "engagement_revenue": 100_000.0, "xcsg_cost": 30_000.0, "legacy_cost": 200_000.0,
+            "xcsg_margin": 70_000.0, "xcsg_margin_pct": 0.70,
+            "revenue_per_day_xcsg": 5000.0, "revenue_per_day_legacy": 1000.0,
+            "xcsg_person_days": 20.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "date_delivered": "2026-02-15",
+        },
+        # 2026-Q1 (same quarter)
+        {
+            "id": 2, "status": "complete", "currency": "EUR",
+            "engagement_revenue": 200_000.0, "xcsg_cost": 50_000.0, "legacy_cost": 250_000.0,
+            "xcsg_margin": 150_000.0, "xcsg_margin_pct": 0.75,
+            "revenue_per_day_xcsg": 8000.0, "revenue_per_day_legacy": 1500.0,
+            "xcsg_person_days": 25.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "date_delivered": "2026-03-30",
+        },
+        # 2026-Q2
+        {
+            "id": 3, "status": "complete", "currency": "USD",
+            "engagement_revenue": 50_000.0, "xcsg_cost": 10_000.0, "legacy_cost": 90_000.0,
+            "xcsg_margin": 40_000.0, "xcsg_margin_pct": 0.80,
+            "revenue_per_day_xcsg": 5000.0, "revenue_per_day_legacy": 900.0,
+            "xcsg_person_days": 10.0,
+            "legacy_team": [{"role_name": "x", "count": 1, "day_rate": 100}],
+            "date_delivered": "2026-04-10",
+        },
+    ]
+    fx_rates = {"USD": 1.0, "EUR": 1.10}
+    out = compute_economics_trends(projects, fx_rates, base_currency="USD")
+
+    quarters = {q["quarter"]: q for q in out["quarterly"]}
+    assert "2026-Q1" in quarters and "2026-Q2" in quarters
+    # Q1: revenue 100k + 200k*1.10 = 320k; cost saved 170k + 200k*1.10 = 390k
+    assert quarters["2026-Q1"]["revenue"] == 320_000.0, f"got {quarters['2026-Q1']['revenue']}"
+    assert quarters["2026-Q1"]["cost_saved"] == 390_000.0, f"got {quarters['2026-Q1']['cost_saved']}"
+    # Q1 avg margin %: (0.70 + 0.75) / 2 = 0.725
+    assert quarters["2026-Q1"]["margin_pct"] == 0.725
+    assert quarters["2026-Q1"]["n"] == 2
+    # Q2: just project 3 → 50k revenue, 80k saved
+    assert quarters["2026-Q2"]["revenue"] == 50_000.0
+    assert quarters["2026-Q2"]["cost_saved"] == 80_000.0
+    assert quarters["2026-Q2"]["n"] == 1
+    # Sorted ascending by quarter.
+    assert [q["quarter"] for q in out["quarterly"]] == ["2026-Q1", "2026-Q2"]
 
 
 def test_practice_role_models():
@@ -2657,6 +3078,7 @@ def main():
     test_dashboard_config()
     test_seed_field_coverage()
     test_economics_schema()
+    test_economics_schema_constants()
     test_practice_roles_schema()
     test_legacy_team_schema()
     test_pioneer_schema()
@@ -2674,6 +3096,8 @@ def main():
     test_migrate_v19_destructive_creates_pioneers_table()
     test_migrate_v19_email_unique_case_insensitive()
     test_migrate_v20_splits_name_into_first_and_last()
+    test_migrate_v21_creates_fx_rates_and_base_currency()
+    test_migrate_v21_idempotent()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -2687,7 +3111,15 @@ def main():
     test_pioneer_role_name_in_models()
     test_economics_metrics()
     test_legacy_cost_from_team_mix()
+    test_fx_rates_db_helpers()
+    test_app_settings_includes_base_currency()
+    test_fx_rate_models()
     test_app_settings_endpoints()
+    test_compute_economics_summary()
+    test_compute_economics_summary_fx_missing()
+    test_compute_economics_summary_empty()
+    test_compute_economics_breakdowns()
+    test_compute_economics_trends()
     test_practice_roles_crud()
     test_practice_roles_admin_only()
     test_practice_roles_404_for_unknown_practice()
@@ -2710,6 +3142,8 @@ def main():
     test_export_pioneers_csv_empty_filter()
     test_export_pioneer_xlsx()
     test_export_pioneer_xlsx_404_for_unknown()
+    test_fx_rates_get_put_endpoints()
+    test_dashboard_economics_endpoint()
 
     print("\n" + "=" * 70)
     print(f"QA SUMMARY: {passed} passed, {failed} failed, {passed + failed} total")
@@ -2897,6 +3331,43 @@ def test_migrate_v20_splits_name_into_first_and_last():
     with database._db() as conn:
         conn.execute("DELETE FROM pioneers WHERE email LIKE '%@v20test.example'")
         conn.commit()
+
+
+def test_migrate_v21_creates_fx_rates_and_base_currency():
+    """v2.1 — fx_rates table exists with all 6 currencies seeded at rate 1.0,
+    and app_settings.base_currency exists with default 'USD'."""
+    from backend import database
+    database.init_db()  # idempotent — applies all migrations
+
+    with database._db() as conn:
+        # fx_rates table exists with the right shape.
+        rates = conn.execute(
+            "SELECT currency_code, rate_to_base FROM fx_rates ORDER BY currency_code"
+        ).fetchall()
+        codes = [r["currency_code"] for r in rates]
+        assert codes == ["AUD", "CAD", "CHF", "EUR", "GBP", "USD"], f"got {codes}"
+        for r in rates:
+            assert r["rate_to_base"] == 1.0, f"{r['currency_code']} rate={r['rate_to_base']}"
+
+        # app_settings has base_currency column with default 'USD'.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(app_settings)").fetchall()}
+        assert "base_currency" in cols, f"got {cols}"
+        row = conn.execute("SELECT base_currency FROM app_settings WHERE id=1").fetchone()
+        assert row["base_currency"] == "USD", f"got {row['base_currency']}"
+
+    # Idempotency: running migration again is a no-op.
+    database.migrate_v21_fx_rates()
+    database.migrate_v21_fx_rates()
+
+
+def test_migrate_v21_idempotent():
+    """Calling migrate_v21_fx_rates twice doesn't duplicate rows or fail."""
+    from backend import database
+    database.init_db()
+    database.migrate_v21_fx_rates()
+    with database._db() as conn:
+        n = conn.execute("SELECT COUNT(*) AS n FROM fx_rates").fetchone()["n"]
+    assert n == 6, f"expected 6 currency rows, got {n}"
 
 
 def test_migrate_v19_email_unique_case_insensitive():
@@ -3505,6 +3976,199 @@ def test_export_pioneer_xlsx_404_for_unknown():
     headers = auth_h(admin_token())
     r = requests.get(f"{BASE}/api/export/pioneer/99999.xlsx", headers=headers)
     assert r.status_code == 404
+
+
+def test_fx_rates_get_put_endpoints():
+    """GET /api/fx-rates is open; PUT requires admin and validates inputs."""
+    print("\n── FX Rates ──")
+
+    def _login(u, p):
+        r = requests.post(f"{BASE}/api/auth/login", json={"username": u, "password": p})
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    h_admin = auth_h(admin_token())
+    h_analyst = auth_h(_login("pmo", "AliraPMO2026!"))
+    h_viewer = auth_h(_login("viewer", "AliraView2026!"))
+
+    # GET works for all roles.
+    r = requests.get(f"{BASE}/api/fx-rates", headers=h_admin)
+    test("GET /api/fx-rates 200 for admin", r.status_code == 200, f"got {r.status_code}")
+    body = r.json()
+    test("GET /api/fx-rates has base_currency", "base_currency" in body)
+    test("GET /api/fx-rates has rates list", isinstance(body.get("rates"), list))
+    test("GET /api/fx-rates has 6 rate rows", len(body["rates"]) == 6, f"got {len(body['rates'])}")
+
+    test("GET /api/fx-rates 200 for analyst",
+         requests.get(f"{BASE}/api/fx-rates", headers=h_analyst).status_code == 200)
+    test("GET /api/fx-rates 200 for viewer",
+         requests.get(f"{BASE}/api/fx-rates", headers=h_viewer).status_code == 200)
+
+    initial_base = body["base_currency"]
+    initial_rates = {r["currency_code"]: r["rate_to_base"] for r in body["rates"]}
+
+    try:
+        # Admin can PUT.
+        upd = requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": "USD",
+            "rates": [
+                {"currency_code": "EUR", "rate_to_base": 1.0850},
+                {"currency_code": "GBP", "rate_to_base": 1.2430},
+            ],
+        })
+        test("PUT /api/fx-rates 200 for admin", upd.status_code == 200, f"got {upd.status_code}: {upd.text[:120]}")
+        rt = requests.get(f"{BASE}/api/fx-rates", headers=h_admin).json()
+        new_rates = {r["currency_code"]: r["rate_to_base"] for r in rt["rates"]}
+        test("PUT persists EUR rate", new_rates["EUR"] == 1.0850)
+        test("PUT persists GBP rate", new_rates["GBP"] == 1.2430)
+
+        # Non-admin cannot PUT.
+        analyst_put = requests.put(f"{BASE}/api/fx-rates", headers=h_analyst, json={
+            "base_currency": "USD", "rates": []
+        })
+        test("PUT 403 for analyst", analyst_put.status_code == 403, f"got {analyst_put.status_code}")
+        viewer_put = requests.put(f"{BASE}/api/fx-rates", headers=h_viewer, json={
+            "base_currency": "USD", "rates": []
+        })
+        test("PUT 403 for viewer", viewer_put.status_code == 403, f"got {viewer_put.status_code}")
+
+        # Invalid currency code rejected.
+        bad_code = requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": "USD",
+            "rates": [{"currency_code": "XYZ", "rate_to_base": 1.0}],
+        })
+        test("PUT 422 for invalid currency code", bad_code.status_code == 422, f"got {bad_code.status_code}: {bad_code.text[:120]}")
+
+        # Negative rate rejected.
+        bad_rate = requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": "USD",
+            "rates": [{"currency_code": "EUR", "rate_to_base": -1.0}],
+        })
+        test("PUT 422 for negative rate", bad_rate.status_code == 422, f"got {bad_rate.status_code}")
+
+        # base_currency persists into app_settings.
+        settings_get = requests.get(f"{BASE}/api/settings", headers=h_admin).json()
+        test("base_currency mirrored in /api/settings", settings_get.get("base_currency") == "USD")
+    finally:
+        # Restore.
+        restore = [{"currency_code": k, "rate_to_base": v} for k, v in initial_rates.items()]
+        requests.put(f"{BASE}/api/fx-rates", headers=h_admin, json={
+            "base_currency": initial_base, "rates": restore
+        })
+
+
+def test_dashboard_economics_endpoint():
+    """GET /api/dashboard/economics returns {summary, breakdowns, trends},
+    honors pioneer_id and date filters, normalizes via FX rates."""
+    print("\n── Dashboard Economics ──")
+    h = auth_h(admin_token())
+
+    # Seed two projects via the public API so we know exactly what to expect.
+    cats = requests.get(f"{BASE}/api/categories", headers=h).json()
+    practices = requests.get(f"{BASE}/api/practices", headers=h).json()
+    pmap = {p["code"]: p["id"] for p in practices}
+    map_cat = next((c for c in cats if any(p["code"] == "MAP" for p in c.get("practices", []))), None)
+    if not map_cat:
+        test("skip — no MAP-eligible category", False, detail="setup")
+        return
+
+    common_legacy = [{"role_name": "Senior", "count": 2, "day_rate": 1500}]
+    bodies = [
+        {
+            "project_name": "Econ Test USD", "category_id": map_cat["id"], "practice_id": pmap["MAP"],
+            "engagement_revenue": 100000.0, "currency": "USD", "xcsg_pricing_model": "Fixed fee",
+            "date_started": "2026-01-15", "date_delivered": "2026-02-10",
+            "working_days": 10, "xcsg_team_size": "2", "xcsg_revision_rounds": "1",
+            "engagement_stage": "Active engagement",
+            "pioneers": [{"first_name": "Econ", "last_name": "Tester1", "email": "econ1@example.com", "total_rounds": 1}],
+            "legacy_team": common_legacy,
+        },
+        {
+            "project_name": "Econ Test EUR", "category_id": map_cat["id"], "practice_id": pmap["MAP"],
+            "engagement_revenue": 200000.0, "currency": "EUR", "xcsg_pricing_model": "Time & materials",
+            "date_started": "2026-01-20", "date_delivered": "2026-02-15",
+            "working_days": 12, "xcsg_team_size": "2", "xcsg_revision_rounds": "1",
+            "engagement_stage": "Active engagement",
+            "pioneers": [{"first_name": "Econ", "last_name": "Tester2", "email": "econ2@example.com", "total_rounds": 1}],
+            "legacy_team": common_legacy,
+        },
+    ]
+    created_ids = []
+    initial_fx = None
+    try:
+        # Set EUR rate to 1.10 for predictable arithmetic. Restore after.
+        initial_fx = requests.get(f"{BASE}/api/fx-rates", headers=h).json()
+        requests.put(f"{BASE}/api/fx-rates", headers=h, json={
+            "base_currency": "USD",
+            "rates": [{"currency_code": "EUR", "rate_to_base": 1.10}],
+        })
+
+        # Import a STRONG payload so the projects compute non-null margins.
+        import importlib.util, pathlib
+        spec = importlib.util.spec_from_file_location("sd", pathlib.Path("tests/seed_20_projects.py"))
+        sd = importlib.util.module_from_spec(spec); spec.loader.exec_module(sd)
+        strong = dict(getattr(sd, "STRONG"))
+
+        for b in bodies:
+            r = requests.post(f"{BASE}/api/projects", headers=h, json=b)
+            assert r.status_code == 201, f"create failed: {r.status_code}: {r.text[:160]}"
+            proj = r.json()
+            created_ids.append(proj["id"])
+            tok = proj["pioneers"][0]["expert_token"]
+            sr = requests.post(f"{BASE}/api/expert/{tok}", json=strong)
+            assert sr.status_code == 201, f"survey submit failed: {sr.status_code}: {sr.text[:160]}"
+
+        # Hit the endpoint.
+        r = requests.get(f"{BASE}/api/dashboard/economics", headers=h)
+        test("GET /api/dashboard/economics 200", r.status_code == 200, f"got {r.status_code}: {r.text[:120]}")
+        data = r.json()
+        test("response has summary", "summary" in data)
+        test("response has breakdowns", "breakdowns" in data)
+        test("response has trends", "trends" in data)
+
+        s = data["summary"]
+        test("summary.base_currency = USD", s["base_currency"] == "USD")
+        test("summary.qualifying_project_count >= 2",
+             s["qualifying_project_count"] >= 2,
+             detail=f"got {s['qualifying_project_count']}")
+        # total_revenue should INCLUDE EUR-converted revenue (200k * 1.10 = 220k)
+        # and the USD project's 100k → at least 320k attributed to OUR projects.
+        test("summary.total_revenue >= 320000",
+             s["total_revenue"] >= 320000.0,
+             detail=f"got {s['total_revenue']}")
+
+        # by_currency includes USD and EUR with native amounts.
+        cur = {row["code"]: row for row in data["breakdowns"]["by_currency"]}
+        test("by_currency has USD", "USD" in cur)
+        test("by_currency has EUR", "EUR" in cur)
+
+        # Pioneer filter pass-through: filter by Econ Tester1's id.
+        pioneers = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+        tester1 = next((p for p in pioneers if p.get("email") == "econ1@example.com"), None)
+        test("Tester1 pioneer found", tester1 is not None)
+        if tester1:
+            pid = tester1["id"]
+            rf = requests.get(f"{BASE}/api/dashboard/economics?pioneer_id={pid}", headers=h).json()
+            # Filter narrows to just the USD project (revenue 100k).
+            test("pioneer filter narrows total_revenue to 100k",
+                 abs(rf["summary"]["total_revenue"] - 100000.0) < 0.01,
+                 detail=f"got {rf['summary']['total_revenue']}")
+    finally:
+        # Cleanup: delete created projects + restore initial FX + remove test pioneers.
+        for pid in created_ids:
+            requests.delete(f"{BASE}/api/projects/{pid}", headers=h)
+        # Pioneer rows in the global pioneers table don't cascade on project
+        # deletion (FK is RESTRICT), so we must DELETE them by email manually.
+        all_pioneers = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+        for p in all_pioneers:
+            if p.get("email") in {"econ1@example.com", "econ2@example.com"}:
+                requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=h)
+        if initial_fx:
+            requests.put(f"{BASE}/api/fx-rates", headers=h, json={
+                "base_currency": initial_fx["base_currency"],
+                "rates": [{"currency_code": r["currency_code"], "rate_to_base": r["rate_to_base"]}
+                          for r in initial_fx["rates"]],
+            })
 
 
 if __name__ == "__main__":
