@@ -3249,6 +3249,8 @@ def main():
     test_migrate_v20_splits_name_into_first_and_last()
     test_migrate_v21_creates_fx_rates_and_base_currency()
     test_migrate_v21_idempotent()
+    test_migrate_v22_drops_legacy_norms()
+    test_migrate_v22_idempotent()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3519,6 +3521,35 @@ def test_migrate_v21_idempotent():
     with database._db() as conn:
         n = conn.execute("SELECT COUNT(*) AS n FROM fx_rates").fetchone()["n"]
     assert n == 6, f"expected 6 currency rows, got {n}"
+
+
+def test_migrate_v22_drops_legacy_norms():
+    """v2.2 — legacy_norms table no longer exists after init_db,
+    and projects.legacy_overridden column is dropped.
+    """
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_norms'"
+        ).fetchone()
+        assert row is None, "legacy_norms table should be dropped"
+        proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        assert "legacy_overridden" not in proj_cols, "projects.legacy_overridden column should be dropped"
+
+
+def test_migrate_v22_idempotent():
+    """v2.2 migration is safe to re-run after the table/column are gone."""
+    from backend import database
+    database.init_db()
+    # Re-run twice — no exception, table still missing.
+    database.migrate_v22_drop_legacy_norms()
+    database.migrate_v22_drop_legacy_norms()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_norms'"
+        ).fetchone()
+        assert row is None
 
 
 def test_migrate_v19_email_unique_case_insensitive():

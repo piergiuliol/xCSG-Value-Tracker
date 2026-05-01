@@ -329,15 +329,6 @@ class ExpertContextResponse(BaseModel):
     other_pioneers_responses: Optional[list] = None
 
 
-# ── Norms ─────────────────────────────────────────────────────────────────────
-
-class NormUpdate(BaseModel):
-    typical_calendar_days: Optional[str] = None
-    typical_team_size: Optional[str] = None
-    typical_revision_rounds: Optional[str] = None
-    notes: Optional[str] = None
-
-
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
 class ProjectMetrics(BaseModel):
@@ -362,7 +353,6 @@ class ProjectMetrics(BaseModel):
     machine_first_score: Optional[float]
     senior_led_score: Optional[float]
     proprietary_knowledge_score: Optional[float]
-    legacy_overridden: bool = False
     created_at: str
 
 

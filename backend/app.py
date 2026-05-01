@@ -489,15 +489,6 @@ async def create_project(
         for p in body.pioneers
     ]
 
-    norm = db.get_norm_by_category(body.category_id)
-    if norm:
-        data["legacy_overridden"] = (
-            data.get("legacy_calendar_days") != norm["typical_calendar_days"]
-            or data.get("legacy_revision_rounds") != norm["typical_revision_rounds"]
-        )
-    else:
-        data["legacy_overridden"] = False
-
     project_id = db.create_project(data)
     row = db.get_project(project_id)
     result = dict(row)

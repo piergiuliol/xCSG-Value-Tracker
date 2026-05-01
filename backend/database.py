@@ -97,7 +97,6 @@ def init_db() -> None:
                 legacy_calendar_days TEXT,
                 legacy_team_size TEXT,
                 legacy_revision_rounds TEXT,
-                legacy_overridden INTEGER DEFAULT 0,
                 engagement_stage TEXT,
                 client_contact_email TEXT,
                 client_pulse TEXT DEFAULT 'Not yet received',
@@ -153,19 +152,6 @@ def init_db() -> None:
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
                 UNIQUE(pioneer_id, round_number)
-            );
-
-            CREATE TABLE IF NOT EXISTS legacy_norms (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category_id INTEGER UNIQUE NOT NULL,
-                typical_calendar_days TEXT NOT NULL,
-                typical_team_size TEXT NOT NULL,
-                typical_revision_rounds TEXT NOT NULL,
-                notes TEXT,
-                updated_by INTEGER,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (category_id) REFERENCES project_categories(id),
-                FOREIGN KEY (updated_by) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS activity_log (
@@ -227,6 +213,7 @@ def init_db() -> None:
     migrate_v20()
     migrate_v21_fx_rates()
     _ensure_all_fx_rows_exist()
+    migrate_v22_drop_legacy_norms()
 
     seed_data()
 
@@ -252,10 +239,9 @@ def migrate_v12() -> None:
     - Creates `practices` table if missing.
     - Adds `projects.practice_id` nullable FK column if missing.
     - On first run (when practices table is newly created), destructively
-      wipes existing projects/responses/pioneers/round_tokens/legacy_norms
-      and the old generic project_categories seed, then reseeds
-      project_categories (79 rows) and practices (11 rows) from
-      backend.taxonomy_seed.
+      wipes existing projects/responses/pioneers/round_tokens and the old
+      generic project_categories seed, then reseeds project_categories
+      (79 rows) and practices (11 rows) from backend.taxonomy_seed.
     - On subsequent runs, only runs INSERT OR IGNORE for the seed, so
       admin-added categories/practices survive.
     """
@@ -310,8 +296,6 @@ def migrate_v12() -> None:
                 conn.execute("DELETE FROM expert_responses")
             if "project_pioneers" in existing_tables:
                 conn.execute("DELETE FROM project_pioneers")
-            if "legacy_norms" in existing_tables:
-                conn.execute("DELETE FROM legacy_norms")
             if "activity_log" in existing_tables:
                 conn.execute("UPDATE activity_log SET project_id = NULL")
             if "projects" in existing_tables:
@@ -709,6 +693,38 @@ def migrate_v21_fx_rates() -> None:
             conn.execute(
                 "ALTER TABLE app_settings ADD COLUMN base_currency TEXT NOT NULL DEFAULT 'USD'"
             )
+        conn.commit()
+
+
+def migrate_v22_drop_legacy_norms() -> None:
+    """v2.2: drop legacy_norms table + projects.legacy_overridden column.
+
+    The table was dead code — 0 rows in production, 0 helpers actively
+    called by the frontend, and the only validation that read from it
+    (legacy_overridden flag in POST /api/projects) always evaluated to
+    False because nothing populated the table. The user-facing
+    'Category Norms' view at /api/norms/aggregates is unaffected — it
+    computes aggregates from expert_responses, not this table.
+
+    The projects.legacy_overridden column is dropped alongside the table
+    since it was only ever set by the now-deleted validation block.
+
+    Idempotent via sqlite_master + PRAGMA table_info checks.
+    """
+    with _db() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='legacy_norms'"
+        ).fetchone()
+        if exists:
+            conn.execute("DROP TABLE legacy_norms")
+
+        proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "legacy_overridden" in proj_cols:
+            # SQLite >= 3.35 supports DROP COLUMN. The bundled python sqlite3
+            # ships with at least 3.35 on macOS Big Sur+, Linux distros from
+            # 2021+, and Docker python:3.11 base images.
+            conn.execute("ALTER TABLE projects DROP COLUMN legacy_overridden")
+
         conn.commit()
 
 
@@ -1279,7 +1295,6 @@ def delete_category(category_id: int) -> bool:
         ).fetchone()[0]
         if count > 0:
             return False
-        conn.execute("DELETE FROM legacy_norms WHERE category_id = ?", (category_id,))
         conn.execute("DELETE FROM project_categories WHERE id = ?", (category_id,))
         conn.commit()
         return True
@@ -1434,17 +1449,11 @@ def create_project(data: dict) -> int:
       or ``name``+``email`` (inline find-or-create).
     - ``pioneer_name`` string (v1.0 compat): creates a single pioneer from it.
     """
-    category_id = data["category_id"]
+    # Fall back defaults for legacy norms — the legacy_norms table was
+    # dropped in v2.2 (it held 0 rows). Apply hard-coded defaults instead.
     for field in ("legacy_calendar_days", "legacy_revision_rounds"):
         if not data.get(field):
-            norm = get_norm_by_category(category_id)
-            if norm:
-                if field == "legacy_calendar_days":
-                    data[field] = norm["typical_calendar_days"]
-                elif field == "legacy_revision_rounds":
-                    data[field] = norm["typical_revision_rounds"]
-            else:
-                data[field] = "6-10" if "days" in field else "1"
+            data[field] = "6-10" if "days" in field else "1"
 
     # Determine pioneers list
     pioneers_input = data.get("pioneers")
@@ -1452,7 +1461,6 @@ def create_project(data: dict) -> int:
     # Generate a legacy token for the project row (backward compat)
     project_token = secrets.token_urlsafe(32)
 
-    legacy_overridden = data.get("legacy_overridden", False)
     default_rounds = data.get("default_rounds", 1)
     show_previous_answers = 1 if data.get("show_previous_answers") else 0
     show_other_pioneers_answers = 1 if data.get("show_other_pioneers_answers") else 0
@@ -1465,10 +1473,10 @@ def create_project(data: dict) -> int:
                 date_started, date_expected_delivered, date_delivered,
                 xcsg_calendar_days, working_days, xcsg_team_size, xcsg_revision_rounds, revision_depth, xcsg_scope_expansion, engagement_revenue,
                 legacy_calendar_days, legacy_revision_rounds,
-                legacy_overridden, engagement_stage, client_contact_email, client_pulse, expert_token,
+                engagement_stage, client_contact_email, client_pulse, expert_token,
                 default_rounds, show_previous_answers, show_other_pioneers_answers, status,
                 currency, xcsg_pricing_model, scope_expansion_revenue)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["created_by"],
                 data["project_name"],
@@ -1488,7 +1496,6 @@ def create_project(data: dict) -> int:
                 data.get("engagement_revenue"),
                 data["legacy_calendar_days"],
                 data["legacy_revision_rounds"],
-                1 if legacy_overridden else 0,
                 data.get("engagement_stage"),
                 data.get("client_contact_email"),
                 data.get("client_pulse") or "Not yet received",
@@ -1597,7 +1604,7 @@ def update_project(project_id: int, data: dict) -> bool:
         fields = {k: v for k, v in data.items() if v is not None}
         if fields:
             # Coerce booleans to SQLite-friendly ints for known boolean columns.
-            for bool_col in ("show_previous_answers", "show_other_pioneers_answers", "legacy_overridden"):
+            for bool_col in ("show_previous_answers", "show_other_pioneers_answers"):
                 if bool_col in fields and isinstance(fields[bool_col], bool):
                     fields[bool_col] = 1 if fields[bool_col] else 0
             set_clause = ", ".join(f"{k} = ?" for k in fields)
@@ -1827,7 +1834,7 @@ def get_round_token(token: str) -> Optional[dict]:
                       p.xcsg_calendar_days, p.working_days, p.xcsg_team_size,
                       p.xcsg_revision_rounds, p.revision_depth, p.xcsg_scope_expansion,
                       p.engagement_revenue, p.legacy_calendar_days,
-                      p.legacy_revision_rounds, p.legacy_overridden, p.engagement_stage,
+                      p.legacy_revision_rounds, p.engagement_stage,
                       p.default_rounds, p.show_previous_answers,
                       p.show_other_pioneers_answers, p.status,
                       pc.name AS category_name,
@@ -2162,59 +2169,6 @@ def list_all_notes(
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
-
-
-# ── Legacy Norms ──────────────────────────────────────────────────────────────
-
-def list_norms() -> list:
-    with _db() as conn:
-        rows = conn.execute(
-            """SELECT ln.*, pc.name as category_name
-               FROM legacy_norms ln
-               JOIN project_categories pc ON ln.category_id = pc.id
-               ORDER BY pc.name"""
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def get_norm_by_category(category_id: int) -> Optional[sqlite3.Row]:
-    with _db() as conn:
-        return conn.execute(
-            "SELECT * FROM legacy_norms WHERE category_id = ?", (category_id,)
-        ).fetchone()
-
-
-def update_norm(category_id: int, data: dict, updated_by: int) -> bool:
-    with _db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM legacy_norms WHERE category_id = ?", (category_id,)
-        ).fetchone()
-        if existing:
-            fields = {k: v for k, v in data.items() if v is not None}
-            if not fields:
-                return False
-            set_clause = ", ".join(f"{k} = ?" for k in fields)
-            set_clause += ", updated_by = ?, updated_at = CURRENT_TIMESTAMP"
-            values = list(fields.values()) + [updated_by, category_id]
-            conn.execute(
-                f"UPDATE legacy_norms SET {set_clause} WHERE category_id = ?", values
-            )
-        else:
-            conn.execute(
-                """INSERT INTO legacy_norms
-                   (category_id, typical_calendar_days, typical_team_size, typical_revision_rounds, notes, updated_by)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    category_id,
-                    data.get("typical_calendar_days", "6-10"),
-                    data.get("typical_team_size", "2"),
-                    data.get("typical_revision_rounds", "1"),
-                    data.get("notes"),
-                    updated_by,
-                ),
-            )
-        conn.commit()
-        return True
 
 
 # ── Activity Log ──────────────────────────────────────────────────────────────
