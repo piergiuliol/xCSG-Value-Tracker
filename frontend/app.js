@@ -5119,6 +5119,8 @@ async function renderPioneersIndex() {
     <div id="pioneersFilterBar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       <input type="search" id="pioneersSearch" placeholder="Search first/last name or email…" value="${esc(window._pioneersFilters.search)}"
         style="min-width:200px;padding:5px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:13px">
+      <span id="pioneersTitleFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+      <span id="pioneersHomePracticeFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
       <span id="pioneersPracticeFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
       <span id="pioneersRoleFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
       <span id="pioneersStatusFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
@@ -5191,9 +5193,29 @@ function renderPioneersFilterChips() {
     statusEl.innerHTML = '<span style="font-size:12px;color:#6b7280;font-weight:600">Status:</span> ' + chips.join('');
   }
 
+  // Title chip — derived from schema.pioneer_titles (the canonical allowlist).
+  const titleEl = document.getElementById('pioneersTitleFilter');
+  if (titleEl) {
+    const titles = (schema && schema.pioneer_titles) || [];
+    const chips = titles.map(function(t) { return chipBtn('titles', t, t); });
+    titleEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Title:</span> ' + chips.join('')
+      : '';
+  }
+
+  // Home Practice chip — derived from state.practices (the canonical practices cache).
+  const hpEl = document.getElementById('pioneersHomePracticeFilter');
+  if (hpEl) {
+    const practices = (state && Array.isArray(state.practices)) ? state.practices : [];
+    const chips = practices.map(function(p) { return chipBtn('home_practices', p.code, p.code); });
+    hpEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Home Practice:</span> ' + chips.join('')
+      : '';
+  }
+
   // Wire delegated click handlers (idempotent — re-bind every render so the
   // handlers attach to the freshly-replaced DOM).
-  ['pioneersPracticeFilter', 'pioneersRoleFilter', 'pioneersStatusFilter'].forEach(function(containerId) {
+  ['pioneersPracticeFilter', 'pioneersRoleFilter', 'pioneersStatusFilter', 'pioneersTitleFilter', 'pioneersHomePracticeFilter'].forEach(function(containerId) {
     const el = document.getElementById(containerId);
     if (!el) return;
     el.querySelectorAll('button.pioneers-filter-chip').forEach(function(btn) {
@@ -5249,6 +5271,8 @@ function renderPioneersTable() {
       if (!filters.role.some(function(n) { return names.includes(n); })) return false;
     }
     if (filters.status && filters.status.length > 0 && !filters.status.includes(p.status)) return false;
+    if (filters.titles && filters.titles.length > 0 && !filters.titles.includes(p.title)) return false;
+    if (filters.home_practices && filters.home_practices.length > 0 && !filters.home_practices.includes(p.home_practice_code)) return false;
     return true;
   });
 
@@ -5290,10 +5314,12 @@ function renderPioneersTable() {
       + esc(label) + arrow + '</th>';
   }
 
-  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:960px;width:100%"><thead><tr>'
+  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:1080px;width:100%"><thead><tr>'
     + thCell('Last name', 'last_name')
     + thCell('First name', 'first_name')
     + thCell('Email', 'email')
+    + thCell('Title', 'title')
+    + thCell('Home Practice', 'home_practice_code')
     + thCell('# Projects', 'project_count')
     + '<th>Practices</th>'
     + '<th>Roles</th>'
@@ -5318,10 +5344,19 @@ function renderPioneersTable() {
     }).join(' ');
     const badgeStyle = statusBadgeStyle[p.status] || statusBadgeStyle.never;
 
+    const titleCell = p.title
+      ? esc(p.title)
+      : '<span style="color:#9ca3af">—</span>';
+    const hpCell = p.home_practice_code
+      ? '<span class="practice-badge" style="background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + esc(p.home_practice_code) + '</span>'
+      : '<span style="color:#9ca3af">—</span>';
+
     html += '<tr style="cursor:pointer" onclick="window.location.hash=\'#pioneer/' + p.id + '\'">'
       + '<td><strong>' + esc(p.last_name || '') + '</strong></td>'
       + '<td>' + esc(p.first_name || '') + '</td>'
       + '<td style="color:#6b7280;font-size:13px">' + esc(p.email || '') + '</td>'
+      + '<td>' + titleCell + '</td>'
+      + '<td>' + hpCell + '</td>'
       + '<td style="text-align:center">' + (p.project_count || 0) + '</td>'
       + '<td>' + (practiceChips || '—') + '</td>'
       + '<td>' + (roleChips || '—') + '</td>'
