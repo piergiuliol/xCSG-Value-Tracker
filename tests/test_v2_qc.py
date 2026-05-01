@@ -1274,6 +1274,41 @@ def test_economics_schema():
     assert "economics_fields" in response
 
 
+def test_economics_schema_constants():
+    """ECONOMICS_TILES + ECONOMICS_CHARTS exposed via /api/schema."""
+    r = requests.get(f"{BASE}/api/schema")
+    assert r.status_code == 200
+    s = r.json()
+    test("schema has economics_tiles", isinstance(s.get("economics_tiles"), list))
+    tiles = s.get("economics_tiles") or []
+    test("economics_tiles has 6 entries", len(tiles) == 6, f"got {len(tiles)}")
+    expected_keys = {"total_revenue", "total_cost_saved", "avg_margin_pct",
+                     "avg_revenue_per_day_xcsg", "cost_ratio", "qualifying_project_count"}
+    actual_keys = {t["key"] for t in tiles}
+    test("tiles cover all hero metrics", expected_keys.issubset(actual_keys),
+         detail=f"missing {expected_keys - actual_keys}")
+    for t in tiles:
+        test(f"tile '{t['key']}' has label", isinstance(t.get("label"), str) and t["label"])
+        test(f"tile '{t['key']}' has format", t.get("format") in {"currency", "percent", "fraction"})
+
+    test("schema has economics_charts", isinstance(s.get("economics_charts"), list))
+    charts = s.get("economics_charts") or []
+    test("economics_charts has 6 entries", len(charts) == 6, f"got {len(charts)}")
+    chart_ids = {c["id"] for c in charts}
+    expected_chart_ids = {
+        "economics_quarterly_revenue", "economics_margin_trend",
+        "economics_pricing_mix", "economics_pioneer_productivity",
+        "economics_quarterly_revenue_full", "economics_quarterly_productivity",
+    }
+    test("charts cover all 6 ids", chart_ids == expected_chart_ids,
+         detail=f"diff {chart_ids ^ expected_chart_ids}")
+    for c in charts:
+        test(f"chart '{c['id']}' has title", isinstance(c.get("title"), str))
+        test(f"chart '{c['id']}' has type", c.get("type") in {"bar", "line", "donut"})
+        test(f"chart '{c['id']}' has surface", c.get("surface") in {"summary", "tab", "both"})
+        test(f"chart '{c['id']}' has height", isinstance(c.get("height"), int) and c["height"] > 0)
+
+
 def test_migrate_v15_idempotent():
     """migrate_v15 adds new columns + app_settings table, runs idempotently."""
     from backend import database
@@ -3043,6 +3078,7 @@ def main():
     test_dashboard_config()
     test_seed_field_coverage()
     test_economics_schema()
+    test_economics_schema_constants()
     test_practice_roles_schema()
     test_legacy_team_schema()
     test_pioneer_schema()
