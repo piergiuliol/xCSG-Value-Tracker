@@ -15,6 +15,22 @@ async function login(page: Page) {
   }
 }
 
+// ── Helper: navigate to the edit form for a project by name ───────────────────
+// The projects-list table no longer has a row-level onclick — Project Name
+// links to the new #project/{id} detail page instead. These tests need the
+// edit form, so we look up the project ID via the API and route directly.
+async function gotoEditByName(page: Page, projectName: string) {
+  const token = await page.evaluate(() => sessionStorage.getItem('xcsg_token'));
+  const res = await page.request.get(BASE + '/api/projects', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const projects = await res.json();
+  const project = projects.find((p: { project_name: string }) => p.project_name === projectName);
+  if (!project) throw new Error(`Project not found: ${projectName}`);
+  await page.evaluate((id) => { window.location.hash = '#edit/' + id; }, project.id);
+  await page.waitForSelector('#projectForm', { timeout: 8000 });
+}
+
 // ── Helper: fill required project fields (no economics) ───────────────────────
 async function fillRequiredFields(page: Page, projectName: string) {
   await page.goto(BASE + '/#new');
@@ -125,13 +141,9 @@ test.describe('Project economics', () => {
     // Submit the expert survey (requires re-login first since expert view clears session)
     await submitExpertSurvey(page, token);
 
-    // Re-login and navigate to the project detail
+    // Re-login and navigate to the project edit form
     await login(page);
-    await page.evaluate(() => { window.location.hash = '#projects'; });
-    await page.waitForSelector('#projectTable tbody tr', { timeout: 8000 });
-
-    await page.locator('#projectTable tbody tr', { hasText: 'Econ E2E Happy Path' }).first().click();
-    await page.waitForSelector('#projectForm', { timeout: 8000 });
+    await gotoEditByName(page, 'Econ E2E Happy Path');
 
     // Scroll down to the pioneer rounds table and click the completed R1 chip
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
@@ -167,13 +179,9 @@ test.describe('Project economics', () => {
     // Submit expert survey
     await submitExpertSurvey(page, token);
 
-    // Re-login and navigate to project detail
+    // Re-login and navigate to the project edit form
     await login(page);
-    await page.evaluate(() => { window.location.hash = '#projects'; });
-    await page.waitForSelector('#projectTable tbody tr', { timeout: 8000 });
-
-    await page.locator('#projectTable tbody tr', { hasText: 'No-Econ E2E' }).first().click();
-    await page.waitForSelector('#projectForm', { timeout: 8000 });
+    await gotoEditByName(page, 'No-Econ E2E');
 
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.waitForTimeout(500);

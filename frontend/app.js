@@ -153,6 +153,30 @@ function renderEconomicsTilesGrid(summary, schemaEconomicsTiles) {
   return `<div class="metrics-grid">${schemaEconomicsTiles.map(tileFor).join('')}</div>`;
 }
 
+function renderPioneerEconomicsTiles(summary) {
+  if (!summary) return '';
+  const baseCurrency = summary.base_currency || 'USD';
+  const fc = (v) => fmtCurrency(v, baseCurrency);
+  const tiles = [
+    { label: 'Revenue contribution', value: summary.total_revenue, format: 'currency' },
+    { label: 'Cost saved',           value: summary.total_cost_saved, format: 'currency' },
+    { label: 'Avg margin %',         value: summary.avg_margin_pct, format: 'percent' },
+    { label: 'Avg revenue / day',    value: summary.avg_revenue_per_day_xcsg, format: 'currency' },
+  ];
+  const tileHtml = tiles.map(t => {
+    let formatted, raw = t.value;
+    if (t.format === 'currency') formatted = fc(raw);
+    else if (t.format === 'percent') formatted = fmtPctMaybe(raw);
+    else formatted = raw == null ? '—' : String(raw);
+    const toneKey = t.format === 'percent' ? 'pct_tone' : 'metric_tone';
+    return `<div class="metric-tile" title="${esc(t.label)}">
+      <div class="metric-tile-value" style="color:${metricTone(raw, toneKey)}">${formatted}</div>
+      <div class="metric-tile-label">${esc(t.label)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="metrics-grid" data-testid="pioneer-economics-tiles">${tileHtml}</div>`;
+}
+
 function renderEconomicsSummaryCard(data) {
   if (!data || !data.summary) return '';
   const s = data.summary;
@@ -732,6 +756,7 @@ async function route() {
 
   if (hash === '#portfolio') renderPortfolio();
   else if (hash === '#new') { if (canWrite()) renderNewProject(); else { document.getElementById('mainContent').innerHTML = '<div class="error-state">You do not have permission to create projects.</div>'; } }
+  else if (hash.startsWith('#project/')) renderProjectDetail(hash.split('/')[1]);
   else if (hash.startsWith('#edit/')) renderEditProject(hash.split('/')[1]);
   else if (hash === '#projects') renderProjects();
   else if (hash === '#pioneers') renderPioneersIndex();
@@ -813,6 +838,10 @@ function _buildDashboardQS() {
 async function loadEconomicsData() {
   const qs = _buildDashboardQS();
   return await apiCall('GET', `/dashboard/economics${qs}`);
+}
+
+async function loadPioneerEconomics(pioneerId) {
+  return await apiCall('GET', '/dashboard/economics?pioneer_id=' + encodeURIComponent(pioneerId));
 }
 
 async function renderPortfolio() {
@@ -2365,7 +2394,14 @@ async function renderProjects() {
         ${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>' : ''}
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
-        <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th><th>Responses</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
+        <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th>
+        <th title="Actual delivery vs. expected delivery.">Schedule</th>
+        <th title="Knowledge synthesis breadth: xCSG vs legacy">Machine-First</th>
+        <th title="Senior involvement depth: xCSG vs legacy">Senior-Led</th>
+        <th title="Proprietary data + reuse: xCSG vs legacy">Knowledge</th>
+        <th title="Composite quality score (0-1)">Quality</th>
+        <th title="Quality per person-day: xCSG vs legacy">Value Gain</th>
+        <th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody>`;
 
     for (const p of rows) {
@@ -2406,15 +2442,28 @@ async function renderProjects() {
       const schedCell = schedDelta == null
         ? '<span style="color:var(--gray-400)">\u2014</span>'
         : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(p.date_expected_delivered)} \xb7 Delivered: ${esc(p.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
-      html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}" onclick="window.location.hash='#edit/${p.id}'">
-        <td>${esc(p.project_name)}</td>
+      // Compute the 5 ratio cells from p.metrics (null when no responses yet).
+      const m = p.metrics || {};
+      const ratioCell = (val) => {
+        if (val == null) return '<span style="color:var(--gray-400)">\u2014</span>';
+        return `<span style="color:${metricTone(val, 'metric_tone')};font-weight:600">${fmtRatioMaybe(val)}</span>`;
+      };
+      const pctCell = (val) => {
+        if (val == null) return '<span style="color:var(--gray-400)">\u2014</span>';
+        return `<span style="color:${metricTone(val, 'pct_tone')};font-weight:600">${fmtPctMaybe(val)}</span>`;
+      };
+      html += `<tr data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}">
+        <td><a href="#project/${p.id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none;font-weight:600">${esc(p.project_name)}</a></td>
         <td>${esc(p.category_name || '\u2014')}</td>
         <td>${esc(p.practice_code || '\u2014')}</td>
         <td title="${esc(pioneerTooltip)}">${esc(pioneerLabel)}</td>
-        <td>${responsesLabel}</td>
         <td>${schedCell}</td>
-        <td>${qualityScore}</td>
-        <td onclick="event.stopPropagation()">${pulseSelect}</td>
+        <td>${ratioCell(m.machine_first_score)}</td>
+        <td>${ratioCell(m.senior_led_score)}</td>
+        <td>${ratioCell(m.proprietary_knowledge_score)}</td>
+        <td>${pctCell(m.quality_score)}</td>
+        <td>${ratioCell(m.productivity_ratio)}</td>
+        <td>${pulseSelect}</td>
         <td>${statusBadge}</td>
         <td class="actions-cell">${deleteBtn}</td>
       </tr>`;
@@ -5363,6 +5412,406 @@ async function submitAddPioneerToIndex() {
   }
 }
 
+// ── Project Detail Page ───────────────────────────────────────────────────────
+
+async function renderProjectDetail(id) {
+  const mc = document.getElementById('mainContent');
+  mc.innerHTML = '<div class="loading">Loading project…</div>';
+
+  let project;
+  try {
+    project = await apiCall('GET', '/projects/' + id);
+  } catch (e) {
+    mc.innerHTML = '<p class="empty-state">Failed to load project: ' + esc(e && e.message ? e.message : String(e)) + '</p>';
+    return;
+  }
+
+  const metrics = project.metrics || {};
+  const pioneers = project.pioneers || [];
+  const legacyTeam = project.legacy_team || [];
+
+  let html = `
+    <div style="max-width:1100px" data-testid="project-detail">
+      ${renderProjectHeader(project, metrics)}
+      ${renderProjectActivityStrip(project, metrics, pioneers)}
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Performance</h2>
+        <div class="metric-chips-grid" data-testid="project-performance-chips" style="display:flex;gap:8px;flex-wrap:wrap">
+          ${renderProjectFlywheelChips(metrics)}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        ${renderProjectSpecCard(project)}
+        ${renderProjectPioneersCard(pioneers)}
+      </div>
+      ${renderEconomicsCard(project, metrics)}
+      <div style="margin-top:16px">
+        ${renderProjectLegacyTeamCard(legacyTeam, project.currency)}
+      </div>
+      <div style="margin-top:20px">
+        ${renderProjectExpertResponsesCard(project, pioneers)}
+      </div>
+      <div style="margin-top:20px">
+        <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Charts</h2>
+        <div id="projectCharts"></div>
+      </div>
+    </div>
+  `;
+  mc.innerHTML = html;
+  await renderProjectCharts(project, metrics);
+}
+
+function renderProjectHeader(project, metrics) {
+  const isWriter = canWrite();
+  const editBtn = isWriter ? `
+    <button class="btn btn-secondary btn-sm" data-testid="project-detail-edit"
+            onclick="window.location.hash='#edit/${project.id}'">Edit</button>
+  ` : '';
+  const practiceBadge = project.practice_code
+    ? `<span class="practice-badge" style="background:var(--gray-100,#f3f4f6);color:var(--gray-700,#374151);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">${esc(project.practice_code)}</span>`
+    : '';
+  const categoryBadge = project.category_name
+    ? `<span style="background:var(--gray-100,#f3f4f6);color:var(--gray-700,#374151);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">${esc(project.category_name)}</span>`
+    : '';
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+      <div>
+        <a href="#" onclick="window.location.hash='#projects';return false;"
+           style="font-size:13px;color:var(--brand-blue,#6EC1E4);text-decoration:none;display:inline-block;margin-bottom:6px">
+          ← Projects
+        </a>
+        <h1 style="margin:0 0 4px">${esc(project.project_name)}</h1>
+        ${project.client_name ? '<div style="color:#6b7280;font-size:14px;margin-bottom:6px">Client: ' + esc(project.client_name) + '</div>' : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${practiceBadge}
+          ${categoryBadge}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+        ${editBtn}
+      </div>
+    </div>
+  `;
+}
+function renderProjectActivityStrip(project, metrics, pioneers) {
+  // Status badge (matches the dashboard's badge classes).
+  const status = project.status || 'pending';
+  const statusBadgeMap = {
+    'complete': '<span class="badge badge-green">Complete</span>',
+    'partial':  '<span class="badge badge-warning">Partial</span>',
+    'pending':  '<span class="badge badge-orange">Expert Pending</span>',
+  };
+  const statusBadge = statusBadgeMap[status] || `<span class="badge">${esc(status)}</span>`;
+
+  // Pioneer + completion summary.
+  const totalPioneers = pioneers.length;
+  const completedPioneers = pioneers.filter(p => (p.response_count || 0) >= (p.total_rounds || 1)).length;
+  const totalRounds = pioneers.reduce((sum, p) => sum + (p.total_rounds || 1), 0);
+  const completedRounds = pioneers.reduce((sum, p) => sum + (p.response_count || 0), 0);
+  const completionPct = totalRounds > 0 ? Math.round((completedRounds / totalRounds) * 100) + '%' : '—';
+  const roundsText = totalRounds > 0 ? completedRounds + '/' + totalRounds + ' rounds' : '—';
+
+  // Last activity = max submitted_at across pioneer rounds, fallback to date_delivered.
+  let lastActivity = null;
+  pioneers.forEach(p => {
+    (p.rounds || []).forEach(r => {
+      if (r.completed_at && (!lastActivity || r.completed_at > lastActivity)) lastActivity = r.completed_at;
+    });
+  });
+  if (!lastActivity && project.date_delivered) lastActivity = project.date_delivered;
+  const lastActivityText = lastActivity ? lastActivity.split('T')[0] : '—';
+
+  return `
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;padding:12px 16px;background:var(--gray-50,#f9fafb);border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;margin-bottom:20px">
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Status</span>
+        ${statusBadge}
+      </div>
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Pioneers</span>
+        <span style="font-size:14px;font-weight:600">${totalPioneers}</span>
+        ${totalPioneers > 0 ? `<span style="font-size:12px;color:#6b7280;margin-left:4px">${completedPioneers} completed</span>` : ''}
+      </div>
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Completion</span>
+        <span style="font-size:14px;font-weight:600">${completionPct}</span>
+        <span style="font-size:12px;color:#6b7280;margin-left:4px">${roundsText}</span>
+      </div>
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Last Activity</span>
+        <span style="font-size:14px">${esc(lastActivityText)}</span>
+      </div>
+    </div>
+  `;
+}
+function renderProjectFlywheelChips(metrics) {
+  // metrics is `project.metrics || {}` from renderProjectDetail — empty object means no responses yet.
+  if (!metrics || metrics.productivity_ratio == null) {
+    return '<p style="color:#9ca3af;font-size:13px;margin:0">No metrics yet — submit an expert response to populate scores.</p>';
+  }
+  return [
+    pioneerChip('Machine-First', metrics.machine_first_score, 'ratio'),
+    pioneerChip('Senior-Led', metrics.senior_led_score, 'ratio'),
+    pioneerChip('Knowledge', metrics.proprietary_knowledge_score, 'ratio'),
+    pioneerChip('Quality', metrics.quality_score, 'pct'),
+    pioneerChip('Value Gain', metrics.productivity_ratio, 'ratio'),
+  ].join('');
+}
+function renderProjectSpecCard(project) {
+  const rows = [
+    ['Category', project.category_name || '—'],
+    ['Practice', project.practice_code || '—'],
+    ['Pricing model', project.xcsg_pricing_model || '—'],
+    ['Currency', project.currency || '—'],
+    ['Started', project.date_started || '—'],
+    ['Delivered', project.date_delivered || '—'],
+    ['Working days', project.working_days != null ? String(project.working_days) : '—'],
+    ['xCSG team size', project.xcsg_team_size || '—'],
+    ['xCSG revision rounds', project.xcsg_revision_rounds != null ? String(project.xcsg_revision_rounds) : '—'],
+  ];
+  const rowHtml = rows.map(r => `
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray-100,#f3f4f6);font-size:13px">
+      <span style="color:#6b7280">${esc(r[0])}</span>
+      <span style="font-weight:600;color:var(--gray-700,#374151);text-align:right">${esc(r[1])}</span>
+    </div>
+  `).join('');
+  return `
+    <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff" data-testid="project-spec-card">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Specialization</h2>
+      ${rowHtml}
+    </div>
+  `;
+}
+function renderProjectPioneersCard(pioneers) {
+  if (!pioneers || pioneers.length === 0) {
+    return `
+      <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff" data-testid="project-pioneers-card">
+        <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Pioneers</h2>
+        <p style="color:#9ca3af;font-size:13px;margin:0">No pioneers assigned.</p>
+      </div>
+    `;
+  }
+  const rows = pioneers.map(p => {
+    const name = p.display_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || '—';
+    const role = p.role_name || '—';
+    const rate = p.day_rate != null ? p.day_rate.toLocaleString() : '—';
+    const rounds = (p.response_count || 0) + '/' + (p.total_rounds || 1);
+    const linkedName = p.pioneer_id
+      ? `<a href="#pioneer/${p.pioneer_id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">${esc(name)}</a>`
+      : esc(name);
+    return `<tr>
+      <td>${linkedName}</td>
+      <td>${esc(role)}</td>
+      <td>${rate}</td>
+      <td>${rounds}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff" data-testid="project-pioneers-card">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Pioneers (${pioneers.length})</h2>
+      <table class="data-table" style="width:100%;font-size:13px">
+        <thead><tr><th>Name</th><th>Role</th><th>Day rate</th><th>Rounds</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+function renderProjectLegacyTeamCard(legacyTeam, currency) {
+  if (!Array.isArray(legacyTeam) || legacyTeam.length === 0) {
+    return `
+      <div class="card" data-testid="project-legacy-team-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+        <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 8px">Legacy Team Mix</h2>
+        <p style="color:#9ca3af;font-size:13px;margin:0">No legacy team configured. Add one on the project edit form to enable cost comparison.</p>
+      </div>
+    `;
+  }
+  const fc = (v) => fmtCurrency(v, currency || 'USD');
+  let totalCount = 0;
+  let totalDailyCost = 0;
+  const rows = legacyTeam.map(r => {
+    const count = parseInt(r.count, 10) || 0;
+    const rate = parseFloat(r.day_rate) || 0;
+    const dailyCost = count * rate;
+    totalCount += count;
+    totalDailyCost += dailyCost;
+    return `<tr>
+      <td><strong>${esc(r.role_name || '—')}</strong></td>
+      <td>${count}</td>
+      <td>${fc(rate)}</td>
+      <td>${fc(dailyCost)}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="card" data-testid="project-legacy-team-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Legacy Team Mix</h2>
+      <table class="data-table" style="width:100%;font-size:13px">
+        <thead><tr><th>Role</th><th>Count</th><th>Day rate</th><th>Daily cost</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--gray-300,#d1d5db);font-weight:600">
+            <td>Total</td><td>${totalCount}</td><td>—</td><td>${fc(totalDailyCost)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+function renderProjectExpertResponsesCard(project, pioneers) {
+  // Flatten pioneer×round into a list of completed rounds.
+  const rows = [];
+  pioneers.forEach(p => {
+    (p.rounds || []).forEach(r => {
+      if (r.completed_at) {
+        rows.push({
+          pioneer_id: p.pioneer_id,
+          pioneer_name: p.display_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim(),
+          round_number: r.round_number,
+          completed_at: r.completed_at,
+          token: r.token,
+        });
+      }
+    });
+  });
+
+  if (rows.length === 0) {
+    return `
+      <div class="card" data-testid="project-responses-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+        <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 8px">Expert Responses</h2>
+        <p style="color:#9ca3af;font-size:13px;margin:0">No expert responses submitted yet.</p>
+      </div>
+    `;
+  }
+
+  rows.sort((a, b) => (a.completed_at || '').localeCompare(b.completed_at || ''));
+  const rowHtml = rows.map(r => `
+    <tr>
+      <td><strong>R${r.round_number || '?'}</strong></td>
+      <td>${r.pioneer_id ? `<a href="#pioneer/${r.pioneer_id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">${esc(r.pioneer_name)}</a>` : esc(r.pioneer_name)}</td>
+      <td>${esc((r.completed_at || '').split('T')[0])}</td>
+      <td>${r.token ? `<a href="#expert/${esc(r.token)}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">View answers →</a>` : ''}</td>
+    </tr>
+  `).join('');
+  return `
+    <div class="card" data-testid="project-responses-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
+      <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Expert Responses (${rows.length})</h2>
+      <table class="data-table" style="width:100%;font-size:13px">
+        <thead><tr><th>Round</th><th>Pioneer</th><th>Submitted</th><th></th></tr></thead>
+        <tbody>${rowHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+async function renderProjectCharts(project, metrics) {
+  const cont = document.getElementById('projectCharts');
+  if (!cont) return;
+
+  // Decide which charts to show. Per-round timeline only makes sense with 2+ submitted rounds.
+  const totalRoundsSubmitted = (project.pioneers || []).reduce((sum, p) => {
+    return sum + ((p.rounds || []).filter(r => r.completed_at).length);
+  }, 0);
+  const showTimeline = totalRoundsSubmitted > 1;
+
+  // No metrics → no charts.
+  if (!metrics || metrics.productivity_ratio == null) {
+    cont.innerHTML = `<p style="color:var(--gray-500,#6b7280);font-size:13px">Charts will appear once an expert response is submitted.</p>`;
+    return;
+  }
+
+  // Build chart containers.
+  const timelineCard = !showTimeline ? '' : `
+    <div>
+      <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Per-Round Timeline</h3>
+      <div id="projectChartTimeline" data-testid="project-chart-timeline" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+    </div>`;
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Gains Radar</h3>
+        <div id="projectChartRadar" data-testid="project-chart-radar" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Disprove Matrix</h3>
+        <div id="projectChartDisprove" data-testid="project-chart-disprove" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+      </div>
+      ${timelineCard}
+    </div>
+  `;
+
+  if (typeof echarts === 'undefined') {
+    cont.innerHTML += '<p style="color:var(--gray-500,#6b7280);font-size:13px">Charts library not loaded.</p>';
+    return;
+  }
+
+  // Need a single-element project list with `metrics` injected (the chart renderers
+  // expect each project entry to carry its own metrics dict, mirroring how
+  // _build_averaged_complete_projects shapes the dashboard list).
+  const projForCharts = Object.assign({}, project, { ...metrics });
+  const filtered = [projForCharts];
+  const localMetrics = _computeLocalMetrics(filtered);
+
+  function safeRender(rendererKey, divId) {
+    const fn = CHART_RENDERERS[rendererKey];
+    if (!fn) return;
+    const cfg = { id: divId };
+    try { fn(cfg, filtered, localMetrics, localMetrics); }
+    catch (err) { console.error('Project chart render error [' + rendererKey + ']:', err); }
+  }
+
+  safeRender('radar_gains',          'projectChartRadar');
+  safeRender('scatter_disprove',     'projectChartDisprove');
+  if (showTimeline) safeRender('timeline_per_project', 'projectChartTimeline');
+
+  // Per-pioneer xCSG cost donut — only meaningful with 2+ pioneers.
+  const pioneers = project.pioneers || [];
+  if (pioneers.length >= 2 && metrics.xcsg_cost != null) {
+    const slice = pioneers.map(p => {
+      const rate = parseFloat(p.day_rate) || 0;
+      const rounds = parseInt(p.total_rounds, 10) || 1;
+      const weight = rate * rounds;
+      return {
+        name: p.display_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || `Pioneer #${p.pioneer_id}`,
+        weight,
+      };
+    });
+    const totalWeight = slice.reduce((s, e) => s + e.weight, 0);
+    if (totalWeight > 0) {
+      const grid = cont.querySelector('div[style*="grid-template-columns"]');
+      if (grid) {
+        // Build a card div containing h3 + chart div, append to grid.
+        const card = document.createElement('div');
+        card.innerHTML = `
+          <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Cost Composition by Pioneer</h3>
+          <div id="projectChartCostByPioneer" data-testid="project-chart-cost-by-pioneer" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+        `;
+        grid.appendChild(card);
+        const donut = ecInit('projectChartCostByPioneer');
+        if (donut) {
+          const fc = (v) => fmtCurrency(v, project.currency || 'USD');
+          const totalCost = metrics.xcsg_cost;
+          donut.setOption({
+            tooltip: {
+              ...tip(),
+              trigger: 'item',
+              formatter: (p) => {
+                const share = totalWeight > 0 ? p.value / totalWeight : 0;
+                const dollars = totalCost * share;
+                return `${p.marker}<b>${esc(p.name)}</b><br/>Share: ${(share * 100).toFixed(1)}%<br/>~${fc(dollars)}`;
+              },
+            },
+            legend: { orient: 'vertical', right: 8, top: 'middle', textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+            series: [{
+              type: 'pie', radius: ['45%', '70%'], center: ['38%', '50%'],
+              itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+              label: { show: false }, labelLine: { show: false },
+              data: slice.map(s => ({ name: s.name, value: s.weight })),
+            }],
+          });
+        }
+      }
+    }
+  }
+}
+
 // ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
 
 async function renderPioneerDetail(id) {
@@ -5375,6 +5824,13 @@ async function renderPioneerDetail(id) {
   } catch (e) {
     mc.innerHTML = '<p class="empty-state">Failed to load pioneer: ' + esc(e.message || String(e)) + '</p>';
     return;
+  }
+
+  let pioneerEconomics = null;
+  try {
+    pioneerEconomics = await loadPioneerEconomics(id);
+  } catch (e) {
+    console.warn('Pioneer economics fetch failed:', e);
   }
 
   const statusBadgeStyle = PIONEER_STATUS_BADGE_STYLES;
@@ -5466,6 +5922,14 @@ async function renderPioneerDetail(id) {
         ${renderPioneerPortfolio(pioneer)}
       </div>
 
+      <!-- Economics (NEW) -->
+      ${pioneerEconomics ? `
+        <div style="margin-bottom:20px" data-testid="pioneer-economics-section">
+          <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Economics</h2>
+          ${renderPioneerEconomicsTiles(pioneerEconomics.summary || {})}
+        </div>
+      ` : ''}
+
       <!-- Charts (placeholder for Task 7) -->
       <div style="margin-bottom:20px">
         <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Charts</h2>
@@ -5478,14 +5942,38 @@ async function renderPioneerDetail(id) {
   mc.innerHTML = html;
 
   // Task 7: populate pioneer-scoped charts now that the DOM is ready.
-  await renderPioneerCharts(pioneer);
+  await renderPioneerCharts(pioneer, pioneerEconomics);
 }
 
-async function renderPioneerCharts(pioneer) {
+async function renderPioneerCharts(pioneer, pioneerEconomics) {
   const cont = document.getElementById('pioneerCharts');
   if (!cont) return;
 
-  // Build four chart containers in a 2×2 grid.
+  const econ = pioneerEconomics || {};
+  const breakdowns = econ.breakdowns || {};
+  const trends = econ.trends || {};
+  const hasPricing = Array.isArray(breakdowns.by_pricing_model) && breakdowns.by_pricing_model.length > 0;
+  const hasQuarterlyEcon = Array.isArray(trends.quarterly) && trends.quarterly.length > 0;
+
+  // Top row: 4 flywheel charts (Radar / Disprove / Timeline / Quarterly).
+  // Bottom row: 2 economics charts (pricing donut + quarterly revenue line) — only when data is available.
+  const economicsRow = (hasPricing || hasQuarterlyEcon) ? `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px">
+      ${hasPricing ? `
+        <div>
+          <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Pricing Model Mix</h3>
+          <div id="pioneerEconChartPricing" data-testid="pioneer-econ-chart-pricing" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+        </div>
+      ` : ''}
+      ${hasQuarterlyEcon ? `
+        <div>
+          <h3 style="margin:0 0 8px;font-size:13px;font-weight:600;color:var(--gray-600,#6b7280);text-transform:uppercase;letter-spacing:.5px">Quarterly Revenue</h3>
+          <div id="pioneerEconChartQuarterly" data-testid="pioneer-econ-chart-quarterly" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
+        </div>
+      ` : ''}
+    </div>
+  ` : '';
+
   cont.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:8px">
       <div>
@@ -5505,6 +5993,7 @@ async function renderPioneerCharts(pioneer) {
         <div id="pioneerChartQuarterly" style="height:300px;background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-radius:6px"></div>
       </div>
     </div>
+    ${economicsRow}
   `;
 
   if (typeof echarts === 'undefined') {
@@ -5550,6 +6039,58 @@ async function renderPioneerCharts(pioneer) {
   safeRender('scatter_disprove',     'pioneerChartDisprove');
   safeRender('timeline_per_project', 'pioneerChartTimeline');
   safeRender('timeline_quarterly',   'pioneerChartQuarterly');
+
+  // ── Economics charts (only when pioneer has economic data) ──
+  if (hasPricing) {
+    const baseCurrency = (econ.summary && econ.summary.base_currency) || 'USD';
+    const fc = (v) => fmtCurrency(v, baseCurrency);
+    const donut = ecInit('pioneerEconChartPricing');
+    if (donut) {
+      const total = breakdowns.by_pricing_model.reduce((acc, e) => acc + (e.revenue || 0), 0) || 1;
+      donut.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'item',
+          formatter: (p) => `${p.marker}<b>${esc(p.name)}</b><br/>Revenue: ${fc(p.value)}<br/>Share: ${(p.value / total * 100).toFixed(1)}%`,
+        },
+        legend: { orient: 'vertical', right: 8, top: 'middle', textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+        series: [{
+          type: 'pie', radius: ['45%', '70%'], center: ['38%', '50%'],
+          itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+          label: { show: false }, labelLine: { show: false },
+          data: breakdowns.by_pricing_model.map(e => ({ name: e.model, value: e.revenue || 0 })),
+        }],
+      });
+    }
+  }
+
+  if (hasQuarterlyEcon) {
+    const baseCurrency = (econ.summary && econ.summary.base_currency) || 'USD';
+    const fc = (v) => fmtCurrency(v, baseCurrency);
+    const line = ecInit('pioneerEconChartQuarterly');
+    if (line) {
+      line.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          formatter: (params) => {
+            const p = params[0];
+            return `<b>${esc(p.axisValueLabel)}</b><br/>Revenue: ${fc(p.value)}`;
+          },
+        },
+        grid: { left: 70, right: 16, top: 16, bottom: 32 },
+        xAxis: { type: 'category', data: trends.quarterly.map(q => q.quarter), axisLabel: axisLbl() },
+        yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fc(v) } },
+        series: [{
+          type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+          data: trends.quarterly.map(q => q.revenue || 0),
+          itemStyle: { color: '#6EC1E4' },
+          lineStyle: { color: '#6EC1E4', width: 2 },
+          areaStyle: { color: 'rgba(110,193,228,0.18)' },
+        }],
+      });
+    }
+  }
 
   // Show a gentle empty-state message when the pioneer has no assessed projects.
   const done = filtered.filter(function(p) { return p.metrics && (p.status === 'complete' || p.status === 'partial'); });
