@@ -5413,8 +5413,89 @@ async function renderProjectDetail(id) {
   await renderProjectCharts(project, metrics);
 }
 
-function renderProjectHeader(project, metrics) { return ''; }
-function renderProjectActivityStrip(project, metrics, pioneers) { return ''; }
+function renderProjectHeader(project, metrics) {
+  const isWriter = canWrite();
+  const editBtn = isWriter ? `
+    <button class="btn btn-secondary btn-sm" data-testid="project-detail-edit"
+            onclick="window.location.hash='#edit/${project.id}'">Edit</button>
+  ` : '';
+  const practiceBadge = project.practice_code
+    ? `<span class="practice-badge" style="background:var(--gray-100,#f3f4f6);color:var(--gray-700,#374151);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">${esc(project.practice_code)}</span>`
+    : '';
+  const categoryBadge = project.category_name
+    ? `<span style="background:var(--gray-100,#f3f4f6);color:var(--gray-700,#374151);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">${esc(project.category_name)}</span>`
+    : '';
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+      <div>
+        <a href="#" onclick="window.location.hash='#projects';return false;"
+           style="font-size:13px;color:var(--brand-blue,#6EC1E4);text-decoration:none;display:inline-block;margin-bottom:6px">
+          ← Projects
+        </a>
+        <h1 style="margin:0 0 4px">${esc(project.project_name)}</h1>
+        ${project.client_name ? '<div style="color:#6b7280;font-size:14px;margin-bottom:6px">Client: ' + esc(project.client_name) + '</div>' : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${practiceBadge}
+          ${categoryBadge}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+        ${editBtn}
+      </div>
+    </div>
+  `;
+}
+function renderProjectActivityStrip(project, metrics, pioneers) {
+  // Status badge (matches the dashboard's badge classes).
+  const status = project.status || 'pending';
+  const statusBadgeMap = {
+    'complete': '<span class="badge badge-green">Complete</span>',
+    'partial':  '<span class="badge badge-warning">Partial</span>',
+    'pending':  '<span class="badge badge-orange">Expert Pending</span>',
+  };
+  const statusBadge = statusBadgeMap[status] || `<span class="badge">${esc(status)}</span>`;
+
+  // Pioneer + completion summary.
+  const totalPioneers = pioneers.length;
+  const completedPioneers = pioneers.filter(p => (p.response_count || 0) >= (p.total_rounds || 1)).length;
+  const totalRounds = pioneers.reduce((sum, p) => sum + (p.total_rounds || 1), 0);
+  const completedRounds = pioneers.reduce((sum, p) => sum + (p.response_count || 0), 0);
+  const completionPct = totalRounds > 0 ? Math.round((completedRounds / totalRounds) * 100) + '%' : '—';
+  const roundsText = totalRounds > 0 ? completedRounds + '/' + totalRounds + ' rounds' : '—';
+
+  // Last activity = max submitted_at across pioneer rounds, fallback to date_delivered.
+  let lastActivity = null;
+  pioneers.forEach(p => {
+    (p.rounds || []).forEach(r => {
+      if (r.completed_at && (!lastActivity || r.completed_at > lastActivity)) lastActivity = r.completed_at;
+    });
+  });
+  if (!lastActivity && project.date_delivered) lastActivity = project.date_delivered;
+  const lastActivityText = lastActivity ? lastActivity.split('T')[0] : '—';
+
+  return `
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;padding:12px 16px;background:var(--gray-50,#f9fafb);border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;margin-bottom:20px">
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Status</span>
+        ${statusBadge}
+      </div>
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Pioneers</span>
+        <span style="font-size:14px;font-weight:600">${totalPioneers}</span>
+        ${totalPioneers > 0 ? `<span style="font-size:12px;color:#6b7280;margin-left:4px">${completedPioneers} completed</span>` : ''}
+      </div>
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Completion</span>
+        <span style="font-size:14px;font-weight:600">${completionPct}</span>
+        <span style="font-size:12px;color:#6b7280;margin-left:4px">${roundsText}</span>
+      </div>
+      <div>
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:#9ca3af;display:block;margin-bottom:2px">Last Activity</span>
+        <span style="font-size:14px">${esc(lastActivityText)}</span>
+      </div>
+    </div>
+  `;
+}
 function renderProjectFlywheelChips(metrics) { return ''; }
 function renderProjectSpecCard(project) { return ''; }
 function renderProjectPioneersCard(pioneers) { return ''; }
