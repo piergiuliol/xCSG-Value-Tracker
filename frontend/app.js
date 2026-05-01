@@ -601,6 +601,11 @@ function _buildDashboardQS() {
   return '?' + ids.map(id => `pioneer_id=${encodeURIComponent(id)}`).join('&');
 }
 
+async function loadEconomicsData() {
+  const qs = _buildDashboardQS();
+  return await apiCall('GET', `/dashboard/economics${qs}`);
+}
+
 async function renderPortfolio() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading portfolio\u2026</div>';
