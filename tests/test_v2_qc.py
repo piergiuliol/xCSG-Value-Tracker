@@ -250,7 +250,7 @@ def test_create_deliverable():
         "project_name": "QA Test Deliverable",
         "category_id": cat_id,
         "practice_id": practice_id,
-        "pioneers": [{"name": "Dr. QA"}],
+        "pioneers": [{"first_name": "Dr.", "last_name": "QA"}],
         "client_name": "QA Client",
         "engagement_stage": "Active engagement",
         "date_started": "2026-03-01",
@@ -315,7 +315,7 @@ def test_expert_assessment():
     r = requests.post(f"{BASE}/api/projects", headers={**auth_h(tk), "Content-Type": "application/json"}, json={
         "project_name": "QA Expert Test",
         "category_id": cat_id,
-        "pioneers": [{"name": "Dr. Expert QA"}],
+        "pioneers": [{"first_name": "Dr.", "last_name": "Expert QA"}],
         "engagement_stage": "Active engagement",
         "date_started": "2026-03-01",
         "date_delivered": "2026-03-10",
@@ -850,7 +850,9 @@ _VALID_EXPERT_PAYLOAD = {
 
 def _pioneer_round1_token(project: dict, pioneer_name: str) -> str:
     for p in project.get("pioneers", []):
-        name = p.get("pioneer_name") or p.get("name")
+        # Prefer the server-supplied display_name (= "first last" trimmed),
+        # then the pioneer_name alias for backward-compat.
+        name = p.get("display_name") or p.get("pioneer_name") or p.get("name")
         if name == pioneer_name:
             for rnd in p.get("rounds", []):
                 if rnd.get("round_number") == 1:
@@ -874,8 +876,8 @@ def test_show_other_pioneers_flag():
                 "project_name": name,
                 "category_id": cat_id,
                 "pioneers": [
-                    {"name": "Pioneer One"},
-                    {"name": "Pioneer Two"},
+                    {"first_name": "Pioneer", "last_name": "One"},
+                    {"first_name": "Pioneer", "last_name": "Two"},
                 ],
                 "default_rounds": 1,
                 "show_other_pioneers_answers": flag,
@@ -962,7 +964,7 @@ def test_auto_issue_next_round():
         json={
             "project_name": "QA Auto-Issue Round",
             "category_id": cat_id,
-            "pioneers": [{"name": "Solo Pioneer", "total_rounds": 2}],
+            "pioneers": [{"first_name": "Solo", "last_name": "Pioneer", "total_rounds": 2}],
             "default_rounds": 2,
             "date_started": "2026-03-01",
             "date_delivered": "2026-03-10",
@@ -1375,7 +1377,7 @@ def test_migrate_v17_idempotent():
     with database._db() as conn:
         # Insert a pioneer record first (required by the project_pioneers FK).
         cur_pio = conn.execute(
-            "INSERT INTO pioneers (name, email) VALUES ('P', 'p@x.io')"
+            "INSERT INTO pioneers (first_name, last_name, email) VALUES ('P', '', 'p@x.io')"
         )
         pioneer_registry_id = cur_pio.lastrowid
         # Insert a project (no pioneer_name / pioneer_email columns since migrate_v19).
@@ -1524,7 +1526,7 @@ def test_economics_models():
     base = {
         "project_name": "Demo",
         "category_id": 1,
-        "pioneers": [{"name": "Pia", "day_rate": 1500}],
+        "pioneers": [{"first_name": "Pia", "last_name": "", "day_rate": 1500}],
         "xcsg_team_size": "2",
         "xcsg_revision_rounds": "1",
     }
@@ -1804,7 +1806,7 @@ def test_create_project_persists_economics():
     payload = {
         "project_name": "Econ test",
         "category_id": 1,
-        "pioneers": [{"name": "P1", "day_rate": 1500}, {"name": "P2", "day_rate": 1000}],
+        "pioneers": [{"first_name": "P1", "last_name": "", "day_rate": 1500}, {"first_name": "P2", "last_name": "", "day_rate": 1000}],
         "xcsg_team_size": "2",
         "xcsg_revision_rounds": "1",
         "engagement_revenue": 80000,
@@ -1837,7 +1839,7 @@ def test_create_project_persists_economics():
         add = requests.post(
             f"{BASE}/api/projects/{pid}/pioneers",
             headers={**auth_h(tk), "Content-Type": "application/json"},
-            json={"name": "P3", "day_rate": 2000},
+            json={"first_name": "P3", "last_name": "", "day_rate": 2000},
         )
         test("economics: POST pioneer returns 201", add.status_code == 201, add.text)
         if add.status_code == 201:
@@ -1994,7 +1996,7 @@ def test_legacy_team_models():
     # ProjectCreate accepts legacy_team list (default empty).
     base = {
         "project_name": "T", "category_id": 1,
-        "pioneers": [{"name": "Pia"}],
+        "pioneers": [{"first_name": "Pia", "last_name": ""}],
         "xcsg_team_size": "1", "xcsg_revision_rounds": "1",
     }
     p = ProjectCreate(**base)
@@ -2242,7 +2244,7 @@ def test_legacy_team_persistence():
     payload = {
         "project_name": "lt persist",
         "category_id": 1,
-        "pioneers": [{"name": "P", "email": "p@x.io"}],
+        "pioneers": [{"first_name": "P", "last_name": "", "email": "p@x.io"}],
         "xcsg_team_size": "1",
         "xcsg_revision_rounds": "1",
         "legacy_team": [
@@ -2299,12 +2301,12 @@ def test_pioneer_role_name_in_models():
     from backend.models import ProjectPioneerEntry, ProjectPioneerUpdate
 
     # Happy path with role_name.
-    p = ProjectPioneerEntry(name="Pia", email="pia@example.com", day_rate=1500, role_name="Senior")
+    p = ProjectPioneerEntry(first_name="Pia", last_name="", email="pia@example.com", day_rate=1500, role_name="Senior")
     assert p.role_name == "Senior"
     assert p.day_rate == 1500
 
     # role_name optional — None is fine.
-    p2 = ProjectPioneerEntry(name="Bob", email="bob@example.com")
+    p2 = ProjectPioneerEntry(first_name="Bob", last_name="", email="bob@example.com")
     assert p2.role_name is None
 
     # ProjectPioneerUpdate also accepts role_name.
@@ -2324,8 +2326,8 @@ def test_pioneer_role_name_persistence():
         "project_name": "Phase 2b round-trip",
         "category_id": 1,
         "pioneers": [
-            {"name": "P-with-role", "email": "p1@x.io", "day_rate": 1500, "role_name": "Senior"},
-            {"name": "P-no-role", "email": "p2@x.io", "day_rate": 1000},
+            {"first_name": "P-with-role", "last_name": "", "email": "p1@x.io", "day_rate": 1500, "role_name": "Senior"},
+            {"first_name": "P-no-role", "last_name": "", "email": "p2@x.io", "day_rate": 1000},
         ],
         "xcsg_team_size": "2",
         "xcsg_revision_rounds": "1",
@@ -2344,7 +2346,7 @@ def test_pioneer_role_name_persistence():
         add_r = requests.post(
             f"{BASE}/api/projects/{pid}/pioneers",
             headers=headers,
-            json={"name": "P3-added", "email": "p3@x.io", "day_rate": 2000, "role_name": "Manager"},
+            json={"first_name": "P3-added", "last_name": "", "email": "p3@x.io", "day_rate": 2000, "role_name": "Manager"},
         )
         assert add_r.status_code == 201, add_r.text
 
@@ -2367,7 +2369,7 @@ def test_pioneer_day_rate_independent_of_role_name():
         "category_id": 1,
         "pioneers": [
             # role_name set but day_rate explicitly different from any catalog rate
-            {"name": "P", "email": "p@x.io", "day_rate": 999, "role_name": "Senior"},
+            {"first_name": "P", "last_name": "", "email": "p@x.io", "day_rate": 999, "role_name": "Senior"},
         ],
         "xcsg_team_size": "1",
         "xcsg_revision_rounds": "1",
@@ -2392,7 +2394,7 @@ def test_update_pioneer_clears_role_name():
     payload = {
         "project_name": "clear role test",
         "category_id": 1,
-        "pioneers": [{"name": "P", "email": "p@x.io", "day_rate": 1000, "role_name": "Senior"}],
+        "pioneers": [{"first_name": "P", "last_name": "", "email": "p@x.io", "day_rate": 1000, "role_name": "Senior"}],
         "xcsg_team_size": "1",
         "xcsg_revision_rounds": "1",
     }
@@ -2433,7 +2435,7 @@ def test_export_pioneers_csv():
 
     # Make sure at least one pioneer exists.
     p = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "CSV Test", "email": "csv-test@example.com",
+        "first_name": "CSV", "last_name": "Test", "email": "csv-test@example.com",
     }).json()
 
     # `csv.DictReader` doesn't strip a leading BOM on its own — decoding the
@@ -2450,21 +2452,26 @@ def test_export_pioneers_csv():
         reader = csv.DictReader(io.StringIO(_csv_text(r)))
         rows = list(reader)
         assert len(rows) >= 1
-        # Required columns.
-        for col in ("id", "name", "email", "project_count", "status",
+        # Required columns: name is now split into first_name + last_name.
+        for col in ("id", "first_name", "last_name", "email", "project_count", "status",
                     "completion_rate", "avg_value_gain", "practices", "roles"):
             assert col in rows[0], f"missing column {col}"
+        assert "name" not in rows[0], "legacy 'name' column should be gone"
 
         # Our test pioneer should be in there.
-        names = [row["name"] for row in rows]
-        assert "CSV Test" in names
+        first_names = [row["first_name"] for row in rows]
+        last_names = [row["last_name"] for row in rows]
+        assert "CSV" in first_names and "Test" in last_names
 
         # Status filter — single value.
         r2 = requests.get(f"{BASE}/api/export/pioneers.csv?status=never", headers=headers)
         assert r2.status_code == 200
         rows2 = list(csv.DictReader(io.StringIO(_csv_text(r2))))
         # Test pioneer is `never` (no project assignments).
-        assert any(row["name"] == "CSV Test" and row["status"] == "never" for row in rows2)
+        assert any(
+            row["first_name"] == "CSV" and row["last_name"] == "Test" and row["status"] == "never"
+            for row in rows2
+        )
 
         # Multi-valued status filter (e.g. status=never&status=pending).
         r3 = requests.get(
@@ -2475,13 +2482,13 @@ def test_export_pioneers_csv():
         # CSV should still parse cleanly.
         list(csv.DictReader(io.StringIO(_csv_text(r3))))
 
-        # Search filter.
+        # Search filter — match the email.
         r4 = requests.get(
             f"{BASE}/api/export/pioneers.csv?search=csv-test",
             headers=headers,
         )
         rows4 = list(csv.DictReader(io.StringIO(_csv_text(r4))))
-        assert any(row["name"] == "CSV Test" for row in rows4)
+        assert any(row["first_name"] == "CSV" and row["last_name"] == "Test" for row in rows4)
 
         # UTF-8 BOM is prepended so Excel on Windows reads it correctly.
         # Inspect the raw bytes so the assertion is unambiguous.
@@ -2512,9 +2519,10 @@ def test_export_pioneers_csv_empty_filter():
     rows = list(reader)
     assert rows == [], f"expected no rows, got {len(rows)}"
     # Header includes the canonical fixed columns.
-    for col in ("id", "name", "email", "project_count", "status",
+    for col in ("id", "first_name", "last_name", "email", "project_count", "status",
                 "completion_rate", "avg_value_gain", "practices", "roles"):
         assert col in (reader.fieldnames or []), f"missing header column {col}"
+    assert "name" not in (reader.fieldnames or []), "legacy 'name' column should be gone"
 
 
 def _seed_for_notes_consumers():
@@ -2571,7 +2579,7 @@ def _seed_for_notes_consumers():
             "project_name": name,
             "category_id": cat_id,
             "practice_id": practice_id,
-            "pioneers": [{"name": f"Notes {name[-3:]}", "total_rounds": rounds}],
+            "pioneers": [{"first_name": "Notes", "last_name": name[-3:], "total_rounds": rounds}],
             "engagement_stage": "Active engagement",
             "date_started": "2026-03-01",
             "date_delivered": "2026-03-10",
@@ -2593,7 +2601,7 @@ def _seed_for_notes_consumers():
         "project_name": "QA Notes Seed — Complete",
         "category_id": map_cat_id,
         "practice_id": pmap["MAP"],
-        "pioneers": [{"name": "Notes Complete", "total_rounds": 1}],
+        "pioneers": [{"first_name": "Notes", "last_name": "Complete", "total_rounds": 1}],
         "engagement_stage": "Post-engagement (follow-on)",
         "date_started": "2026-02-01",
         "date_delivered": "2026-02-10",
@@ -2665,6 +2673,7 @@ def main():
     test_project_create_with_inline_pioneer()
     test_migrate_v19_destructive_creates_pioneers_table()
     test_migrate_v19_email_unique_case_insensitive()
+    test_migrate_v20_splits_name_into_first_and_last()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -2716,17 +2725,20 @@ def main():
     return 0 if failed == 0 else 1
 
 def test_pioneer_schema():
-    """schema.py exposes PIONEER_FIELDS, PIONEER_STATUS_OPTIONS, and the
-    pioneer_overdue_days threshold."""
+    """schema.py exposes PIONEER_FIELDS (split first/last), PIONEER_STATUS_OPTIONS,
+    and the pioneer_overdue_days threshold."""
     from backend.schema import (
         PIONEER_FIELDS, PIONEER_STATUS_OPTIONS, DASHBOARD_CONFIG, build_schema_response,
     )
 
-    expected = {"name", "email", "notes"}
+    expected = {"first_name", "last_name", "email", "notes"}
     assert expected.issubset(set(PIONEER_FIELDS.keys()))
-    assert PIONEER_FIELDS["name"]["required"] is True
+    assert "name" not in PIONEER_FIELDS  # legacy combined field is gone
+    assert PIONEER_FIELDS["first_name"]["required"] is True
+    assert PIONEER_FIELDS["last_name"]["required"] is True
     assert PIONEER_FIELDS["email"].get("required") is not True
-    assert PIONEER_FIELDS["name"].get("max_length") == 120
+    assert PIONEER_FIELDS["first_name"].get("max_length") == 80
+    assert PIONEER_FIELDS["last_name"].get("max_length") == 80
 
     # Status options: list of {value, label} dicts.
     values = {opt["value"] for opt in PIONEER_STATUS_OPTIONS}
@@ -2747,7 +2759,8 @@ def test_pioneer_schema():
 def test_migrate_v19_destructive_creates_pioneers_table():
     """migrate_v19 creates pioneers table, drops pioneer_name/email from
     project_pioneers and from projects, adds pioneer_id NOT NULL FK,
-    and is idempotent."""
+    and is idempotent. After migrate_v20 the legacy `name` column is gone
+    in favour of first_name + last_name; the rest of the v19 contract holds."""
     from backend import database
 
     database.init_db()
@@ -2762,8 +2775,11 @@ def test_migrate_v19_destructive_creates_pioneers_table():
         cols = {r[1] for r in conn.execute(
             "PRAGMA table_info(pioneers)"
         ).fetchall()}
-        for col in ("id", "name", "email", "notes", "created_by", "created_at"):
+        # After v20: `name` is split into first_name + last_name; everything
+        # else from v19 still applies.
+        for col in ("id", "first_name", "last_name", "email", "notes", "created_by", "created_at"):
             assert col in cols, f"pioneers.{col} missing"
+        assert "name" not in cols, "v20 must drop the combined `name` column"
 
         # Partial unique index exists.
         indexes = {r[0] for r in conn.execute(
@@ -2791,6 +2807,98 @@ def test_migrate_v19_destructive_creates_pioneers_table():
     database.migrate_v19()
 
 
+def test_migrate_v20_splits_name_into_first_and_last():
+    """migrate_v20 splits pioneers.name into first_name + last_name on first
+    whitespace, drops the old `name` column, and is idempotent.
+
+    Tests three split cases:
+      - "Sofia Romano" -> first="Sofia", last="Romano"
+      - "Theo van der Berg" -> first="Theo", last="van der Berg"
+      - "Madonna" -> first="Madonna", last=""
+    """
+    from backend import database
+
+    database.init_db()
+
+    # Build a v19-shape pioneers table with `name TEXT NOT NULL` so the
+    # migration has something to backfill. Drop the post-v20 table and
+    # recreate it explicitly, then re-run migrate_v20.
+    with database._db() as conn:
+        # Wipe references first.
+        conn.execute("DELETE FROM project_pioneers")
+        conn.execute("DELETE FROM pioneers")
+        conn.commit()
+
+        # Force the v19 shape (drop v20 columns + add `name`).
+        # SQLite doesn't allow conditional ADD/DROP cleanly, so we recreate.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DROP INDEX IF EXISTS idx_pioneers_email_lower")
+        conn.execute("DROP TABLE IF EXISTS pioneers_v20_test")
+        conn.execute(
+            """CREATE TABLE pioneers_v20_test (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   name TEXT NOT NULL,
+                   email TEXT,
+                   notes TEXT,
+                   created_by INTEGER,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
+        # Replace pioneers table with the v19-shape one.
+        conn.execute("DROP TABLE pioneers")
+        conn.execute("ALTER TABLE pioneers_v20_test RENAME TO pioneers")
+        # Insert the three test rows.
+        conn.execute("INSERT INTO pioneers (name, email) VALUES (?, ?)",
+                     ("Sofia Romano", "sofia@v20test.example"))
+        conn.execute("INSERT INTO pioneers (name, email) VALUES (?, ?)",
+                     ("Theo van der Berg", "theo@v20test.example"))
+        conn.execute("INSERT INTO pioneers (name, email) VALUES (?, ?)",
+                     ("Madonna", "madonna@v20test.example"))
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # Run the migration on the v19-shape table.
+    database.migrate_v20()
+
+    # Verify table shape: `name` is gone; first_name + last_name are present and NOT NULL.
+    with database._db() as conn:
+        cols = {r[1]: r for r in conn.execute("PRAGMA table_info(pioneers)").fetchall()}
+        assert "name" not in cols, "legacy `name` column should be dropped"
+        assert "first_name" in cols
+        assert "last_name" in cols
+        # PRAGMA table_info returns notnull=1 in column 3.
+        assert cols["first_name"][3] == 1, "first_name must be NOT NULL"
+        assert cols["last_name"][3] == 1, "last_name must be NOT NULL"
+
+        rows = {
+            r["email"]: dict(r)
+            for r in conn.execute(
+                "SELECT first_name, last_name, email FROM pioneers"
+            ).fetchall()
+        }
+
+    sofia = rows["sofia@v20test.example"]
+    assert sofia["first_name"] == "Sofia", f"got {sofia}"
+    assert sofia["last_name"] == "Romano", f"got {sofia}"
+
+    theo = rows["theo@v20test.example"]
+    assert theo["first_name"] == "Theo", f"got {theo}"
+    assert theo["last_name"] == "van der Berg", f"got {theo}"
+
+    madonna = rows["madonna@v20test.example"]
+    assert madonna["first_name"] == "Madonna", f"got {madonna}"
+    assert madonna["last_name"] == "", f"got {madonna}"
+
+    # Idempotent: running again must be a no-op.
+    database.migrate_v20()
+    database.migrate_v20()
+
+    # Cleanup test rows so subsequent tests start clean.
+    with database._db() as conn:
+        conn.execute("DELETE FROM pioneers WHERE email LIKE '%@v20test.example'")
+        conn.commit()
+
+
 def test_migrate_v19_email_unique_case_insensitive():
     """Partial unique index rejects case-insensitive email duplicates;
     NULL emails are allowed multiple times."""
@@ -2807,25 +2915,25 @@ def test_migrate_v19_email_unique_case_insensitive():
         conn.commit()
 
         cur = conn.execute(
-            "INSERT INTO pioneers (name, email) VALUES (?, ?)",
-            ("Pia", "Pia@Example.com"),
+            "INSERT INTO pioneers (first_name, last_name, email) VALUES (?, ?, ?)",
+            ("Pia", "", "Pia@Example.com"),
         )
 
         with _pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                "INSERT INTO pioneers (name, email) VALUES (?, ?)",
-                ("Pia P.", "pia@example.com"),  # different case but same lower
+                "INSERT INTO pioneers (first_name, last_name, email) VALUES (?, ?, ?)",
+                ("Pia", "P.", "pia@example.com"),  # different case but same lower
             )
 
         # Different email is fine.
         conn.execute(
-            "INSERT INTO pioneers (name, email) VALUES (?, ?)",
-            ("Bob", "bob@example.com"),
+            "INSERT INTO pioneers (first_name, last_name, email) VALUES (?, ?, ?)",
+            ("Bob", "", "bob@example.com"),
         )
 
         # Multiple NULL emails are allowed.
-        conn.execute("INSERT INTO pioneers (name) VALUES ('X')")
-        conn.execute("INSERT INTO pioneers (name) VALUES ('Y')")
+        conn.execute("INSERT INTO pioneers (first_name, last_name) VALUES ('X', '')")
+        conn.execute("INSERT INTO pioneers (first_name, last_name) VALUES ('Y', '')")
 
         # Cleanup
         conn.execute("DELETE FROM project_pioneers")
@@ -2836,7 +2944,7 @@ def test_migrate_v19_email_unique_case_insensitive():
 def test_pioneer_models():
     """Top-level PioneerCreate / PioneerUpdate / PioneerSummary validate.
     Nested ProjectPioneerEntry (inside ProjectCreate.pioneers) accepts either
-    pioneer_id OR name+email."""
+    pioneer_id OR first_name + last_name (+ email)."""
     import pytest
     from pydantic import ValidationError
     from backend.models import (
@@ -2845,35 +2953,43 @@ def test_pioneer_models():
     )
 
     # Top-level PioneerCreate (for POST /api/pioneers).
-    p = PioneerCreate(name="Pia P.", email="pia@example.com", notes="Senior expert")
-    assert p.name == "Pia P."
+    p = PioneerCreate(first_name="Pia", last_name="P.", email="pia@example.com", notes="Senior expert")
+    assert p.first_name == "Pia"
+    assert p.last_name == "P."
+    assert p.display_name == "Pia P."
     assert p.email == "pia@example.com"
     assert p.notes == "Senior expert"
 
-    # Email is optional, notes optional.
-    p2 = PioneerCreate(name="Bob")
+    # Email is optional, notes optional. Single-word names ok (last_name="").
+    p2 = PioneerCreate(first_name="Bob", last_name="")
     assert p2.email is None
     assert p2.notes is None
+    assert p2.display_name == "Bob"
 
-    # Empty name rejected.
+    # Empty first AND empty last rejected.
     with pytest.raises(ValidationError):
-        PioneerCreate(name="")
+        PioneerCreate(first_name="", last_name="")
     with pytest.raises(ValidationError):
-        PioneerCreate(name="   ")
+        PioneerCreate(first_name="   ", last_name="   ")
 
-    # Name > 120 chars rejected.
+    # Name part > 80 chars rejected.
     with pytest.raises(ValidationError):
-        PioneerCreate(name="x" * 121)
+        PioneerCreate(first_name="x" * 81, last_name="Y")
+    with pytest.raises(ValidationError):
+        PioneerCreate(first_name="X", last_name="y" * 81)
 
     # PioneerUpdate — all fields optional.
-    u = PioneerUpdate(name="Pia New Name")
-    assert u.name == "Pia New Name"
+    u = PioneerUpdate(first_name="Pia New", last_name="Surname")
+    assert u.first_name == "Pia New"
+    assert u.last_name == "Surname"
     u2 = PioneerUpdate()
-    assert u2.name is None and u2.email is None and u2.notes is None
+    assert u2.first_name is None and u2.last_name is None and u2.email is None and u2.notes is None
 
-    # PioneerSummary minimal shape (used as response model).
+    # PioneerSummary minimal shape (used as response model). display_name is
+    # auto-derived from first_name + last_name.
     s = PioneerSummary(
-        id=1, name="Pia", email="pia@example.com", notes=None,
+        id=1, first_name="Pia", last_name="Romano",
+        email="pia@example.com", notes=None,
         project_count=3, rounds_completed=4, rounds_expected=6,
         completion_rate=0.667, last_activity_at="2026-04-26",
         status="pending",
@@ -2884,6 +3000,7 @@ def test_pioneer_models():
     )
     assert s.id == 1
     assert s.status == "pending"
+    assert s.display_name == "Pia Romano"
     assert len(s.practices) == 1
 
     # Nested ProjectPioneerEntry (inside ProjectCreate.pioneers) — accepts pioneer_id.
@@ -2893,19 +3010,22 @@ def test_pioneer_models():
     }
     p_with_id = ProjectCreate(**base, pioneers=[{"pioneer_id": 7}])
     assert p_with_id.pioneers[0].pioneer_id == 7
-    assert p_with_id.pioneers[0].name is None  # not provided
+    assert p_with_id.pioneers[0].first_name is None  # not provided
 
-    # Nested ProjectPioneerEntry — accepts name+email (inline create path).
+    # Nested ProjectPioneerEntry — accepts first_name+last_name+email (inline create path).
     p_with_inline = ProjectCreate(**base, pioneers=[
-        {"name": "New Pia", "email": "newpia@example.com"},
+        {"first_name": "New", "last_name": "Pia", "email": "newpia@example.com"},
     ])
     assert p_with_inline.pioneers[0].pioneer_id is None
-    assert p_with_inline.pioneers[0].name == "New Pia"
+    assert p_with_inline.pioneers[0].first_name == "New"
+    assert p_with_inline.pioneers[0].last_name == "Pia"
     assert p_with_inline.pioneers[0].email == "newpia@example.com"
 
-    # Nested — must have at least pioneer_id OR name (validator rejects neither).
+    # Nested — must have at least pioneer_id OR a name part.
     with pytest.raises(ValidationError):
-        ProjectCreate(**base, pioneers=[{}])  # no id, no name
+        ProjectCreate(**base, pioneers=[{}])  # no id, no name parts
+    with pytest.raises(ValidationError):
+        ProjectCreate(**base, pioneers=[{"first_name": "", "last_name": ""}])
 
 
 def test_pioneer_db_helpers_crud():
@@ -2921,23 +3041,27 @@ def test_pioneer_db_helpers_crud():
         conn.commit()
 
     # Create a pioneer.
-    pid = database.create_pioneer(name="Pia P.", email="pia@example.com", notes=None, created_by=1)
+    pid = database.create_pioneer(first_name="Pia", last_name="P.", email="pia@example.com", notes=None, created_by=1)
     assert isinstance(pid, int) and pid > 0
 
-    # find_pioneer_by_email — case-insensitive.
+    # find_pioneer_by_email — case-insensitive. Returns dict with display_name.
     found = database.find_pioneer_by_email("PIA@EXAMPLE.COM")
     assert found is not None
     assert found["id"] == pid
+    assert found["first_name"] == "Pia"
+    assert found["last_name"] == "P."
+    assert found["display_name"] == "Pia P."
 
     # find_pioneer_by_email — None when not found.
     assert database.find_pioneer_by_email("nobody@nowhere.com") is None
     assert database.find_pioneer_by_email(None) is None
 
     # update_pioneer_record.
-    database.update_pioneer_record(pid, name="Pia Pio", email="pia@example.com", notes="Senior")
+    database.update_pioneer_record(pid, first_name="Pia", last_name="Pio", email="pia@example.com", notes="Senior")
     with database._db() as conn:
         row = conn.execute("SELECT * FROM pioneers WHERE id = ?", (pid,)).fetchone()
-    assert row["name"] == "Pia Pio"
+    assert row["first_name"] == "Pia"
+    assert row["last_name"] == "Pio"
     assert row["notes"] == "Senior"
 
     # delete_pioneer — succeeds when not on any project.
@@ -2957,7 +3081,7 @@ def test_delete_pioneer_assigned_to_project_raises():
         conn.execute("DELETE FROM pioneers")
         conn.commit()
 
-    pid = database.create_pioneer(name="Bob", email="bob@example.com", notes=None, created_by=1)
+    pid = database.create_pioneer(first_name="Bob", last_name="", email="bob@example.com", notes=None, created_by=1)
 
     # Manually create a project + assign pioneer.
     with database._db() as conn:
@@ -3002,7 +3126,7 @@ def test_list_pioneers_with_metrics_aggregation():
         conn.commit()
 
     # Create a pioneer with no project assignments — status should be "never".
-    p1 = database.create_pioneer(name="Newbie", email="newbie@example.com", notes=None, created_by=1)
+    p1 = database.create_pioneer(first_name="Newbie", last_name="Tester", email="newbie@example.com", notes=None, created_by=1)
 
     rows = database.list_pioneers_with_metrics()
     by_id = {r["id"]: r for r in rows}
@@ -3030,7 +3154,7 @@ def test_get_pioneer_with_metrics_includes_portfolio():
         conn.execute("DELETE FROM pioneers")
         conn.commit()
 
-    pid = database.create_pioneer(name="Solo", email="solo@example.com", notes=None, created_by=1)
+    pid = database.create_pioneer(first_name="Solo", last_name="Pia", email="solo@example.com", notes=None, created_by=1)
     out = database.get_pioneer_with_metrics(pid)
     assert out is not None
     assert out["id"] == pid
@@ -3057,7 +3181,8 @@ def test_pioneer_api_crud():
 
     # POST — create.
     r = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "Pia API-Test", "email": "pia-api-test@example.com", "notes": "Initial",
+        "first_name": "Pia", "last_name": "API-Test",
+        "email": "pia-api-test@example.com", "notes": "Initial",
     })
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
@@ -3067,7 +3192,9 @@ def test_pioneer_api_crud():
         r = requests.get(f"{BASE}/api/pioneers/{pid}", headers=headers)
         assert r.status_code == 200
         body = r.json()
-        assert body["name"] == "Pia API-Test"
+        assert body["first_name"] == "Pia"
+        assert body["last_name"] == "API-Test"
+        assert body["display_name"] == "Pia API-Test"
         assert "portfolio" in body
         assert body["portfolio"] == []
         assert body["status"] == "never"
@@ -3079,10 +3206,11 @@ def test_pioneer_api_crud():
 
         # PUT.
         r = requests.put(f"{BASE}/api/pioneers/{pid}", headers=headers, json={
-            "name": "Pia A-T",
+            "first_name": "Pia", "last_name": "A-T",
         })
         assert r.status_code == 200, r.text
-        assert r.json()["name"] == "Pia A-T"
+        assert r.json()["last_name"] == "A-T"
+        assert r.json()["display_name"] == "Pia A-T"
 
         # GET 404 for unknown.
         assert requests.get(f"{BASE}/api/pioneers/99999", headers=headers).status_code == 404
@@ -3099,7 +3227,7 @@ def test_pioneer_api_find_or_create():
 
     # First create.
     r1 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "Foc Pia", "email": "foc-pia@example.com",
+        "first_name": "Foc", "last_name": "Pia", "email": "foc-pia@example.com",
     })
     assert r1.status_code == 201
     pid = r1.json()["id"]
@@ -3107,16 +3235,17 @@ def test_pioneer_api_find_or_create():
     try:
         # Second POST with same email (different case) -> 200, returns same id.
         r2 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-            "name": "Different Name", "email": "FOC-PIA@EXAMPLE.COM",
+            "first_name": "Different", "last_name": "Name", "email": "FOC-PIA@EXAMPLE.COM",
         })
         assert r2.status_code == 200, r2.text
         assert r2.json()["id"] == pid
         # Server returns the EXISTING record; the conflicting name is not applied.
-        assert r2.json()["name"] == "Foc Pia"
+        assert r2.json()["first_name"] == "Foc"
+        assert r2.json()["last_name"] == "Pia"
 
         # POST without email -> always 201, new id.
         r3 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-            "name": "No Email Pia",
+            "first_name": "No Email", "last_name": "Pia",
         })
         assert r3.status_code == 201
         assert r3.json()["id"] != pid
@@ -3139,14 +3268,14 @@ def test_pioneer_api_admin_only():
 
     # POST allowed for admin + analyst, blocked for viewer.
     r = requests.post(f"{BASE}/api/pioneers", headers=h_analyst, json={
-        "name": "Analyst Created", "email": "analyst-created@example.com",
+        "first_name": "Analyst", "last_name": "Created", "email": "analyst-created@example.com",
     })
     assert r.status_code in (200, 201), r.text
     pid = r.json()["id"]
 
     try:
         assert requests.post(f"{BASE}/api/pioneers", headers=h_viewer, json={
-            "name": "Viewer Tried", "email": "viewer-tried@example.com",
+            "first_name": "Viewer", "last_name": "Tried", "email": "viewer-tried@example.com",
         }).status_code == 403
 
         # PUT — admin only.
@@ -3167,7 +3296,7 @@ def test_pioneer_delete_in_use_returns_409():
 
     # Create pioneer.
     r = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "InUse Pia", "email": "inuse-pia@example.com",
+        "first_name": "InUse", "last_name": "Pia", "email": "inuse-pia@example.com",
     })
     pid = r.json()["id"]
 
@@ -3200,7 +3329,7 @@ def test_project_create_with_existing_pioneer_id():
 
     # Create a pioneer first.
     pr = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "Existing Pia", "email": "existing-pia@example.com",
+        "first_name": "Existing", "last_name": "Pia", "email": "existing-pia@example.com",
     })
     assert pr.status_code in (200, 201)
     pid = pr.json()["id"]
@@ -3217,12 +3346,17 @@ def test_project_create_with_existing_pioneer_id():
         assert proj_r.status_code == 201, proj_r.text
         proj_id = proj_r.json()["id"]
 
-        # GET project: pioneer name comes from pioneers table.
+        # GET project: pioneer name comes from pioneers table (display_name +
+        # pioneer_first_name + pioneer_last_name + pioneer_name (computed)).
         detail = requests.get(f"{BASE}/api/projects/{proj_id}", headers=headers).json()
-        assert detail["pioneers"][0]["pioneer_id"] == pid
-        assert detail["pioneers"][0]["pioneer_name"] == "Existing Pia"
-        assert detail["pioneers"][0]["pioneer_email"] == "existing-pia@example.com"
-        assert detail["pioneers"][0]["role_name"] == "Senior"
+        pi = detail["pioneers"][0]
+        assert pi["pioneer_id"] == pid
+        assert pi["pioneer_first_name"] == "Existing"
+        assert pi["pioneer_last_name"] == "Pia"
+        assert pi["pioneer_name"] == "Existing Pia"
+        assert pi["display_name"] == "Existing Pia"
+        assert pi["pioneer_email"] == "existing-pia@example.com"
+        assert pi["role_name"] == "Senior"
 
         # Cleanup.
         requests.delete(f"{BASE}/api/projects/{proj_id}", headers=headers)
@@ -3244,7 +3378,7 @@ def test_project_create_with_inline_pioneer():
     proj_r = requests.post(f"{BASE}/api/projects", headers=headers, json={
         "project_name": "with-inline-pioneer",
         "category_id": 1,
-        "pioneers": [{"name": "Inline Pia", "email": "inline-pia@example.com", "total_rounds": 1}],
+        "pioneers": [{"first_name": "Inline", "last_name": "Pia", "email": "inline-pia@example.com", "total_rounds": 1}],
         "xcsg_team_size": "1",
         "xcsg_revision_rounds": "1",
     })
@@ -3274,10 +3408,10 @@ def test_dashboard_pioneer_filter():
 
     # Create two pioneers and two projects, each with a different pioneer.
     p1 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "Filter A", "email": "filter-a@example.com",
+        "first_name": "Filter", "last_name": "A", "email": "filter-a@example.com",
     }).json()
     p2 = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "Filter B", "email": "filter-b@example.com",
+        "first_name": "Filter", "last_name": "B", "email": "filter-b@example.com",
     }).json()
 
     proj1 = requests.post(f"{BASE}/api/projects", headers=headers, json={
@@ -3334,7 +3468,7 @@ def test_export_pioneer_xlsx():
     headers = auth_h(admin_token())
 
     p = requests.post(f"{BASE}/api/pioneers", headers=headers, json={
-        "name": "XLSX Test", "email": "xlsx-test@example.com",
+        "first_name": "XLSX", "last_name": "Test", "email": "xlsx-test@example.com",
     }).json()
 
     try:
@@ -3350,10 +3484,13 @@ def test_export_pioneer_xlsx():
         summary = wb["summary"]
         # Header row + 1 data row.
         assert summary.max_row == 2
-        # Find the name column and verify our pioneer.
+        # Find the first_name and last_name columns and verify our pioneer.
         header_row = [c.value for c in summary[1]]
-        name_col_idx = header_row.index("name")
-        assert summary.cell(row=2, column=name_col_idx + 1).value == "XLSX Test"
+        assert "name" not in header_row, "legacy 'name' column should be gone"
+        first_col_idx = header_row.index("first_name")
+        last_col_idx = header_row.index("last_name")
+        assert summary.cell(row=2, column=first_col_idx + 1).value == "XLSX"
+        assert summary.cell(row=2, column=last_col_idx + 1).value == "Test"
 
         # Empty portfolio (no project assignments).
         portfolio = wb["portfolio"]
