@@ -1365,6 +1365,96 @@ def test_dashboard_economics_response_includes_total_complete_count():
     assert isinstance(s["total_complete_count"], int)
 
 
+def test_dashboard_economics_response_breakdowns_field_set():
+    """The PR3 Economics tab renderer reads specific fields from each
+    breakdown row. Pin the contract so a backend rename can't silently
+    break the deep view."""
+    h = auth_h(admin_token())
+    r = requests.get(f"{BASE}/api/dashboard/economics", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    breakdowns = body.get("breakdowns") or {}
+    for key in ("by_practice", "by_pioneer", "by_currency", "by_pricing_model"):
+        assert key in breakdowns, f"missing breakdown {key} (got {sorted(breakdowns.keys())})"
+        assert isinstance(breakdowns[key], list), f"{key} is not a list"
+
+    # On an empty DB the lists are empty — that's fine. We're asserting the
+    # KEYS exist and are lists. Field-set tests below run against a seeded
+    # project so the lists are non-empty.
+
+    # Seed a single project so we can assert per-row field set.
+    cats = requests.get(f"{BASE}/api/categories", headers=h).json()
+    practices = requests.get(f"{BASE}/api/practices", headers=h).json()
+    pmap = {p["code"]: p["id"] for p in practices}
+    map_cat = next((c for c in cats if any(p["code"] == "MAP" for p in c.get("practices", []))), None)
+    assert map_cat is not None
+
+    body = {
+        "project_name": "PR3 Field-Set Test",
+        "category_id": map_cat["id"],
+        "practice_id": pmap["MAP"],
+        "engagement_revenue": 100000.0,
+        "currency": "USD",
+        "xcsg_pricing_model": "Fixed fee",
+        "date_started": "2026-01-15", "date_delivered": "2026-02-10",
+        "working_days": 10, "xcsg_team_size": "2", "xcsg_revision_rounds": "1",
+        "engagement_stage": "Active engagement",
+        "pioneers": [{"first_name": "PR3", "last_name": "FieldTest", "email": "pr3-fieldtest@example.com", "total_rounds": 1}],
+        "legacy_team": [{"role_name": "Senior", "count": 2, "day_rate": 1500}],
+    }
+    pid = None
+    try:
+        cr = requests.post(f"{BASE}/api/projects", headers=h, json=body)
+        assert cr.status_code == 201, cr.text
+        proj = cr.json()
+        pid = proj["id"]
+        token = proj["pioneers"][0]["expert_token"]
+        # STRONG payload (re-use seed_20_projects) so margins compute.
+        import importlib.util, pathlib
+        spec = importlib.util.spec_from_file_location("sd", pathlib.Path("tests/seed_20_projects.py"))
+        sd = importlib.util.module_from_spec(spec); spec.loader.exec_module(sd)
+        sr = requests.post(f"{BASE}/api/expert/{token}", json=dict(getattr(sd, "STRONG")))
+        assert sr.status_code == 201, sr.text
+
+        body2 = requests.get(f"{BASE}/api/dashboard/economics", headers=h).json()
+        bd = body2["breakdowns"]
+        assert len(bd["by_practice"]) >= 1, bd
+        prac_row = bd["by_practice"][0]
+        for f in ("practice_code", "revenue", "cost_saved", "margin_pct", "n"):
+            assert f in prac_row, f"by_practice missing {f}: {prac_row}"
+
+        assert len(bd["by_pioneer"]) >= 1, bd
+        pio_row = bd["by_pioneer"][0]
+        for f in ("pioneer_id", "display_name", "revenue", "cost_saved", "n"):
+            assert f in pio_row, f"by_pioneer missing {f}: {pio_row}"
+
+        assert len(bd["by_currency"]) >= 1, bd
+        cur_row = bd["by_currency"][0]
+        for f in ("code", "native_revenue", "n_projects"):
+            assert f in cur_row, f"by_currency missing {f}: {cur_row}"
+
+        assert len(bd["by_pricing_model"]) >= 1, bd
+        pm_row = bd["by_pricing_model"][0]
+        for f in ("model", "revenue", "n"):
+            assert f in pm_row, f"by_pricing_model missing {f}: {pm_row}"
+
+        # Trends shape (PR3 quarterly_productivity chart needs both fields).
+        quarterly = (body2.get("trends") or {}).get("quarterly") or []
+        assert len(quarterly) >= 1, body2
+        q = quarterly[0]
+        for f in ("quarter", "revenue", "cost_saved", "margin_pct",
+                  "revenue_per_day_xcsg", "revenue_per_day_legacy", "n"):
+            assert f in q, f"quarterly missing {f}: {q}"
+    finally:
+        if pid is not None:
+            requests.delete(f"{BASE}/api/projects/{pid}", headers=h)
+        # Clean up the seeded pioneer too (project deletion doesn't cascade).
+        ps = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+        for p in ps:
+            if p.get("email") == "pr3-fieldtest@example.com":
+                requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=h)
+
+
 def test_migrate_v15_idempotent():
     """migrate_v15 adds new columns + app_settings table, runs idempotently."""
     from backend import database
@@ -3136,6 +3226,7 @@ def main():
     test_economics_schema()
     test_economics_schema_constants()
     test_dashboard_economics_response_includes_total_complete_count()
+    test_dashboard_economics_response_breakdowns_field_set()
     test_practice_roles_schema()
     test_legacy_team_schema()
     test_pioneer_schema()
