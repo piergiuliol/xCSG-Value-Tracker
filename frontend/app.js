@@ -2394,7 +2394,14 @@ async function renderProjects() {
         ${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-left:auto">+ New Project</a>' : ''}
       </div>
       <div class="card"><table class="data-table" id="projectTable"><thead><tr>
-        <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th><th>Responses</th><th title="Actual delivery vs. expected delivery.">Schedule</th><th>Quality Score</th><th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
+        <th>Project</th><th>Category</th><th>Practice</th><th>Pioneers</th>
+        <th title="Actual delivery vs. expected delivery.">Schedule</th>
+        <th title="Knowledge synthesis breadth: xCSG vs legacy">Machine-First</th>
+        <th title="Senior involvement depth: xCSG vs legacy">Senior-Led</th>
+        <th title="Proprietary data + reuse: xCSG vs legacy">Knowledge</th>
+        <th title="Composite quality score (0-1)">Quality</th>
+        <th title="Quality per person-day: xCSG vs legacy">Value Gain</th>
+        <th>G2 Client Pulse</th><th>Status</th><th>Actions</th>
       </tr></thead><tbody>`;
 
     for (const p of rows) {
@@ -2435,15 +2442,28 @@ async function renderProjects() {
       const schedCell = schedDelta == null
         ? '<span style="color:var(--gray-400)">\u2014</span>'
         : `<span class="badge ${scheduleDeltaBadgeClass(schedDelta)}" title="Expected: ${esc(p.date_expected_delivered)} \xb7 Delivered: ${esc(p.date_delivered)}">${formatScheduleDelta(schedDelta)}</span>`;
-      html += `<tr class="clickable-row" data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}" onclick="window.location.hash='#edit/${p.id}'">
-        <td>${esc(p.project_name)}</td>
+      // Compute the 5 ratio cells from p.metrics (null when no responses yet).
+      const m = p.metrics || {};
+      const ratioCell = (val) => {
+        if (val == null) return '<span style="color:var(--gray-400)">\u2014</span>';
+        return `<span style="color:${metricTone(val, 'metric_tone')};font-weight:600">${fmtRatioMaybe(val)}</span>`;
+      };
+      const pctCell = (val) => {
+        if (val == null) return '<span style="color:var(--gray-400)">\u2014</span>';
+        return `<span style="color:${metricTone(val, 'pct_tone')};font-weight:600">${fmtPctMaybe(val)}</span>`;
+      };
+      html += `<tr data-status="${effectiveStatus}" data-cat="${esc(p.category_name)}" data-practice="${esc(p.practice_code || '')}">
+        <td><a href="#project/${p.id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none;font-weight:600">${esc(p.project_name)}</a></td>
         <td>${esc(p.category_name || '\u2014')}</td>
         <td>${esc(p.practice_code || '\u2014')}</td>
         <td title="${esc(pioneerTooltip)}">${esc(pioneerLabel)}</td>
-        <td>${responsesLabel}</td>
         <td>${schedCell}</td>
-        <td>${qualityScore}</td>
-        <td onclick="event.stopPropagation()">${pulseSelect}</td>
+        <td>${ratioCell(m.machine_first_score)}</td>
+        <td>${ratioCell(m.senior_led_score)}</td>
+        <td>${ratioCell(m.proprietary_knowledge_score)}</td>
+        <td>${pctCell(m.quality_score)}</td>
+        <td>${ratioCell(m.productivity_ratio)}</td>
+        <td>${pulseSelect}</td>
         <td>${statusBadge}</td>
         <td class="actions-cell">${deleteBtn}</td>
       </tr>`;
