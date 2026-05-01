@@ -2608,6 +2608,128 @@ function _initEconomicsCharts(data) {
   }
 }
 
+function _initEconomicsTabCharts(data) {
+  if (typeof echarts === 'undefined') return;
+  if (!data || !data.summary) return;
+  const baseCurrency = data.summary.base_currency || 'USD';
+  const fmtMoney = (v) => fmtCurrency(v, baseCurrency);
+  const breakdowns = data.breakdowns || {};
+  const quarterly = (data.trends && Array.isArray(data.trends.quarterly)) ? data.trends.quarterly : [];
+
+  // ── 1. Pricing model mix (donut) ──
+  const byPricing = Array.isArray(breakdowns.by_pricing_model) ? breakdowns.by_pricing_model : [];
+  if (byPricing.length > 0) {
+    const donut = ecInit('economics_pricing_mix');
+    if (donut) {
+      const total = byPricing.reduce((acc, e) => acc + (e.revenue || 0), 0) || 1;
+      donut.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'item',
+          formatter: (p) => `${p.marker}<b>${esc(p.name)}</b><br/>Revenue: ${fmtMoney(p.value)}<br/>Share: ${(p.value / total * 100).toFixed(1)}%`,
+        },
+        legend: { orient: 'vertical', right: 8, top: 'middle', textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+        series: [{
+          type: 'pie', radius: ['45%', '70%'], center: ['38%', '50%'],
+          itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+          label: { show: false }, labelLine: { show: false },
+          data: byPricing.map(e => ({ name: e.model, value: e.revenue || 0 })),
+        }],
+      });
+    }
+  }
+
+  // ── 2. Cost productivity by pioneer (horizontal bar, top 10 by cost_saved) ──
+  const byPioneer = Array.isArray(breakdowns.by_pioneer) ? breakdowns.by_pioneer : [];
+  if (byPioneer.length > 0) {
+    const bar = ecInit('economics_pioneer_productivity');
+    if (bar) {
+      const top = byPioneer
+        .slice()
+        .sort((a, b) => (b.cost_saved || 0) - (a.cost_saved || 0))
+        .slice(0, 10);
+      bar.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: (params) => {
+            const p = params[0];
+            return `<b>${esc(p.name)}</b><br/>Cost saved: ${fmtMoney(p.value)}`;
+          },
+        },
+        grid: { left: 140, right: 16, top: 16, bottom: 32 },
+        xAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+        yAxis: { type: 'category', inverse: true, data: top.map(p => p.display_name || `#${p.pioneer_id}`), axisLabel: axisLbl() },
+        series: [{
+          type: 'bar',
+          data: top.map(p => p.cost_saved || 0),
+          itemStyle: { color: '#10B981' },
+          barMaxWidth: 24,
+        }],
+      });
+    }
+  }
+
+  // ── 3. Quarterly revenue trend (full-size line) ──
+  if (quarterly.length > 0) {
+    const line = ecInit('economics_quarterly_revenue_full');
+    if (line) {
+      line.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          formatter: (params) => {
+            const p = params[0];
+            return `<b>${esc(p.axisValueLabel)}</b><br/>Revenue: ${fmtMoney(p.value)}`;
+          },
+        },
+        grid: { left: 70, right: 16, top: 16, bottom: 32 },
+        xAxis: { type: 'category', data: quarterly.map(q => q.quarter), axisLabel: axisLbl() },
+        yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+        series: [{
+          type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+          data: quarterly.map(q => q.revenue || 0),
+          itemStyle: { color: '#6EC1E4' },
+          lineStyle: { color: '#6EC1E4', width: 2 },
+          areaStyle: { color: 'rgba(110,193,228,0.18)' },
+        }],
+      });
+    }
+
+    // ── 4. Quarterly cost productivity trend (dual-line: xCSG vs legacy revenue/day) ──
+    const dual = ecInit('economics_quarterly_productivity');
+    if (dual) {
+      dual.setOption({
+        tooltip: {
+          ...tip(),
+          trigger: 'axis',
+          formatter: (params) => {
+            const lines = params.map(p => `${p.marker}${p.seriesName}: <b>${fmtMoney(p.value)}</b>`);
+            return `<div><b>${params[0].axisValueLabel}</b></div>${lines.join('<br/>')}`;
+          },
+        },
+        legend: { top: 0, textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+        grid: { left: 70, right: 16, top: 36, bottom: 32 },
+        xAxis: { type: 'category', data: quarterly.map(q => q.quarter), axisLabel: axisLbl() },
+        yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+        series: [
+          {
+            name: 'xCSG revenue / day', type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+            data: quarterly.map(q => q.revenue_per_day_xcsg),
+            itemStyle: { color: '#10B981' }, lineStyle: { color: '#10B981', width: 2 },
+          },
+          {
+            name: 'Legacy revenue / day', type: 'line', smooth: true, symbol: 'circle', symbolSize: 8,
+            data: quarterly.map(q => q.revenue_per_day_legacy),
+            itemStyle: { color: '#9CA3AF' }, lineStyle: { color: '#9CA3AF', width: 2, type: 'dashed' },
+          },
+        ],
+      });
+    }
+  }
+}
+
 // Helper: filter to projects with metrics (used by several renderers)
 function _doneProjects(filtered) {
   return filtered.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
