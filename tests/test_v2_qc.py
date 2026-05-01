@@ -1556,7 +1556,7 @@ def test_economics_models():
         ProjectCreate(**base, xcsg_pricing_model="Pay what you want")
 
     # AppSettings models.
-    s = AppSettings(default_currency="USD")
+    s = AppSettings(default_currency="USD", base_currency="USD")
     assert s.default_currency == "USD"
     with pytest.raises(ValidationError):
         AppSettingsUpdate(default_currency="XYZ")
