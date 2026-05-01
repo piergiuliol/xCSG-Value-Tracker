@@ -2401,6 +2401,72 @@ function renderDashboardCharts(dashboard, filtered) {
   }
 }
 
+function _initEconomicsCharts(data) {
+  if (typeof echarts === 'undefined') return;
+  if (!data || !data.trends || !Array.isArray(data.trends.quarterly)) return;
+  const quarterly = data.trends.quarterly;
+  const baseCurrency = (data.summary && data.summary.base_currency) || 'USD';
+
+  // Skip if there's nothing to plot — leaves the empty card body without
+  // killing the page (e.g. when projects exist but have no date_delivered).
+  if (quarterly.length === 0) return;
+
+  const quarters = quarterly.map(q => q.quarter);
+  const fmtMoney = (v) => fmtCurrency(v, baseCurrency);
+
+  // ── Chart 1: Quarterly revenue + cost saved (grouped bar) ──
+  const revBar = ecInit('economics_quarterly_revenue');
+  if (revBar) {
+    revBar.setOption({
+      tooltip: {
+        ...tip(),
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params) => {
+          const lines = params.map(p => `${p.marker}${p.seriesName}: <b>${fmtMoney(p.value)}</b>`);
+          return `<div><b>${params[0].axisValueLabel}</b></div>${lines.join('<br/>')}`;
+        },
+      },
+      legend: { top: 0, textStyle: { color: '#6B7280', fontFamily: 'Inter, system-ui' } },
+      grid: { left: 60, right: 16, top: 36, bottom: 32 },
+      xAxis: { type: 'category', data: quarters, axisLabel: axisLbl() },
+      yAxis: { type: 'value', axisLabel: { ...axisLbl(), formatter: (v) => fmtMoney(v) } },
+      series: [
+        { name: 'Revenue', type: 'bar', data: quarterly.map(q => q.revenue || 0), itemStyle: { color: '#6EC1E4' } },
+        { name: 'Cost saved', type: 'bar', data: quarterly.map(q => q.cost_saved || 0), itemStyle: { color: '#10B981' } },
+      ],
+    });
+  }
+
+  // ── Chart 2: Margin % over time (line) ──
+  const marginLine = ecInit('economics_margin_trend');
+  if (marginLine) {
+    marginLine.setOption({
+      tooltip: {
+        ...tip(),
+        trigger: 'axis',
+        formatter: (params) => {
+          const p = params[0];
+          return `<div><b>${p.axisValueLabel}</b></div>Margin: <b>${fmtPctMaybe(p.value)}</b>`;
+        },
+      },
+      grid: { left: 50, right: 16, top: 16, bottom: 32 },
+      xAxis: { type: 'category', data: quarters, axisLabel: axisLbl() },
+      yAxis: { type: 'value', min: 0, max: 1, axisLabel: { ...axisLbl(), formatter: (v) => `${Math.round(v * 100)}%` } },
+      series: [{
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 8,
+        data: quarterly.map(q => q.margin_pct),
+        itemStyle: { color: '#121F6B' },
+        lineStyle: { color: '#121F6B', width: 2 },
+        areaStyle: { color: 'rgba(18,31,107,0.1)' },
+      }],
+    });
+  }
+}
+
 // Helper: filter to projects with metrics (used by several renderers)
 function _doneProjects(filtered) {
   return filtered.filter(p => p.metrics && (p.status === 'complete' || p.status === 'partial'));
