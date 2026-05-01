@@ -643,6 +643,7 @@ function toggleCheckpointCard(cpId) {
 let _dashboardCache = null;
 let _projectsCache = null;
 let _takeawaysCache = {};
+let _economicsCache = null;
 
 function _avg(arr) {
   const vals = arr.filter(v => v != null);
@@ -704,16 +705,18 @@ async function renderPortfolio() {
 
   try {
     const qs = _buildDashboardQS();
-    const [dashboard, allProjects, takeaways] = await Promise.all([
+    const [dashboard, allProjects, takeaways, economics] = await Promise.all([
       apiCall('GET', `/dashboard/metrics${qs}`),
       apiCall('GET', '/projects'),
       apiCall('GET', `/dashboard/takeaways${qs}`).catch(() => ({})),
+      loadEconomicsData().catch(err => { console.warn('economics load failed', err); return null; }),
     ]);
     if (myRoute !== _routeCounter) return; // stale — user navigated away
 
     _dashboardCache = dashboard;
     _projectsCache = allProjects;
     _takeawaysCache = takeaways || {};
+    _economicsCache = economics;
 
     if (!allProjects.length) {
       mc.innerHTML = `<div class="empty-state"><h2>Welcome to the xCSG Value Tracker</h2><p>Start by creating your first project to begin measuring xCSG performance.</p>${canWrite() ? '<a href="#new" class="btn btn-primary" style="margin-top:16px">Create First Project</a>' : ''}</div>`;
@@ -944,8 +947,11 @@ function _selectTab(id, mountEl) {
   _activeTab = id;
   mountEl.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === id));
   mountEl.querySelectorAll('.tab-panel').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
-  // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes
+  // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes.
+  // disposeAllCharts() inside renderDashboardCharts also wipes our economics charts,
+  // so re-init them when returning to Overview.
   renderDashboardCharts(_dashboardCache, applyFilters(_projectsCache));
+  if (id === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
 }
 
 function _renderDashboardView(allProjects, dashboard) {
@@ -1038,10 +1044,23 @@ function _renderDashboardView(allProjects, dashboard) {
   mc.innerHTML = html;
   renderFilterBar(allProjects);
   renderTabShell(document.getElementById('tabContainer'));
-  requestAnimationFrame(() => renderDashboardCharts(localMetrics, filtered));
+
+  // Inject the Economics summary card at the bottom of the Overview tab panel.
+  // The spec calls this the "Summary tab" — internally it's the 'overview' tab.
+  if (_economicsCache) {
+    const overviewPanel = document.querySelector('#tabContainer .tab-panel[data-panel="overview"]');
+    if (overviewPanel) {
+      overviewPanel.insertAdjacentHTML('beforeend', renderEconomicsSummaryCard(_economicsCache));
+    }
+  }
+
+  requestAnimationFrame(() => {
+    renderDashboardCharts(localMetrics, filtered);
+    if (_activeTab === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
+  });
 }
 
-function _reapplyFilters() {
+async function _reapplyFilters() {
   if (!_projectsCache || !_dashboardCache) return;
   _saveFilters();
   // When a pioneer filter is active, re-fetch server-side aggregates so KPI tiles
@@ -1049,6 +1068,10 @@ function _reapplyFilters() {
   if (filterState.pioneers.size) {
     renderPortfolio();
   } else {
+    // Non-pioneer filters (practice/category/date) only affect client-side
+    // visualizations today, BUT the economics endpoint is a separate fetch that
+    // also accepts filter params. Re-fetch so the Economics card stays consistent.
+    try { _economicsCache = await loadEconomicsData(); } catch (_) {}
     _renderDashboardView(_projectsCache, _dashboardCache);
   }
 }
