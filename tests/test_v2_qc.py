@@ -669,7 +669,7 @@ def test_schema_endpoint():
     body = r.json()
     test("schema response has dashboard key", "dashboard" in body)
     dash = body.get("dashboard") or {}
-    test("schema.dashboard has tabs list", isinstance(dash.get("tabs"), list) and len(dash["tabs"]) == 4)
+    test("schema.dashboard has tabs list", isinstance(dash.get("tabs"), list) and len(dash["tabs"]) == 5)
     test("schema.dashboard has charts list", isinstance(dash.get("charts"), list) and len(dash["charts"]) == 19)
     test("schema.dashboard has kpi_tiles list", isinstance(dash.get("kpi_tiles"), list) and len(dash["kpi_tiles"]) == 12)
     test("schema.dashboard.thresholds.radar_axis_cap present",
@@ -730,7 +730,7 @@ def test_dashboard_config():
     from backend import schema as _schema
     dc = getattr(_schema, "DASHBOARD_CONFIG", None)
     test("DASHBOARD_CONFIG exists", isinstance(dc, dict))
-    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 4)
+    test("DASHBOARD_CONFIG has tabs", isinstance(dc.get("tabs"), list) and len(dc["tabs"]) == 5)
     test("DASHBOARD_CONFIG has charts list", isinstance(dc.get("charts"), list))
     th = dc.get("thresholds", {})
     test("thresholds.radar_axis_cap is positive float", isinstance(th.get("radar_axis_cap"), (int, float)) and th["radar_axis_cap"] > 1)
@@ -778,8 +778,10 @@ def test_dashboard_config():
          sum(1 for c in dc["charts"] if c["tab"] == "trends") == 5)
     test("Breakdowns has 5 charts (3 bars + heatmap + mix)",
          sum(1 for c in dc["charts"] if c["tab"] == "breakdowns") == 5)
-    test("every tab has at least one chart",
-         all(any(c["tab"] == t for c in dc["charts"]) for t in tab_ids_set))
+    # 'economics' tab is special: its surfaces come from ECONOMICS_TILES /
+    # ECONOMICS_CHARTS, not from dashboard.charts, so exempt it here.
+    test("every tab (except economics) has at least one chart",
+         all(any(c["tab"] == t for c in dc["charts"]) for t in tab_ids_set if t != "economics"))
     test("Overview has 4 charts",
          sum(1 for c in dc["charts"] if c["tab"] == "overview") == 4)
     test("Signals has 5 charts",
