@@ -5436,7 +5436,7 @@ async function renderProjectDetail(id) {
       ${renderProjectActivityStrip(project, metrics, pioneers)}
       <div style="margin-bottom:20px">
         <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Performance</h2>
-        <div class="metric-chips-grid" style="display:flex;gap:8px;flex-wrap:wrap">
+        <div class="metric-chips-grid" data-testid="project-performance-chips" style="display:flex;gap:8px;flex-wrap:wrap">
           ${renderProjectFlywheelChips(metrics)}
         </div>
       </div>
