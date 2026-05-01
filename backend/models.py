@@ -9,7 +9,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
-from backend.schema import CURRENCIES, PRICING_MODELS
+from backend.schema import CURRENCIES, PIONEER_TITLES, PRICING_MODELS
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -506,6 +506,8 @@ class PioneerCreate(BaseModel):
     last_name: str
     email: Optional[EmailStr] = None
     notes: Optional[str] = None
+    title: Optional[str] = None
+    home_practice_id: Optional[int] = None
 
     @field_validator("first_name", "last_name")
     @classmethod
@@ -532,6 +534,15 @@ class PioneerCreate(BaseModel):
             raise ValueError("notes must be at most 2000 characters")
         return v
 
+    @field_validator("title")
+    @classmethod
+    def _title_in_allowlist(cls, v):
+        if v is None or v == "":
+            return None
+        if v not in PIONEER_TITLES:
+            raise ValueError(f"title must be one of {PIONEER_TITLES}")
+        return v
+
     @property
     def display_name(self) -> str:
         return ((self.first_name or "").strip() + " " + (self.last_name or "").strip()).strip()
@@ -543,6 +554,8 @@ class PioneerUpdate(BaseModel):
     last_name: Optional[str] = None
     email: Optional[EmailStr] = None
     notes: Optional[str] = None
+    title: Optional[str] = None
+    home_practice_id: Optional[int] = None
 
     @field_validator("first_name", "last_name")
     @classmethod
@@ -561,6 +574,15 @@ class PioneerUpdate(BaseModel):
             raise ValueError("notes must be at most 2000 characters")
         return v
 
+    @field_validator("title")
+    @classmethod
+    def _title_in_allowlist(cls, v):
+        if v is None or v == "":
+            return None
+        if v not in PIONEER_TITLES:
+            raise ValueError(f"title must be one of {PIONEER_TITLES}")
+        return v
+
 
 class PioneerSummary(BaseModel):
     """Aggregated shape returned by GET /api/pioneers and /api/pioneers/{id}."""
@@ -570,6 +592,9 @@ class PioneerSummary(BaseModel):
     display_name: str = ""
     email: Optional[str] = None
     notes: Optional[str] = None
+    title: Optional[str] = None
+    home_practice_id: Optional[int] = None
+    home_practice_code: Optional[str] = None
     project_count: int = 0
     rounds_completed: int = 0
     rounds_expected: int = 0

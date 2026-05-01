@@ -3255,6 +3255,7 @@ def main():
     test_migrate_v23_auto_parses_seeded_notes()
     test_migrate_v23_leaves_real_notes_alone()
     test_schema_exposes_pioneer_titles()
+    test_pioneer_title_and_home_practice_models()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3625,6 +3626,40 @@ def test_schema_exposes_pioneer_titles():
                 "Senior Consultant", "Consultant", "Analyst"}
     assert expected.issubset(set(titles)), f"missing: {expected - set(titles)}"
     assert isinstance(titles, list)
+
+
+def test_pioneer_title_and_home_practice_models():
+    """PioneerCreate / Update / Summary accept title + home_practice_id with validation."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import PioneerCreate, PioneerUpdate, PioneerSummary
+
+    # Valid title from allowlist.
+    p = PioneerCreate(first_name="Test", last_name="Person", title="Partner", home_practice_id=1)
+    assert p.title == "Partner"
+    assert p.home_practice_id == 1
+
+    # None allowed.
+    p2 = PioneerCreate(first_name="Test", last_name="Person", title=None, home_practice_id=None)
+    assert p2.title is None
+    assert p2.home_practice_id is None
+
+    # Invalid title rejected.
+    with pytest.raises(ValidationError):
+        PioneerCreate(first_name="Test", last_name="Person", title="Wizard")
+
+    # PioneerUpdate accepts both as optional.
+    u = PioneerUpdate(title="Principal")
+    assert u.title == "Principal"
+    with pytest.raises(ValidationError):
+        PioneerUpdate(title="NotARealTitle")
+
+    # PioneerSummary surfaces the fields + a derived home_practice_code.
+    s = PioneerSummary(id=1, first_name="A", last_name="B", status="never",
+                       title="Senior Consultant", home_practice_id=2,
+                       home_practice_code="MAP")
+    assert s.title == "Senior Consultant"
+    assert s.home_practice_code == "MAP"
 
 
 def test_migrate_v19_email_unique_case_insensitive():
