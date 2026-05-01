@@ -1324,6 +1324,31 @@ def test_economics_schema_constants():
     test("tile formats include percent", "percent" in formats_used)
     test("tile formats include fraction", "fraction" in formats_used)
 
+    # PR3-specific: 'economics' tab present in dashboard.tabs.
+    dash_tabs = (s.get("dashboard") or {}).get("tabs") or []
+    tab_ids = [t["id"] for t in dash_tabs]
+    test("dashboard.tabs includes 'economics'", "economics" in tab_ids,
+         detail=f"got {tab_ids}")
+    # Sensible position: between 'breakdowns' and 'signals' per the plan decision
+    # (the spec's literal "between Breakdowns and Trends" doesn't match the
+    # existing overview/trends/breakdowns/signals order).
+    if "economics" in tab_ids and "breakdowns" in tab_ids:
+        test("'economics' tab is right after 'breakdowns'",
+             tab_ids.index("economics") == tab_ids.index("breakdowns") + 1,
+             detail=f"got order {tab_ids}")
+
+    # PR3-specific: 4 charts must be tagged surface='tab'.
+    tab_charts = [c for c in charts if c.get("surface") == "tab"]
+    test("exactly 4 tab-surface charts", len(tab_charts) == 4,
+         detail=f"got {len(tab_charts)}: {[c['id'] for c in tab_charts]}")
+    tab_chart_ids = {c["id"] for c in tab_charts}
+    expected_tab_ids = {
+        "economics_pricing_mix", "economics_pioneer_productivity",
+        "economics_quarterly_revenue_full", "economics_quarterly_productivity",
+    }
+    test("tab charts cover all 4 expected ids", tab_chart_ids == expected_tab_ids,
+         detail=f"diff {tab_chart_ids ^ expected_tab_ids}")
+
 
 def test_dashboard_economics_response_includes_total_complete_count():
     """The PR2 frontend renders 'qualifying_project_count / total_complete_count'
