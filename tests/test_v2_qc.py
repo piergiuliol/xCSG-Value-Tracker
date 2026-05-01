@@ -1037,7 +1037,6 @@ def test_expert_notes():
         if open_round:
             break
     if not (proj_id and pioneer and open_round):
-        # TODO(qc): destructive migration tests upstream wipe project_pioneers; needs mid-suite re-seed.
         test("skipped — no pioneer with open round", False, detail="all rounds completed")
         return
 
@@ -1093,7 +1092,6 @@ def test_notes_feed_endpoint():
     map_tok = next((r for r in open_rounds if r[1] == "MAP"), None)
     other_tok = next((r for r in open_rounds if r[1] and r[1] != "MAP"), None)
     if not map_tok or not other_tok:
-        # TODO(qc): destructive migration tests upstream wipe project_pioneers; needs mid-suite re-seed.
         test("skipped — need one MAP and one non-MAP open round", False, detail=f"open={[r[1] for r in open_rounds]}")
         return
 
@@ -1165,7 +1163,6 @@ def test_notes_excel_sheet():
         return
     notes_sheet = wb["Notes"]
     rows = list(notes_sheet.iter_rows(values_only=True))
-    # TODO(qc): notes are seeded by upstream tests that get wiped by migration cleanup; needs mid-suite re-seed.
     test("Notes sheet has header row + >=1 data row", len(rows) >= 2, detail=f"rows={len(rows)}")
     expected_cols = ["Project", "Category", "Practice", "Pioneer", "Round", "Submitted", "Notes"]
     test("Notes sheet header matches expected columns", list(rows[0]) == expected_cols, detail=f"got {rows[0]}")
@@ -1200,8 +1197,6 @@ def test_dashboard_export_sheets():
     for name in ["By Practice", "Quarterly Trend", "Takeaways", "Top Movers"]:
         if name in wb.sheetnames:
             rows = list(wb[name].iter_rows(values_only=True))
-            # TODO(qc): "Top Movers" needs status='complete' projects (productivity_ratio set);
-            # seed leaves projects in 'partial' (2nd pioneer round pending). Needs full-completion seed.
             test(
                 f"'{name}' sheet has header + at least one data row",
                 len(rows) >= 2,
@@ -2522,6 +2517,100 @@ def test_export_pioneers_csv_empty_filter():
         assert col in (reader.fieldnames or []), f"missing header column {col}"
 
 
+def _seed_for_notes_consumers():
+    """Seed live data the notes/dashboard-export consumer tests depend on.
+
+    Why: upstream destructive migration tests (test_migrate_v19_*, the
+    test_pioneer_db_helpers_* family) wipe `pioneers` and `project_pioneers`
+    mid-suite. By the time test_expert_notes runs there are no pioneer
+    rounds, so it skips. Re-seed via the public API right before the
+    consumers so they see realistic state regardless of what ran upstream.
+
+    Creates:
+      - 1 MAP-practice project, 1 pioneer, 2 expected rounds (both open)
+      - 1 non-MAP-practice project, 1 pioneer, 2 expected rounds (both open)
+      - 1 fully-completed project (all rounds done) so dashboard "Top Movers"
+        has at least one row with productivity_ratio set.
+    """
+    print("\n── _seed_for_notes_consumers ──")
+    h = auth_h(admin_token())
+
+    cats = requests.get(f"{BASE}/api/categories", headers=h).json()
+    practices = requests.get(f"{BASE}/api/practices", headers=h).json()
+    pmap = {p["code"]: p["id"] for p in practices}
+
+    # Find a category that allows MAP and one that allows a non-MAP practice (RAM is universal).
+    map_cat_id = None
+    other_cat_id = None
+    other_practice_code = None
+    for c in cats:
+        codes = [p["code"] for p in c.get("practices", [])]
+        if "MAP" in codes and map_cat_id is None:
+            map_cat_id = c["id"]
+        if other_cat_id is None:
+            non_map = next((code for code in codes if code != "MAP"), None)
+            if non_map:
+                other_cat_id = c["id"]
+                other_practice_code = non_map
+        if map_cat_id and other_cat_id:
+            break
+
+    if not (map_cat_id and other_cat_id):
+        test("seed: found MAP+non-MAP category", False, detail=f"map={map_cat_id} other={other_cat_id}")
+        return
+
+    # legacy_team needed for productivity_ratio computation (drives Top Movers).
+    legacy_team = [{"role_name": "Senior", "count": 2, "day_rate": 1200}]
+
+    seeds = [
+        ("QA Notes Seed — MAP",   map_cat_id,   pmap["MAP"],                  2),
+        ("QA Notes Seed — Other", other_cat_id, pmap[other_practice_code],    2),
+    ]
+    for name, cat_id, practice_id, rounds in seeds:
+        body = {
+            "project_name": name,
+            "category_id": cat_id,
+            "practice_id": practice_id,
+            "pioneers": [{"name": f"Notes {name[-3:]}", "total_rounds": rounds}],
+            "engagement_stage": "Active engagement",
+            "date_started": "2026-03-01",
+            "date_delivered": "2026-03-10",
+            "working_days": 5,
+            "xcsg_team_size": "2",
+            "xcsg_revision_rounds": "1",
+            "legacy_team": legacy_team,
+        }
+        r = requests.post(f"{BASE}/api/projects", headers=h, json=body)
+        test(f"seed: create '{name}'", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
+
+    # Fully-complete project so Top Movers / status='complete' aggregations have data.
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("sd", pathlib.Path("tests/seed_20_projects.py"))
+    sd = importlib.util.module_from_spec(spec); spec.loader.exec_module(sd)
+    strong_payload = dict(getattr(sd, "STRONG"))
+
+    body = {
+        "project_name": "QA Notes Seed — Complete",
+        "category_id": map_cat_id,
+        "practice_id": pmap["MAP"],
+        "pioneers": [{"name": "Notes Complete", "total_rounds": 1}],
+        "engagement_stage": "Post-engagement (follow-on)",
+        "date_started": "2026-02-01",
+        "date_delivered": "2026-02-10",
+        "working_days": 7,
+        "xcsg_team_size": "2",
+        "xcsg_revision_rounds": "1",
+        "legacy_team": legacy_team,
+    }
+    r = requests.post(f"{BASE}/api/projects", headers=h, json=body)
+    test("seed: create 'Complete' project", r.status_code in (200, 201), f"got {r.status_code}: {r.text[:120]}")
+    if r.status_code in (200, 201):
+        proj = r.json()
+        token = proj["pioneers"][0]["expert_token"]
+        rs = requests.post(f"{BASE}/api/expert/{token}", json=strong_payload)
+        test("seed: complete 'Complete' project's only round", rs.status_code in (200, 201), f"got {rs.status_code}: {rs.text[:120]}")
+
+
 def main():
     global passed, failed, failures
 
@@ -2544,6 +2633,9 @@ def main():
     test_practices()
     test_create_deliverable()
     test_expert_assessment()
+    # Seed live projects so dashboard/list tests have data even though
+    # test_create_deliverable + test_expert_assessment delete their own state.
+    _seed_for_notes_consumers()
     test_metrics()
     test_scaling_gates()
     test_dashboard()
@@ -2600,6 +2692,7 @@ def main():
     test_auto_issue_next_round()
     test_dashboard_takeaways()
     test_dashboard_pioneer_filter()
+    _seed_for_notes_consumers()
     test_expert_notes()
     test_notes_feed_endpoint()
     test_notes_excel_sheet()
