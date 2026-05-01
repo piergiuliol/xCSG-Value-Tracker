@@ -1068,9 +1068,12 @@ function _selectTab(id, mountEl) {
   mountEl.querySelectorAll('.tab-panel').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
   // Rebuild charts in the now-visible tab so ECharts picks up correct container sizes.
   // disposeAllCharts() inside renderDashboardCharts also wipes our economics charts,
-  // so re-init them when returning to Overview.
+  // so re-init them when returning to Overview or Economics.
   renderDashboardCharts(_dashboardCache, applyFilters(_projectsCache));
-  if (id === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
+  if (_economicsCache) {
+    if (id === 'overview') _initEconomicsCharts(_economicsCache);
+    if (id === 'economics') _initEconomicsTabCharts(_economicsCache);
+  }
 }
 
 function _renderDashboardView(allProjects, dashboard) {
@@ -1164,18 +1167,24 @@ function _renderDashboardView(allProjects, dashboard) {
   renderFilterBar(allProjects);
   renderTabShell(document.getElementById('tabContainer'));
 
-  // Inject the Economics summary card at the bottom of the Overview tab panel.
-  // The spec calls this the "Summary tab" — internally it's the 'overview' tab.
+  // Inject Economics surfaces (PR2 Summary card on Overview + PR3 deep view on Economics tab).
   if (_economicsCache) {
     const overviewPanel = document.querySelector('#tabContainer .tab-panel[data-panel="overview"]');
     if (overviewPanel) {
       overviewPanel.insertAdjacentHTML('beforeend', renderEconomicsSummaryCard(_economicsCache));
     }
+    const economicsPanel = document.querySelector('#tabContainer .tab-panel[data-panel="economics"]');
+    if (economicsPanel) {
+      economicsPanel.insertAdjacentHTML('beforeend', renderEconomicsTab(_economicsCache));
+    }
   }
 
   requestAnimationFrame(() => {
     renderDashboardCharts(localMetrics, filtered);
-    if (_activeTab === 'overview' && _economicsCache) _initEconomicsCharts(_economicsCache);
+    if (_economicsCache) {
+      if (_activeTab === 'overview') _initEconomicsCharts(_economicsCache);
+      if (_activeTab === 'economics') _initEconomicsTabCharts(_economicsCache);
+    }
   });
 }
 
