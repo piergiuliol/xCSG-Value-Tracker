@@ -27,7 +27,9 @@ def _display_name(first_name: Optional[str], last_name: Optional[str]) -> str:
 
 
 def create_pioneer(first_name: str, last_name: str, email: Optional[str], notes: Optional[str],
-                   created_by: Optional[int]) -> int:
+                   created_by: Optional[int],
+                   title: Optional[str] = None,
+                   home_practice_id: Optional[int] = None) -> int:
     """Insert a new pioneer row; return the new id. Email uniqueness enforced
     by the partial index — caller should call find_pioneer_by_email first
     when find-or-create semantics are desired."""
@@ -36,9 +38,11 @@ def create_pioneer(first_name: str, last_name: str, email: Optional[str], notes:
     ln = (last_name or "").strip()
     with _db() as conn:
         cur = conn.execute(
-            """INSERT INTO pioneers (first_name, last_name, email, notes, created_by)
-               VALUES (?, ?, ?, ?, ?)""",
-            (fn, ln, email.strip() if email else None, notes, created_by),
+            """INSERT INTO pioneers (first_name, last_name, email, notes, created_by,
+                                     title, home_practice_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (fn, ln, email.strip() if email else None, notes, created_by,
+             title, home_practice_id),
         )
         conn.commit()
         return cur.lastrowid
@@ -66,8 +70,17 @@ def find_pioneer_by_email(email: Optional[str]) -> Optional[dict]:
 def update_pioneer_record(pioneer_id: int, first_name: Optional[str] = None,
                           last_name: Optional[str] = None,
                           email: Optional[str] = None,
-                          notes: Optional[str] = None) -> None:
-    """Update only the provided fields. None means 'leave unchanged'."""
+                          notes: Optional[str] = None,
+                          title=...,
+                          home_practice_id=...) -> None:
+    """Update only the provided fields.
+
+    For first_name/last_name/email/notes: None means 'leave unchanged' (legacy
+    semantics preserved for backwards compat with existing callers).
+
+    For title/home_practice_id: pass nothing (the default `...` sentinel) to
+    leave the field unchanged; pass explicit None to CLEAR the field.
+    """
     fields = {}
     if first_name is not None:
         fields["first_name"] = first_name.strip()
@@ -77,6 +90,11 @@ def update_pioneer_record(pioneer_id: int, first_name: Optional[str] = None,
         fields["email"] = email.strip() if email else None
     if notes is not None:
         fields["notes"] = notes
+    # title/home_practice_id: explicit None clears; not-passed (sentinel) leaves alone.
+    if title is not ...:
+        fields["title"] = title
+    if home_practice_id is not ...:
+        fields["home_practice_id"] = home_practice_id
     if not fields:
         return
     from backend.database import _db
@@ -143,10 +161,14 @@ def list_pioneers_with_metrics() -> list[dict]:
 
     with _db() as conn:
         # All pioneers — sort by last_name then first_name (consulting convention).
+        # LEFT JOIN practices to surface the home-practice code without an N+1.
         pioneers = conn.execute(
-            """SELECT id, first_name, last_name, email, notes
-                 FROM pioneers
-             ORDER BY last_name COLLATE NOCASE, first_name COLLATE NOCASE"""
+            """SELECT p.id, p.first_name, p.last_name, p.email, p.notes,
+                      p.title, p.home_practice_id,
+                      hp.code AS home_practice_code
+                 FROM pioneers p
+            LEFT JOIN practices hp ON hp.id = p.home_practice_id
+             ORDER BY p.last_name COLLATE NOCASE, p.first_name COLLATE NOCASE"""
         ).fetchall()
         if not pioneers:
             return []
@@ -252,6 +274,9 @@ def list_pioneers_with_metrics() -> list[dict]:
             "display_name": _display_name(p["first_name"], p["last_name"]),
             "email": p["email"],
             "notes": p["notes"],
+            "title": p["title"],
+            "home_practice_id": p["home_practice_id"],
+            "home_practice_code": p["home_practice_code"],
             "project_count": len({r["project_id"] for r in recs}),
             "rounds_completed": rounds_completed,
             "rounds_expected": rounds_expected,
@@ -327,7 +352,12 @@ def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
     # skip the full aggregation.
     with _db() as conn:
         pioneer_row = conn.execute(
-            "SELECT id, first_name, last_name, email, notes FROM pioneers WHERE id = ?",
+            """SELECT p.id, p.first_name, p.last_name, p.email, p.notes,
+                      p.title, p.home_practice_id,
+                      hp.code AS home_practice_code
+                 FROM pioneers p
+            LEFT JOIN practices hp ON hp.id = p.home_practice_id
+                WHERE p.id = ?""",
             (pioneer_id,),
         ).fetchone()
         if not pioneer_row:
@@ -345,6 +375,9 @@ def get_pioneer_with_metrics(pioneer_id: int) -> Optional[dict]:
             "display_name": _display_name(pioneer_row["first_name"], pioneer_row["last_name"]),
             "email": pioneer_row["email"],
             "notes": pioneer_row["notes"],
+            "title": pioneer_row["title"],
+            "home_practice_id": pioneer_row["home_practice_id"],
+            "home_practice_code": pioneer_row["home_practice_code"],
             "project_count": 0,
             "rounds_completed": 0,
             "rounds_expected": 0,

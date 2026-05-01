@@ -3251,6 +3251,15 @@ def main():
     test_migrate_v21_idempotent()
     test_migrate_v22_drops_legacy_norms()
     test_migrate_v22_idempotent()
+    test_migrate_v23_adds_title_and_home_practice_columns()
+    test_migrate_v23_auto_parses_seeded_notes()
+    test_migrate_v23_leaves_real_notes_alone()
+    test_schema_exposes_pioneer_titles()
+    test_pioneer_title_and_home_practice_models()
+    test_pioneer_db_helpers_persist_title_and_home_practice()
+    test_pioneer_api_title_and_home_practice_filters()
+    test_seed_initial_pioneers_writes_columns_not_notes()
+    test_pioneers_csv_includes_title_and_home_practice_columns()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3550,6 +3559,229 @@ def test_migrate_v22_idempotent():
             "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_norms'"
         ).fetchone()
         assert row is None
+
+
+def test_migrate_v23_adds_title_and_home_practice_columns():
+    """v2.3 — pioneers table gains title + home_practice_id columns."""
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(pioneers)").fetchall()}
+        assert "title" in cols, f"got {cols}"
+        assert "home_practice_id" in cols, f"got {cols}"
+
+
+def test_migrate_v23_auto_parses_seeded_notes():
+    """A pioneer with notes='MAP — Partner' migrates to title=Partner + home_practice_id=MAP id."""
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        # Find MAP practice id
+        map_id = conn.execute("SELECT id FROM practices WHERE code='MAP'").fetchone()[0]
+        # Insert a pioneer with the seeded notes pattern, NO title yet (simulating pre-migration state).
+        conn.execute(
+            "INSERT INTO pioneers (first_name, last_name, email, notes, title, home_practice_id) VALUES (?, ?, ?, ?, ?, ?)",
+            ("Test", "Migrated", "test.migrated@alirahealth.com", "MAP — Partner", None, None),
+        )
+        conn.commit()
+    # Re-run migration (idempotent).
+    database.migrate_v23_pioneer_title_home_practice()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT title, home_practice_id, notes FROM pioneers WHERE email='test.migrated@alirahealth.com'"
+        ).fetchone()
+        assert row["title"] == "Partner", f"got {row['title']}"
+        assert row["home_practice_id"] == map_id, f"got {row['home_practice_id']}"
+        assert (row["notes"] or "") == "", f"notes should be cleared after parse; got {row['notes']!r}"
+        # Cleanup
+        conn.execute("DELETE FROM pioneers WHERE email='test.migrated@alirahealth.com'")
+        conn.commit()
+
+
+def test_migrate_v23_leaves_real_notes_alone():
+    """A pioneer whose notes don't match the pattern should be untouched."""
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        conn.execute(
+            "INSERT INTO pioneers (first_name, last_name, email, notes, title, home_practice_id) VALUES (?, ?, ?, ?, ?, ?)",
+            ("Real", "Bio", "real.bio@alirahealth.com", "Lead author on EU MDR submissions; speaks Italian.", None, None),
+        )
+        conn.commit()
+    database.migrate_v23_pioneer_title_home_practice()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT title, home_practice_id, notes FROM pioneers WHERE email='real.bio@alirahealth.com'"
+        ).fetchone()
+        assert row["title"] is None
+        assert row["home_practice_id"] is None
+        assert "Lead author" in (row["notes"] or "")
+        conn.execute("DELETE FROM pioneers WHERE email='real.bio@alirahealth.com'")
+        conn.commit()
+
+
+def test_schema_exposes_pioneer_titles():
+    """schema.py exposes PIONEER_TITLES, surfaced via /api/schema."""
+    r = requests.get(f"{BASE}/api/schema")
+    assert r.status_code == 200
+    s = r.json()
+    titles = s.get("pioneer_titles") or []
+    expected = {"Partner", "Principal", "Senior Manager", "Engagement Manager",
+                "Senior Consultant", "Consultant", "Analyst"}
+    assert expected.issubset(set(titles)), f"missing: {expected - set(titles)}"
+    assert isinstance(titles, list)
+
+
+def test_seed_initial_pioneers_writes_columns_not_notes():
+    """After seed_data, the 14 Alira pioneers have title + home_practice_id set,
+    notes empty (or content unrelated to practice/title)."""
+    from backend import database
+    database.init_db()  # runs seed_data + migration
+    with database._db() as conn:
+        rows = conn.execute(
+            """SELECT first_name, last_name, title, home_practice_id, notes
+               FROM pioneers WHERE email LIKE '%@alirahealth.com'"""
+        ).fetchall()
+        assert len(rows) >= 14, f"expected at least 14 Alira pioneers; got {len(rows)}"
+        for r in rows:
+            name = f"{r['first_name']} {r['last_name']}"
+            assert r["title"] is not None, f"{name}: title is None"
+            assert r["home_practice_id"] is not None, f"{name}: home_practice_id is None"
+            # Notes should NOT contain "MAP — Partner"-style metadata
+            note = (r["notes"] or "").strip()
+            assert " — " not in note or "Partner" not in note, \
+                f"{name}: notes still contains structured metadata: {note!r}"
+
+
+def test_pioneers_csv_includes_title_and_home_practice_columns():
+    """CSV export header includes title + home_practice; populated for seeded Alira pioneers."""
+    import csv, io
+    h = auth_h(admin_token())
+    r = requests.get(f"{BASE}/api/export/pioneers.csv", headers=h)
+    assert r.status_code == 200
+    text = r.content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    fields = reader.fieldnames or []
+    assert "title" in fields, f"missing column; got {fields}"
+    assert "home_practice" in fields, f"missing column; got {fields}"
+    rows = list(reader)
+    # At least one Alira pioneer should have title + home_practice populated.
+    alira = [r for r in rows if (r.get("email") or "").endswith("@alirahealth.com")]
+    assert any(r["title"] and r["home_practice"] for r in alira), \
+        f"no Alira pioneer has title+home_practice in CSV: {alira[:3]}"
+
+
+def test_pioneer_api_title_and_home_practice_filters():
+    """POST persists; GET ?title= and ?home_practice_id= narrow."""
+    h = auth_h(admin_token())
+    # Find practice ids
+    practices = requests.get(f"{BASE}/api/practices", headers=h).json()
+    map_id = next(p["id"] for p in practices if p["code"] == "MAP")
+    mcd_id = next(p["id"] for p in practices if p["code"] == "MCD")
+
+    # Create one Partner in MAP, one Principal in MCD.
+    p1 = requests.post(f"{BASE}/api/pioneers", headers=h, json={
+        "first_name": "FilterTest", "last_name": "Partner", "email": "ft.partner@example.com",
+        "title": "Partner", "home_practice_id": map_id,
+    })
+    assert p1.status_code == 201, p1.text
+    p2 = requests.post(f"{BASE}/api/pioneers", headers=h, json={
+        "first_name": "FilterTest", "last_name": "Principal", "email": "ft.principal@example.com",
+        "title": "Principal", "home_practice_id": mcd_id,
+    })
+    assert p2.status_code == 201, p2.text
+
+    try:
+        # Filter by title
+        partners = requests.get(f"{BASE}/api/pioneers?title=Partner", headers=h).json()
+        assert any(p["email"] == "ft.partner@example.com" for p in partners)
+        assert not any(p["email"] == "ft.principal@example.com" for p in partners)
+
+        # Filter by home_practice_id
+        mcd_pioneers = requests.get(f"{BASE}/api/pioneers?home_practice_id={mcd_id}", headers=h).json()
+        assert any(p["email"] == "ft.principal@example.com" for p in mcd_pioneers)
+        assert not any(p["email"] == "ft.partner@example.com" for p in mcd_pioneers)
+
+        # Invalid title rejected
+        bad = requests.post(f"{BASE}/api/pioneers", headers=h, json={
+            "first_name": "Bad", "last_name": "Title", "email": "bt@example.com", "title": "Wizard",
+        })
+        assert bad.status_code == 422, f"got {bad.status_code}"
+    finally:
+        for em in ("ft.partner@example.com", "ft.principal@example.com"):
+            ps = requests.get(f"{BASE}/api/pioneers", headers=h).json()
+            for p in ps:
+                if p.get("email") == em:
+                    requests.delete(f"{BASE}/api/pioneers/{p['id']}", headers=h)
+
+
+def test_pioneer_db_helpers_persist_title_and_home_practice():
+    """Database helpers round-trip the new fields."""
+    from backend import database, pioneers as pmod
+    database.init_db()
+    with database._db() as conn:
+        map_id = conn.execute("SELECT id FROM practices WHERE code='MAP'").fetchone()[0]
+
+    pid = pmod.create_pioneer(
+        first_name="DBTest", last_name="Helper", email="dbtest.helper@example.com",
+        notes=None, created_by=None, title="Engagement Manager", home_practice_id=map_id,
+    )
+    try:
+        # find_pioneer_by_email returns the new fields
+        p = pmod.find_pioneer_by_email("dbtest.helper@example.com")
+        assert p["title"] == "Engagement Manager"
+        assert p["home_practice_id"] == map_id
+
+        # update_pioneer_record writes them
+        pmod.update_pioneer_record(pid, title="Principal")
+        p2 = pmod.find_pioneer_by_email("dbtest.helper@example.com")
+        assert p2["title"] == "Principal"
+        # home_practice_id unchanged
+        assert p2["home_practice_id"] == map_id
+
+        # Setting to None clears
+        pmod.update_pioneer_record(pid, home_practice_id=None)
+        p3 = pmod.find_pioneer_by_email("dbtest.helper@example.com")
+        assert p3["home_practice_id"] is None
+    finally:
+        # Cleanup
+        with database._db() as conn:
+            conn.execute("DELETE FROM pioneers WHERE id=?", (pid,))
+            conn.commit()
+
+
+def test_pioneer_title_and_home_practice_models():
+    """PioneerCreate / Update / Summary accept title + home_practice_id with validation."""
+    import pytest
+    from pydantic import ValidationError
+    from backend.models import PioneerCreate, PioneerUpdate, PioneerSummary
+
+    # Valid title from allowlist.
+    p = PioneerCreate(first_name="Test", last_name="Person", title="Partner", home_practice_id=1)
+    assert p.title == "Partner"
+    assert p.home_practice_id == 1
+
+    # None allowed.
+    p2 = PioneerCreate(first_name="Test", last_name="Person", title=None, home_practice_id=None)
+    assert p2.title is None
+    assert p2.home_practice_id is None
+
+    # Invalid title rejected.
+    with pytest.raises(ValidationError):
+        PioneerCreate(first_name="Test", last_name="Person", title="Wizard")
+
+    # PioneerUpdate accepts both as optional.
+    u = PioneerUpdate(title="Principal")
+    assert u.title == "Principal"
+    with pytest.raises(ValidationError):
+        PioneerUpdate(title="NotARealTitle")
+
+    # PioneerSummary surfaces the fields + a derived home_practice_code.
+    s = PioneerSummary(id=1, first_name="A", last_name="B", status="never",
+                       title="Senior Consultant", home_practice_id=2,
+                       home_practice_code="MAP")
+    assert s.title == "Senior Consultant"
+    assert s.home_practice_code == "MAP"
 
 
 def test_migrate_v19_email_unique_case_insensitive():

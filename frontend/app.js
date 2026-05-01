@@ -1448,11 +1448,16 @@ function renderInlinePioneerCreate(rowEl) {
   if (!sel) return;
   const wrapper = document.createElement('span');
   wrapper.className = 'pioneer-inline-create';
-  wrapper.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
+  wrapper.style.cssText = 'display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap';
+  // Note: data-testid="inlinePioneerTitle" / "inlinePioneerHomePractice" rely on
+  // _pioneerTitleSelect / _pioneerHomePracticeSelect from the Add/Edit modal helpers.
+  // The id attribute is unique per inline create instance (only one open at a time).
   wrapper.innerHTML = `
     <input type="text" class="pioneer-inline-first-name" placeholder="First name" maxlength="80" style="min-width:110px">
     <input type="text" class="pioneer-inline-last-name" placeholder="Last name" maxlength="80" style="min-width:130px">
     <input type="email" class="pioneer-inline-email" placeholder="email@example.com" style="min-width:160px">
+    ${_pioneerTitleSelect(null, 'inlinePioneerTitle')}
+    ${_pioneerHomePracticeSelect(null, 'inlinePioneerHomePractice')}
     <button type="button" class="btn btn-sm btn-primary pioneer-inline-save">Save</button>
     <button type="button" class="btn btn-sm pioneer-inline-cancel">Cancel</button>
   `;
@@ -1471,11 +1476,19 @@ async function handlePioneerInlineSave(rowEl) {
     else alert('First or last name is required');
     return;
   }
+  // Read Title + Home Practice (Task 11) — both optional.
+  const titleEl = document.getElementById('inlinePioneerTitle');
+  const hpEl = document.getElementById('inlinePioneerHomePractice');
+  const title = titleEl && titleEl.value ? titleEl.value : null;
+  const hpRaw = hpEl ? hpEl.value : '';
+  const home_practice_id = hpRaw ? parseInt(hpRaw, 10) : null;
   try {
     const { status, body: result } = await apiCallWithStatus('POST', '/pioneers', {
       first_name: firstName,
       last_name: lastName,
       email: email || null,
+      title: title,
+      home_practice_id: home_practice_id,
     });
     // Refresh module-level pioneer cache.
     window._allPioneers = await loadAllPioneers();
@@ -5088,6 +5101,9 @@ async function renderPioneersIndex() {
   const mc = document.getElementById('mainContent');
   mc.innerHTML = '<div class="loading">Loading pioneers…</div>';
 
+  // Ensure practices cache is populated for filter chips + Add/Edit modal selects.
+  await loadPractices();
+
   let pioneers;
   try {
     pioneers = await apiCall('GET', '/pioneers');
@@ -5098,7 +5114,11 @@ async function renderPioneersIndex() {
   window._pioneersCache = pioneers;
   if (!window._pioneersFilters) {
     // Default sort: last name ascending (consulting convention).
-    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: 'last_name', sort_dir: 'asc' };
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], titles: [], home_practices: [], sort_field: 'last_name', sort_dir: 'asc' };
+  } else {
+    // Backwards compat: ensure new filter keys exist on cached state.
+    if (!Array.isArray(window._pioneersFilters.titles)) window._pioneersFilters.titles = [];
+    if (!Array.isArray(window._pioneersFilters.home_practices)) window._pioneersFilters.home_practices = [];
   }
 
   mc.innerHTML = `
@@ -5112,6 +5132,8 @@ async function renderPioneersIndex() {
     <div id="pioneersFilterBar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       <input type="search" id="pioneersSearch" placeholder="Search first/last name or email…" value="${esc(window._pioneersFilters.search)}"
         style="min-width:200px;padding:5px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:13px">
+      <span id="pioneersTitleFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
+      <span id="pioneersHomePracticeFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
       <span id="pioneersPracticeFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
       <span id="pioneersRoleFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
       <span id="pioneersStatusFilter" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></span>
@@ -5184,9 +5206,29 @@ function renderPioneersFilterChips() {
     statusEl.innerHTML = '<span style="font-size:12px;color:#6b7280;font-weight:600">Status:</span> ' + chips.join('');
   }
 
+  // Title chip — derived from schema.pioneer_titles (the canonical allowlist).
+  const titleEl = document.getElementById('pioneersTitleFilter');
+  if (titleEl) {
+    const titles = (schema && schema.pioneer_titles) || [];
+    const chips = titles.map(function(t) { return chipBtn('titles', t, t); });
+    titleEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Title:</span> ' + chips.join('')
+      : '';
+  }
+
+  // Home Practice chip — derived from state.practices (the canonical practices cache).
+  const hpEl = document.getElementById('pioneersHomePracticeFilter');
+  if (hpEl) {
+    const practices = (state && Array.isArray(state.practices)) ? state.practices : [];
+    const chips = practices.map(function(p) { return chipBtn('home_practices', p.code, p.code); });
+    hpEl.innerHTML = chips.length
+      ? '<span style="font-size:12px;color:#6b7280;font-weight:600">Home Practice:</span> ' + chips.join('')
+      : '';
+  }
+
   // Wire delegated click handlers (idempotent — re-bind every render so the
   // handlers attach to the freshly-replaced DOM).
-  ['pioneersPracticeFilter', 'pioneersRoleFilter', 'pioneersStatusFilter'].forEach(function(containerId) {
+  ['pioneersPracticeFilter', 'pioneersRoleFilter', 'pioneersStatusFilter', 'pioneersTitleFilter', 'pioneersHomePracticeFilter'].forEach(function(containerId) {
     const el = document.getElementById(containerId);
     if (!el) return;
     el.querySelectorAll('button.pioneers-filter-chip').forEach(function(btn) {
@@ -5242,6 +5284,8 @@ function renderPioneersTable() {
       if (!filters.role.some(function(n) { return names.includes(n); })) return false;
     }
     if (filters.status && filters.status.length > 0 && !filters.status.includes(p.status)) return false;
+    if (filters.titles && filters.titles.length > 0 && !filters.titles.includes(p.title)) return false;
+    if (filters.home_practices && filters.home_practices.length > 0 && !filters.home_practices.includes(p.home_practice_code)) return false;
     return true;
   });
 
@@ -5283,10 +5327,12 @@ function renderPioneersTable() {
       + esc(label) + arrow + '</th>';
   }
 
-  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:960px;width:100%"><thead><tr>'
+  let html = '<div style="overflow-x:auto"><table class="data-table" style="min-width:1080px;width:100%"><thead><tr>'
     + thCell('Last name', 'last_name')
     + thCell('First name', 'first_name')
     + thCell('Email', 'email')
+    + thCell('Title', 'title')
+    + thCell('Home Practice', 'home_practice_code')
     + thCell('# Projects', 'project_count')
     + '<th>Practices</th>'
     + '<th>Roles</th>'
@@ -5311,10 +5357,19 @@ function renderPioneersTable() {
     }).join(' ');
     const badgeStyle = statusBadgeStyle[p.status] || statusBadgeStyle.never;
 
+    const titleCell = p.title
+      ? esc(p.title)
+      : '<span style="color:#9ca3af">—</span>';
+    const hpCell = p.home_practice_code
+      ? '<span class="practice-badge" style="background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + esc(p.home_practice_code) + '</span>'
+      : '<span style="color:#9ca3af">—</span>';
+
     html += '<tr style="cursor:pointer" onclick="window.location.hash=\'#pioneer/' + p.id + '\'">'
       + '<td><strong>' + esc(p.last_name || '') + '</strong></td>'
       + '<td>' + esc(p.first_name || '') + '</td>'
       + '<td style="color:#6b7280;font-size:13px">' + esc(p.email || '') + '</td>'
+      + '<td>' + titleCell + '</td>'
+      + '<td>' + hpCell + '</td>'
       + '<td style="text-align:center">' + (p.project_count || 0) + '</td>'
       + '<td>' + (practiceChips || '—') + '</td>'
       + '<td>' + (roleChips || '—') + '</td>'
@@ -5358,6 +5413,32 @@ function downloadPioneersCsv() {
     .catch(function(e) { showToast('Download failed: ' + (e && e.message ? e.message : String(e)), 'error'); });
 }
 
+// ── Pioneer Title + Home Practice select helpers ─────────────────────────────
+// Used by Add/Edit pioneer modals (Tasks 8) and the inline pioneer create on
+// the project form (Task 11). Always derives Title options from
+// `schema.pioneer_titles` and Home Practice options from `state.practices`
+// (the canonical practices cache populated at app startup).
+function _pioneerTitleSelect(selected, idAttr) {
+  const titles = (schema && schema.pioneer_titles) || [];
+  const opts = ['<option value="">(no title)</option>'].concat(
+    titles.map(function(t) {
+      return '<option value="' + esc(t) + '"' + (t === selected ? ' selected' : '') + '>' + esc(t) + '</option>';
+    })
+  ).join('');
+  return '<select id="' + idAttr + '" data-testid="' + idAttr + '" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px">' + opts + '</select>';
+}
+
+function _pioneerHomePracticeSelect(selectedId, idAttr) {
+  const practices = (state && Array.isArray(state.practices)) ? state.practices : [];
+  const opts = ['<option value="">(no home practice)</option>'].concat(
+    practices.map(function(p) {
+      const sel = String(p.id) === String(selectedId) ? ' selected' : '';
+      return '<option value="' + p.id + '"' + sel + '>' + esc(p.code) + '</option>';
+    })
+  ).join('');
+  return '<select id="' + idAttr + '" data-testid="' + idAttr + '" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px">' + opts + '</select>';
+}
+
 function openAddPioneerModal() {
   showModal(`
     <div style="padding:8px">
@@ -5375,6 +5456,16 @@ function openAddPioneerModal() {
       <div class="form-group" style="margin-bottom:12px">
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
         <input type="email" id="addPioneerEmail" maxlength="200" style="width:100%;box-sizing:border-box">
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Title</label>
+          ${_pioneerTitleSelect(null, 'addPioneerTitle')}
+        </div>
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Home practice</label>
+          ${_pioneerHomePracticeSelect(null, 'addPioneerHomePractice')}
+        </div>
       </div>
       <div class="form-group" style="margin-bottom:16px">
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Notes</label>
@@ -5407,11 +5498,22 @@ async function submitAddPioneerToIndex() {
   }
   const email = emailEl ? emailEl.value.trim() : '';
   const notes = notesEl ? notesEl.value.trim() : '';
+  const titleEl = document.getElementById('addPioneerTitle');
+  const hpEl = document.getElementById('addPioneerHomePractice');
+  const title = titleEl && titleEl.value ? titleEl.value : null;
+  const hpRaw = hpEl ? hpEl.value : '';
+  const home_practice_id = hpRaw ? parseInt(hpRaw, 10) : null;
   try {
-    const { status } = await apiCallWithStatus('POST', '/pioneers', { first_name, last_name, email: email || null, notes: notes || null });
+    const { status } = await apiCallWithStatus('POST', '/pioneers', {
+      first_name, last_name,
+      email: email || null,
+      notes: notes || null,
+      title: title,
+      home_practice_id: home_practice_id,
+    });
     hideModal();
     // Reset filter state so the new/matched pioneer is visible.
-    window._pioneersFilters = { search: '', practice: [], role: [], status: [], sort_field: 'last_name', sort_dir: 'asc' };
+    window._pioneersFilters = { search: '', practice: [], role: [], status: [], titles: [], home_practices: [], sort_field: 'last_name', sort_dir: 'asc' };
     await renderPioneersIndex();
     // 200 = find-or-create matched an existing pioneer; 201 = newly created.
     showToast(status === 200 ? 'Pioneer already existed — selected' : 'Pioneer added');
@@ -5875,6 +5977,11 @@ async function renderPioneerDetail(id) {
           </a>
           <h1 style="margin:0 0 4px">${esc(pioneer.display_name || ((pioneer.first_name || '') + ' ' + (pioneer.last_name || '')).trim())}</h1>
           ${pioneer.email ? '<div style="color:#6b7280;font-size:14px">' + esc(pioneer.email) + '</div>' : ''}
+          ${(pioneer.title || pioneer.home_practice_code) ? `
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px" data-testid="pioneer-detail-badges">
+            ${pioneer.title ? '<span class="badge" data-testid="pioneer-title-badge" style="background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + esc(pioneer.title) + '</span>' : ''}
+            ${pioneer.home_practice_code ? '<span class="badge practice-badge" data-testid="pioneer-home-practice-badge" style="background:#e0f2fe;color:#0284c7;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + esc(pioneer.home_practice_code) + '</span>' : ''}
+          </div>` : ''}
           ${pioneer.notes ? '<div style="color:#374151;font-size:13px;margin-top:6px;white-space:pre-wrap;max-width:600px">' + esc(pioneer.notes) + '</div>' : ''}
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
@@ -6237,6 +6344,16 @@ async function openEditPioneerModal(id) {
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Email</label>
         <input type="email" id="editPioneerEmail" maxlength="200" value="${esc(pioneer.email || '')}" style="width:100%;box-sizing:border-box">
       </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Title</label>
+          ${_pioneerTitleSelect(pioneer.title || null, 'editPioneerTitle')}
+        </div>
+        <div class="form-group" style="flex:1">
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Home practice</label>
+          ${_pioneerHomePracticeSelect(pioneer.home_practice_id != null ? pioneer.home_practice_id : null, 'editPioneerHomePractice')}
+        </div>
+      </div>
       <div class="form-group" style="margin-bottom:16px">
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px">Notes</label>
         <textarea id="editPioneerNotes" maxlength="2000" rows="3" style="width:100%;box-sizing:border-box">${esc(pioneer.notes || '')}</textarea>
@@ -6268,8 +6385,20 @@ async function submitEditPioneer(id) {
   }
   const email = emailEl ? emailEl.value.trim() : '';
   const notes = notesEl ? notesEl.value.trim() : '';
+  const titleEl = document.getElementById('editPioneerTitle');
+  const hpEl = document.getElementById('editPioneerHomePractice');
+  // Empty string -> null = explicit clear (backend treats null as "set to null").
+  const title = titleEl && titleEl.value ? titleEl.value : null;
+  const hpRaw = hpEl ? hpEl.value : '';
+  const home_practice_id = hpRaw ? parseInt(hpRaw, 10) : null;
   try {
-    await apiCall('PUT', '/pioneers/' + id, { first_name, last_name, email: email || null, notes: notes || null });
+    await apiCall('PUT', '/pioneers/' + id, {
+      first_name, last_name,
+      email: email || null,
+      notes: notes || null,
+      title: title,
+      home_practice_id: home_practice_id,
+    });
     hideModal();
     showToast('Pioneer updated');
     await renderPioneerDetail(id);

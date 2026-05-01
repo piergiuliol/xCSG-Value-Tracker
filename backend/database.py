@@ -214,6 +214,7 @@ def init_db() -> None:
     migrate_v21_fx_rates()
     _ensure_all_fx_rows_exist()
     migrate_v22_drop_legacy_norms()
+    migrate_v23_pioneer_title_home_practice()
 
     seed_data()
 
@@ -728,6 +729,54 @@ def migrate_v22_drop_legacy_norms() -> None:
         conn.commit()
 
 
+def migrate_v23_pioneer_title_home_practice() -> None:
+    """v2.3: add pioneers.title + pioneers.home_practice_id; auto-parse the
+    "{practice_code} — {title}" notes pattern that _seed_initial_pioneers
+    produced before this migration existed.
+
+    Idempotent via PRAGMA table_info — once the columns exist and are
+    populated, re-running is a no-op (the WHERE clause filters out already-
+    migrated rows).
+    """
+    import re
+    with _db() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(pioneers)").fetchall()}
+        if "title" not in cols:
+            conn.execute("ALTER TABLE pioneers ADD COLUMN title TEXT")
+        if "home_practice_id" not in cols:
+            # Note: SQLite doesn't enforce FK constraint added via ALTER TABLE,
+            # but the column reference documents intent.
+            conn.execute("ALTER TABLE pioneers ADD COLUMN home_practice_id INTEGER REFERENCES practices(id)")
+        conn.commit()
+
+        # Auto-parse the seeded notes pattern — uses an em dash (—, U+2014) and
+        # the practice code prefix. Matches: "MAP — Partner", "MCD — Engagement Manager".
+        practice_codes = {row[0]: row[1] for row in conn.execute(
+            "SELECT code, id FROM practices"
+        ).fetchall()}
+        # Build code->id lookup; ignore practices with no code.
+        code_to_id = {code: pid for code, pid in practice_codes.items() if code}
+
+        # Find rows whose title is still NULL but notes match the pattern.
+        candidates = conn.execute(
+            "SELECT id, notes FROM pioneers WHERE title IS NULL AND notes IS NOT NULL AND notes != ''"
+        ).fetchall()
+        pattern = re.compile(r"^([A-Z]{2,5})\s+—\s+(.+)$")
+        for cand in candidates:
+            m = pattern.match((cand["notes"] or "").strip())
+            if not m:
+                continue
+            code, title = m.group(1), m.group(2).strip()
+            pid = code_to_id.get(code)
+            if pid is None:
+                continue
+            conn.execute(
+                "UPDATE pioneers SET title=?, home_practice_id=?, notes='' WHERE id=?",
+                (title, pid, cand["id"]),
+            )
+        conn.commit()
+
+
 def migrate_v2() -> None:
     with _db() as conn:
         project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
@@ -1156,9 +1205,10 @@ def seed_data() -> None:
 # ── Initial pioneer roster (deploy-time seed) ──────────────────────────────────
 
 # Each entry: (first_name, last_name, email_local, home_practice, home_role).
-# `home_practice`/`home_role` are sticky context stored in the pioneer's notes
-# field — they describe where the person typically works, but the project-level
-# pioneer assignment can use a different practice/role.
+# `home_practice` is the practice code (FK lookup) and `home_role` is the title.
+# The seeder writes these into the structured columns added in v23 — they
+# describe where the person typically works, but the project-level pioneer
+# assignment can use a different practice/role.
 _INITIAL_PIONEERS = [
     # MAP
     ("Giuseppe",  "Gulotta",         "giuseppe.gulotta",   "MAP", "Partner"),
@@ -1183,11 +1233,14 @@ def _seed_initial_pioneers() -> None:
     """Insert the initial Alira Health pioneer roster on first deployment.
 
     Idempotent — pioneers whose email is already present are skipped, so
-    re-running on subsequent deploys is a no-op. Practice + role live in
-    the notes field as sticky context; the per-project pioneer assignment
-    can still pick any role from any practice catalog.
+    re-running on subsequent deploys is a no-op. Writes title +
+    home_practice_id directly into the structured columns (added in v23);
+    notes is left empty for the user to add real bio content later.
     """
     with _db() as conn:
+        practice_lookup = {row[0]: row[1] for row in conn.execute(
+            "SELECT code, id FROM practices"
+        ).fetchall()}
         for first, last, email_local, home_practice, home_role in _INITIAL_PIONEERS:
             email = f"{email_local}@alirahealth.com"
             existing = conn.execute(
@@ -1196,10 +1249,12 @@ def _seed_initial_pioneers() -> None:
             ).fetchone()
             if existing:
                 continue
-            notes = f"{home_practice} — {home_role}"
+            home_practice_id = practice_lookup.get(home_practice)
             conn.execute(
-                "INSERT INTO pioneers (first_name, last_name, email, notes) VALUES (?, ?, ?, ?)",
-                (first, last, email, notes),
+                """INSERT INTO pioneers (first_name, last_name, email, notes,
+                                        title, home_practice_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (first, last, email, None, home_role, home_practice_id),
             )
         conn.commit()
 
@@ -1783,6 +1838,8 @@ def add_pioneer(
     issued_by: Optional[int] = None,
     day_rate: Optional[float] = None,
     role_name: Optional[str] = None,
+    title: Optional[str] = None,
+    home_practice_id: Optional[int] = None,
 ) -> int:
     """Add a pioneer-on-project row.
 
@@ -1802,6 +1859,7 @@ def add_pioneer(
                 raise ValueError("add_pioneer: pioneer_id or first_name/last_name required")
             pioneer_id = create_pioneer(
                 first_name=fn, last_name=ln, email=email, notes=None, created_by=issued_by,
+                title=title, home_practice_id=home_practice_id,
             )
 
     token = secrets.token_urlsafe(32)
