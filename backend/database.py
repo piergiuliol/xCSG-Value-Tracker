@@ -2251,7 +2251,14 @@ def list_norm_aggregates() -> list:
         metrics_list = []
         for item in items:
             responses = get_all_project_responses(item["id"])
-            metrics_list.append(compute_averaged_project_metrics(item, responses))
+            # Merge legacy_team + pioneer_day_rates before computing — same fix
+            # as commit 69b9949 (pioneer aggregator). Without legacy_team,
+            # delivery_speed and productivity_ratio both compute to None
+            # because legacy_person_days has no count to multiply by l1_days.
+            project_dict = dict(item)
+            project_dict["pioneer_day_rates"] = get_pioneer_day_rates(item["id"])
+            project_dict["legacy_team"] = list_legacy_team(item["id"])
+            metrics_list.append(compute_averaged_project_metrics(project_dict, responses))
 
         rows.append({
             "category_id": group["category_id"],
