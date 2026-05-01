@@ -444,7 +444,6 @@ def compute_project_metrics(data: dict) -> dict:
         "has_expert_response": data.get("project_id") is not None or data.get("b1_starting_point") is not None,
         "outcome_rate_xcsg": None,
         "outcome_rate_legacy": None,
-        "legacy_overridden": bool(data.get("legacy_overridden", 0)),
         **raw_strings,
         **effort, **quality, **smoothness, **flywheel, **signals,
         **economics,

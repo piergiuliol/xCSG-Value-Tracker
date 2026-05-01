@@ -451,38 +451,43 @@ def test_metrics():
         test("Senior-Led score computed", "senior_led" in content.lower())
         test("Proprietary Knowledge score computed", "proprietary_knowledge" in content.lower())
     
-    # Check per-project metrics from API
-    r = requests.get(f"{BASE}/api/metrics/projects", headers=auth_h(tk))
+    # Per-project metrics: legacy /api/metrics/projects endpoint was removed (v2.2);
+    # equivalent payload now lives at /api/projects/{id}/metrics for any complete project.
+    r = requests.get(f"{BASE}/api/projects?status=complete", headers=auth_h(tk))
     if r.status_code == 200:
-        metrics = r.json()
-        if metrics:
-            m = metrics[0]
-            test("Per-project has effort_ratio", "effort_ratio" in m)
-            test("Per-project has quality_score", "quality_score" in m)
-            test("Per-project has outcome_rate_ratio", "outcome_rate_ratio" in m)
-            
-            # Quality score should be 0-1 range
-            if m.get("quality_score"):
-                qs = m["quality_score"]
-                test(f"Quality score in 0-1 range (got {qs})", 0 <= qs <= 1, f"value={qs}")
+        projects = r.json() or []
+        if projects:
+            pid = projects[0]["id"]
+            rm = requests.get(f"{BASE}/api/projects/{pid}/metrics", headers=auth_h(tk))
+            if rm.status_code == 200:
+                m = rm.json() or {}
+                test("Per-project has effort_ratio", "effort_ratio" in m)
+                test("Per-project has quality_score", "quality_score" in m)
+                test("Per-project has outcome_rate_ratio", "outcome_rate_ratio" in m)
+
+                # Quality score should be 0-1 range
+                if m.get("quality_score"):
+                    qs = m["quality_score"]
+                    test(f"Quality score in 0-1 range (got {qs})", 0 <= qs <= 1, f"value={qs}")
 
 # ── G. Scaling Gates ──────────────────────────────────────────────────────────
 
 def test_scaling_gates():
+    """Scaling gates surface via /api/dashboard/metrics (legacy /api/metrics/scaling-gates removed v2.2)."""
     print("\n── G. Scaling Gates ──")
     tk = admin_token()
-    r = requests.get(f"{BASE}/api/metrics/scaling-gates", headers=auth_h(tk))
-    test("GET /api/metrics/scaling-gates returns 200", r.status_code == 200, f"got {r.status_code}")
+    r = requests.get(f"{BASE}/api/dashboard/metrics", headers=auth_h(tk))
+    test("GET /api/dashboard/metrics returns 200", r.status_code == 200, f"got {r.status_code}")
     if r.status_code != 200:
         return
-    
+
     data = r.json()
-    gates = data.get("gates", [])
+    gates = data.get("scaling_gates", [])
     test("7 gates returned", len(gates) == 7, f"got {len(gates)}")
-    test("passed_count field exists", "passed_count" in data)
-    
+    test("scaling_gates_passed field exists", "scaling_gates_passed" in data)
+
     gate_map = {g["id"]: g for g in gates}
-    
+
     if 1 in gate_map:
         test("Gate 1: Multi-engagement", "Multi-engagement" in gate_map[1]["name"] or "deliverable type" in gate_map[1]["description"].lower())
     if 2 in gate_map:
@@ -499,31 +504,24 @@ def test_scaling_gates():
 def test_dashboard():
     print("\n── H. Dashboard Metrics ──")
     tk = admin_token()
-    
+
     r = requests.get(f"{BASE}/api/dashboard/metrics", headers=auth_h(tk))
     test("GET /api/dashboard/metrics returns 200", r.status_code == 200, f"got {r.status_code}")
     if r.status_code != 200:
         return
-    
+
     m = r.json()
-    
-    # Also check /api/metrics/summary
-    r2 = requests.get(f"{BASE}/api/metrics/summary", headers=auth_h(tk))
-    test("GET /api/metrics/summary returns 200", r2.status_code == 200)
-    
-    # Check for key fields across both responses
-    for endpoint_name, resp in [("dashboard", m), ("summary", r2.json() if r2.status_code == 200 else {})]:
-        if not resp:
-            continue
-        test(f"{endpoint_name}: has total_completed or complete_projects",
-             "total_completed" in resp or "complete_projects" in resp or "completed_count" in resp)
-        test(f"{endpoint_name}: has effort_ratio",
-             "average_effort_ratio" in resp or "effort_ratio" in resp)
-        test(f"{endpoint_name}: has quality_score",
-             "average_quality_score" in resp or "quality_score" in resp)
-        test(f"{endpoint_name}: has reuse_intent_rate",
-             "reuse_intent_rate" in resp or "reuse_intent_avg" in resp)
-    
+
+    # Key fields on the dashboard response
+    test("dashboard: has total_completed or complete_projects",
+         "total_completed" in m or "complete_projects" in m or "completed_count" in m)
+    test("dashboard: has effort_ratio",
+         "average_effort_ratio" in m or "effort_ratio" in m)
+    test("dashboard: has quality_score",
+         "average_quality_score" in m or "quality_score" in m)
+    test("dashboard: has reuse_intent_rate",
+         "reuse_intent_rate" in m or "reuse_intent_avg" in m)
+
     # Quality score 0-1 range
     qs = m.get("average_quality_score")
     if qs is not None and qs > 0:
@@ -675,19 +673,24 @@ def test_schema_endpoint():
     test("schema.dashboard.thresholds.radar_axis_cap present",
          isinstance((dash.get("thresholds") or {}).get("radar_axis_cap"), (int, float)))
 
-# ── L3. MetricsSummary endpoint fields ───────────────────────────────────────
+# ── L3. Dashboard metrics field guard ────────────────────────────────────────
 
 def test_metrics_summary_fields():
-    """Regression guard: MetricsSummary model must not silently drop these keys."""
-    print("\n── L3. MetricsSummary endpoint fields ──")
+    """Regression guard: dashboard payload must not silently drop these keys.
+
+    Repointed from /api/metrics/summary to /api/dashboard/metrics in v2.2 — the
+    legacy endpoint was removed; both endpoints returned identical payloads
+    (compute_summary delegated to compute_dashboard_metrics).
+    """
+    print("\n── L3. Dashboard metrics field guard ──")
     tk = admin_token()
-    r = requests.get(f"{BASE}/api/metrics/summary", headers=auth_h(tk))
-    test("GET /api/metrics/summary 200", r.status_code == 200, f"got {r.status_code}")
+    r = requests.get(f"{BASE}/api/dashboard/metrics", headers=auth_h(tk))
+    test("GET /api/dashboard/metrics 200", r.status_code == 200, f"got {r.status_code}")
     if r.status_code != 200:
         return
     body = r.json()
     for key in ("average_quality_ratio", "rework_efficiency_avg", "client_impact_avg", "data_independence_avg"):
-        test(f"summary exposes {key}", key in body, f"missing from response keys")
+        test(f"dashboard exposes {key}", key in body, f"missing from response keys")
 
 # ── M. Database Schema Checks ────────────────────────────────────────────────
 
@@ -3246,6 +3249,8 @@ def main():
     test_migrate_v20_splits_name_into_first_and_last()
     test_migrate_v21_creates_fx_rates_and_base_currency()
     test_migrate_v21_idempotent()
+    test_migrate_v22_drops_legacy_norms()
+    test_migrate_v22_idempotent()
     test_migrate_v15_idempotent()
     test_migrate_v16_idempotent()
     test_migrate_v17_idempotent()
@@ -3516,6 +3521,35 @@ def test_migrate_v21_idempotent():
     with database._db() as conn:
         n = conn.execute("SELECT COUNT(*) AS n FROM fx_rates").fetchone()["n"]
     assert n == 6, f"expected 6 currency rows, got {n}"
+
+
+def test_migrate_v22_drops_legacy_norms():
+    """v2.2 — legacy_norms table no longer exists after init_db,
+    and projects.legacy_overridden column is dropped.
+    """
+    from backend import database
+    database.init_db()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_norms'"
+        ).fetchone()
+        assert row is None, "legacy_norms table should be dropped"
+        proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        assert "legacy_overridden" not in proj_cols, "projects.legacy_overridden column should be dropped"
+
+
+def test_migrate_v22_idempotent():
+    """v2.2 migration is safe to re-run after the table/column are gone."""
+    from backend import database
+    database.init_db()
+    # Re-run twice — no exception, table still missing.
+    database.migrate_v22_drop_legacy_norms()
+    database.migrate_v22_drop_legacy_norms()
+    with database._db() as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_norms'"
+        ).fetchone()
+        assert row is None
 
 
 def test_migrate_v19_email_unique_case_insensitive():
