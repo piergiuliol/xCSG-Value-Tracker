@@ -2328,10 +2328,6 @@ def list_complete_projects() -> list:
         return [dict(r) for r in rows]
 
 
-def update_project_client_pulse(project_id: int, client_pulse: str) -> bool:
-    return update_project(project_id, {"client_pulse": client_pulse})
-
-
 def list_norm_aggregates() -> list:
     from backend.metrics import compute_averaged_project_metrics
 

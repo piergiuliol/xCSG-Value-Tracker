@@ -5,7 +5,7 @@ Realigned to final spec (April 2026).
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
@@ -259,7 +259,7 @@ class ProjectUpdate(BaseModel):
 
 class ExpertResponseCreate(BaseModel):
     b1_starting_point: Optional[str] = None
-    b2_research_sources: Optional[str] = None
+    b2_research_sources: Optional[Union[int, str]] = None
     b3_assembly_ratio: Optional[str] = None
     b4_hypothesis_first: Optional[str] = None
     b5_ai_survival: Optional[str] = None
@@ -281,7 +281,7 @@ class ExpertResponseCreate(BaseModel):
     l3_legacy_revision_depth: Optional[str] = None
     l4_legacy_scope_expansion: Optional[str] = None
     l5_legacy_client_reaction: Optional[str] = None
-    l6_legacy_b2_sources: Optional[str] = None
+    l6_legacy_b2_sources: Optional[Union[int, str]] = None
     l7_legacy_c1_specialization: Optional[str] = None
     l8_legacy_c2_directness: Optional[str] = None
     l9_legacy_c3_judgment: Optional[str] = None

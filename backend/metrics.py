@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from backend.schema import SCORES
+from backend.schema import SCORES, b2_count_to_score
 
 # Maps the xCSG team-size dropdown values ("1", "2", "3", "4+") to numeric
 # midpoints. Only used for xcsg_team_size — the legacy team-size flat string
@@ -140,8 +140,24 @@ def score_pair_ratio(data: dict, xcsg_field: str, legacy_field: str, mapping: di
 
 
 
+def score_b2_sources(value) -> Optional[float]:
+    """Resolve a b2/l6 answer to a score. Numeric counts use b2_count_to_score;
+    legacy bucket strings (e.g. "Multiple sources across domains (5-10)") still
+    look up via SCORES so previously-recorded responses keep scoring correctly."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        float(value)
+        return b2_count_to_score(value)
+    except (TypeError, ValueError):
+        return SCORES["b2_research_sources"].get(str(value).strip())
+
+
 def compute_machine_first_score(data: dict) -> Optional[float]:
-    return score_pair_ratio(data, "b2_research_sources", "l6_legacy_b2_sources", OPTION_SCORES["b2_research_sources"])
+    return compute_ratio(
+        score_b2_sources(data.get("b2_research_sources")),
+        score_b2_sources(data.get("l6_legacy_b2_sources")),
+    )
 
 
 

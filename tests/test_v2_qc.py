@@ -133,7 +133,7 @@ def test_expert_options():
     
     expected = {
         "b1_starting_point": ["From AI draft", "Mixed", "From blank page"],
-        "b2_research_sources": ["Single source or dataset", "A few targeted sources (2-4)", "Multiple sources across domains (5-10)", "Broad systematic synthesis (10+)"],
+        # b2_research_sources is a numeric integer input — no enum options.
         "b3_assembly_ratio": [">75% AI", "50-75%", "25-50%", "<25%"],
         "b4_hypothesis_first": ["Hypothesis-first", "Hybrid", "Discovery-first"],
         "b5_ai_survival": [">75%", "50-75%", "25-50%", "<25%", "Did not use AI draft"],
@@ -542,13 +542,6 @@ def test_deliverables_list():
         test("Projects list has items", len(items) > 0)
         if items:
             test("Project has status field", "status" in items[0])
-    
-    # Check PATCH /api/deliverables/{id} for client_pulse
-    if items:
-        proj_id = items[0]["id"]
-        r = requests.patch(f"{BASE}/api/deliverables/{proj_id}", headers={**auth_h(tk), "Content-Type": "application/json"},
-                          json={"client_pulse": "Exceeded expectations"})
-        test("PATCH /api/deliverables/{{id}} accepts client_pulse", r.status_code in (200, 201), f"got {r.status_code}")
 
 # ── J. String Consistency ─────────────────────────────────────────────────────
 

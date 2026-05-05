@@ -566,21 +566,6 @@ async def delete_project(
     db.delete_project(project_id)
 
 
-@app.patch("/api/deliverables/{project_id}")
-async def patch_deliverable(
-    project_id: int,
-    body: ProjectUpdate,
-    current_user: dict = Depends(auth.get_current_user_analyst),
-):
-    row = db.get_project(project_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if body.client_pulse is None:
-        raise HTTPException(status_code=400, detail="client_pulse is required")
-    db.update_project_client_pulse(project_id, body.client_pulse)
-    return dict(db.get_project(project_id))
-
-
 # ── Pioneer Management ──────────────────────────────────────────────────────
 
 @app.get("/api/projects/{project_id}/pioneers")

@@ -102,12 +102,33 @@ SCORES = {
     },
 }
 
+# ── Numeric-input bucketing (b2 / l6) ───────────────────────────────────────
+# b2_research_sources and l6_legacy_b2_sources are entered as integer counts.
+# The bucket boundaries match the legacy dropdown labels — single / 2-4 / 5-9 / 10+.
+def b2_count_to_score(value) -> "float | None":
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    if n < 1:
+        return None
+    if n == 1:
+        return 0.25
+    if n <= 4:
+        return 0.5
+    if n <= 9:
+        return 0.75
+    return 1.0
+
+
 # ── Expert survey field definitions ─────────────────────────────────────────
 
 EXPERT_FIELDS = {
     # Section B — Machine-First Operations
     "b1_starting_point":      {"label": "Starting point: Did you build from an AI draft or blank page?", "section": "B", "options": ["From AI draft", "Mixed", "From blank page"]},
-    "b2_research_sources":    {"label": "How many distinct knowledge sources (databases, prior work, expert inputs, publications) were synthesized?", "section": "B", "options": ["Single source or dataset", "A few targeted sources (2-4)", "Multiple sources across domains (5-10)", "Broad systematic synthesis (10+)"]},
+    "b2_research_sources":    {"label": "How many distinct knowledge sources (databases, prior work, expert inputs, publications) were synthesized?", "section": "B", "type": "integer", "min": 1, "placeholder": "e.g. 6"},
     "b3_assembly_ratio":      {"label": "What % of the final deliverable was AI-assembled vs manual?", "section": "B", "options": [">75% AI", "50-75%", "25-50%", "<25%"]},
     "b4_hypothesis_first":    {"label": "Was the approach hypothesis-led or discovery-first?", "section": "B", "options": ["Hypothesis-first", "Hybrid", "Discovery-first"]},
     "b5_ai_survival":         {"label": "What % of the AI draft survived into the final deliverable?", "section": "B", "options": [">75%", "50-75%", "25-50%", "<25%", "Did not use AI draft"]},
@@ -135,7 +156,7 @@ EXPERT_FIELDS = {
     "l3_legacy_revision_depth":    {"label": "What level of rework would traditional delivery have needed?", "section": "L", "options": ["No revisions needed", "Cosmetic only", "Moderate rework", "Major rework"]},
     "l4_legacy_scope_expansion":   {"label": "Would the scope have expanded under traditional delivery?", "section": "L", "options": ["Yes", "No"]},
     "l5_legacy_client_reaction":   {"label": "How would the client have reacted to traditional delivery?", "section": "L", "options": ["Exceeded expectations", "Met expectations", "Below expectations"]},
-    "l6_legacy_b2_sources":        {"label": "How many knowledge sources would traditional delivery have synthesized?", "section": "L", "options": ["Single source or dataset", "A few targeted sources (2-4)", "Multiple sources across domains (5-10)", "Broad systematic synthesis (10+)"]},
+    "l6_legacy_b2_sources":        {"label": "How many knowledge sources would traditional delivery have synthesized?", "section": "L", "type": "integer", "min": 1, "placeholder": "e.g. 3"},
     "l7_legacy_c1_specialization": {"label": "What specialization level would traditional delivery have had?", "section": "L", "options": ["Deep specialist", "Adjacent expertise", "Generalist"]},
     "l8_legacy_c2_directness":     {"label": "How directly would the senior expert have been involved in traditional delivery?", "section": "L", "options": ["Expert authored", "Expert co-authored", "Expert reviewed only"]},
     "l9_legacy_c3_judgment":       {"label": "What % of traditional output would reflect expert judgment?", "section": "L", "options": [">75% judgment", "50-75%", "25-50%", "<25%"]},

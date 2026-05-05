@@ -102,7 +102,7 @@ function ratioTone(v) {
   const blue    = t?.blue_above    ?? 1.0;
   const warning = t?.warning_above ?? 0.8;
   if (v >= success) return 'chip-green';
-  if (v >= blue)    return 'chip-amber';   // chip-blue not in CSS; amber used per Task 10 adaptation
+  if (v >= blue)    return 'chip-amber';   // chip-blue not in CSS; reusing chip-amber for the blue tier
   if (v >= warning) return 'chip-amber';
   return 'chip-red';
 }
@@ -1133,7 +1133,7 @@ function _renderDashboardView(allProjects, dashboard) {
     </div>
   </div>`;
 
-  // ── FILTER BAR (populated by Task 11) ──
+  // ── FILTER BAR ──
   html += `<div id="filterBar"></div>`;
 
   // ── KPI GRID (driven by schema.dashboard.kpi_tiles + schema.metrics) ──
@@ -1190,7 +1190,7 @@ function _renderDashboardView(allProjects, dashboard) {
   }
   html += `</div>`;
 
-  // ── CHART SECTIONS (rendered via tab shell, Task 13) ──
+  // ── CHART SECTIONS (rendered via tab shell) ──
   // Scaling Gates and Portfolio Table are now rendered as chart types inside
   // the tab shell (track_scaling_gates + table_portfolio — see registry).
   html += `<div id="tabContainer"></div>`;
@@ -1476,7 +1476,7 @@ async function handlePioneerInlineSave(rowEl) {
     else alert('First or last name is required');
     return;
   }
-  // Read Title + Home Practice (Task 11) — both optional.
+  // Read Title + Home Practice — both optional.
   const titleEl = document.getElementById('inlinePioneerTitle');
   const hpEl = document.getElementById('inlinePioneerHomePractice');
   const title = titleEl && titleEl.value ? titleEl.value : null;
@@ -3789,8 +3789,9 @@ async function renderExpert(token) {
         html += '<div class="accordion-question-label">' + esc(f.label) + '</div>';
 
         if (isInteger) {
-          // Integer input for L1
-          html += '<input type="number" class="accordion-field expert-input" data-key="' + esc(f.key) + '" data-section="' + esc(secKey) + '" min="1" step="1" placeholder="Enter number of working days" value="' + esc(savedVal) + '" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
+          const minAttr = (typeof f.min === 'number') ? f.min : 1;
+          const placeholder = f.placeholder || 'Enter number of working days';
+          html += '<input type="number" class="accordion-field expert-input" data-key="' + esc(f.key) + '" data-section="' + esc(secKey) + '" min="' + minAttr + '" step="1" placeholder="' + esc(placeholder) + '" value="' + esc(savedVal) + '" style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
         } else {
           // Dropdown
           html += '<select class="accordion-field expert-select" data-key="' + esc(f.key) + '" data-section="' + esc(secKey) + '" required style="width:100%;padding:12px 14px;border:1px solid var(--gray-300);border-radius:var(--radius);font-size:14px;font-family:Roboto,sans-serif;cursor:pointer;outline:none;transition:border-color 0.2s,box-shadow 0.2s;min-height:48px">';
@@ -3870,10 +3871,10 @@ async function renderExpert(token) {
       // Build flat key-value payload
       const fieldValues = _expertGetFieldValues();
       const payload = {};
+      const INTEGER_KEYS = new Set(['l1_legacy_working_days', 'b2_research_sources', 'l6_legacy_b2_sources']);
       for (const [key, val] of Object.entries(fieldValues)) {
         if (val === '' || val == null) continue;
-        // L1 is integer
-        if (key === 'l1_legacy_working_days') {
+        if (INTEGER_KEYS.has(key)) {
           payload[key] = parseInt(val);
         } else {
           payload[key] = val;
@@ -3997,10 +3998,22 @@ function _expertGetFieldValues() {
   return values;
 }
 
+function _expertFieldFilled(el) {
+  if (el.value === '' || el.value == null) return false;
+  // Number inputs must respect their min — otherwise "0" looks filled but
+  // scores as None on the server. min is a string attr; '' means no floor.
+  if (el.type === 'number') {
+    const n = Number(el.value);
+    if (Number.isNaN(n)) return false;
+    if (el.min !== '' && n < Number(el.min)) return false;
+  }
+  return true;
+}
+
 function _expertCountFilled() {
   let count = 0;
   document.querySelectorAll('.accordion-field').forEach(el => {
-    if (el.value !== '' && el.value != null) count++;
+    if (_expertFieldFilled(el)) count++;
   });
   return count;
 }
@@ -4025,7 +4038,7 @@ function _expertUpdateProgress(totalFields) {
     const secKey = sec.dataset.section;
     const fields = sec.querySelectorAll('.accordion-field');
     let secFilled = 0;
-    fields.forEach(f => { if (f.value !== '' && f.value != null) secFilled++; });
+    fields.forEach(f => { if (_expertFieldFilled(f)) secFilled++; });
     const header = document.querySelector('.accordion-header[data-section="' + secKey + '"]');
     if (header) {
       const countEl = header.querySelector('.accordion-count');
@@ -5414,10 +5427,9 @@ function downloadPioneersCsv() {
 }
 
 // ── Pioneer Title + Home Practice select helpers ─────────────────────────────
-// Used by Add/Edit pioneer modals (Tasks 8) and the inline pioneer create on
-// the project form (Task 11). Always derives Title options from
-// `schema.pioneer_titles` and Home Practice options from `state.practices`
-// (the canonical practices cache populated at app startup).
+// Used by Add/Edit pioneer modals and the inline pioneer create on the project
+// form. Title options come from `schema.pioneer_titles`; Home Practice options
+// come from `state.practices` (the canonical practices cache).
 function _pioneerTitleSelect(selected, idAttr) {
   const titles = (schema && schema.pioneer_titles) || [];
   const opts = ['<option value="">(no title)</option>'].concat(
@@ -5793,14 +5805,20 @@ function renderProjectExpertResponsesCard(project, pioneers) {
   }
 
   rows.sort((a, b) => (a.completed_at || '').localeCompare(b.completed_at || ''));
-  const rowHtml = rows.map(r => `
+  const rowHtml = rows.map(r => {
+    const canView = r.pioneer_id && r.round_number;
+    const viewCell = canView
+      ? `<a href="javascript:void(0)" onclick="viewPioneerRound(${r.pioneer_id}, ${r.round_number})" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">View answers →</a>`
+      : '';
+    return `
     <tr>
       <td><strong>R${r.round_number || '?'}</strong></td>
       <td>${r.pioneer_id ? `<a href="#pioneer/${r.pioneer_id}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">${esc(r.pioneer_name)}</a>` : esc(r.pioneer_name)}</td>
       <td>${esc((r.completed_at || '').split('T')[0])}</td>
-      <td>${r.token ? `<a href="#expert/${esc(r.token)}" style="color:var(--brand-blue,#6EC1E4);text-decoration:none">View answers →</a>` : ''}</td>
+      <td>${viewCell}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
   return `
     <div class="card" data-testid="project-responses-card" style="padding:16px;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;background:#fff">
       <h2 style="font-size:14px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 12px">Expert Responses (${rows.length})</h2>
@@ -5922,7 +5940,7 @@ async function renderProjectCharts(project, metrics) {
   }
 }
 
-// ── Pioneer Detail Page (Phase 3b Task 6) ─────────────────────────────────────
+// ── Pioneer Detail Page ───────────────────────────────────────────────────────
 
 async function renderPioneerDetail(id) {
   const mc = document.getElementById('mainContent');
@@ -6045,18 +6063,15 @@ async function renderPioneerDetail(id) {
         </div>
       ` : ''}
 
-      <!-- Charts (placeholder for Task 7) -->
       <div style="margin-bottom:20px">
         <h2 style="font-size:15px;font-weight:700;color:var(--navy,#121F6B);margin:0 0 10px">Charts</h2>
         <div id="pioneerCharts"></div>
-        <!-- Task 7 will call renderPioneerCharts(pioneer) to populate this div -->
       </div>
     </div>
   `;
 
   mc.innerHTML = html;
 
-  // Task 7: populate pioneer-scoped charts now that the DOM is ready.
   await renderPioneerCharts(pioneer, pioneerEconomics);
 }
 
